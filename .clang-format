@@ -1,0 +1,12 @@
+﻿---
+AllowShortIfStatementsOnASingleLine: AllIfsAndElse
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortFunctionsOnASingleLine: All
+AllowShortBlocksOnASingleLine: Always
+AllowShortLambdasOnASingleLine: All
+IndentCaseLabels: true
+ColumnLimit: 100
+CompactNamespaces: true
+FixNamespaceComments: true
+IndentPPDirectives: BeforeHash
+...
