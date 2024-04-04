@@ -100,6 +100,15 @@ int p3md::build_main(int argc, const char **argv) {
   for (auto &root : options.Roots)
     llvm::outs() << " - " << root << "\n";
   llvm::outs() << "Sources:\n";
+
+
+  options.Compilations->getAllFiles() ^ for_each([&](auto x){
+    std::cout << ""<<(options.resolve(x) ^ get_or_else("???")) << std::endl;
+
+                                        });
+
+  auto all = options.SourcePathList ^ exists([](auto x){return x == "*"; });
+
   for (auto &source : options.SourcePathList)
     llvm::outs() << " - " << source << " => "
                  << (options.resolve(source) ^ get_or_else("(not found, skipped)")) << "\n";
@@ -110,9 +119,8 @@ int p3md::build_main(int argc, const char **argv) {
   that->appendArgumentsAdjuster(getInsertArgumentAdjuster( CommandLineArguments{
                                                               "-Wno-unknown-attributes",
                                                               "-Wno-deprecated-declarations",
-                                                              "-fdeclare-spirv-builtins",
- "-fno-sycl",
-                                                              "-v",
+                                                               "-fno-sycl",
+//                                                              "-v",
                                                               "-I/usr/lib/clang/17/include",
                                                               "-I/opt/intel/oneapi/compiler/2024.1/include",
                                                               "-I/opt/intel/oneapi/compiler/2024.1/include/sycl",
@@ -160,6 +168,8 @@ int p3md::build_main(int argc, const char **argv) {
 //  }
 
 //  return EXIT_SUCCESS;
+
+
 
   std::vector<std::unique_ptr<ASTUnit>> xs;
     if (auto result = Tool.buildASTs(xs); result != 0) {
@@ -217,7 +227,7 @@ int p3md::build_main(int argc, const char **argv) {
                                   });
       V.TraverseDecl(x);
 
-      root.print(std::identity(), std::cout);
+//      root.print(std::identity(), std::cout);
 
 //      nlohmann::json a = root;
       //      a.dump(2);

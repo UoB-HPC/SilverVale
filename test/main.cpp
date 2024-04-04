@@ -1,11 +1,12 @@
 #include "catch2/catch_test_macros.hpp"
+
 #include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Tooling/Tooling.h"
-#include <iostream>
 
 #include "aspartame/optional.hpp"
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
+
 #include "p3md/p3md.h"
 #include "p3md/tree.h"
 
@@ -34,7 +35,7 @@ makeNodes(const p3md::TreeSemanticVisitor::Option &option, const std::string &co
            p3md::SemanticNode<std::string> root{"root", {}};
            p3md::TreeSemanticVisitor V(&root, unit->getASTContext(), option);
            V.TraverseDecl(decl);
-           decl->dump();
+           //           decl->dump();
            return root;
          });
 }
@@ -71,9 +72,7 @@ int b() {
 )") ^ collect([](auto x) {
         return x.children ^ head_maybe() ^
                filter([](auto v) { return v.value == "Function: a" || v.value == "Function: b"; }) ^
-               map([](auto n) {
-                 n.print(std::identity(), std::cout);
-                 return n.children; });
+               map([](auto n) { return n.children; });
       });
 
   REQUIRE(trees.size() == 2);
@@ -120,7 +119,8 @@ int b() {
 }
 
 TEST_CASE("two layers") {
-  auto trees = makeNodes({.normaliseVarName = true, .normaliseFnName = false, .roots = {""}}, R"(
+  auto trees =
+      makeNodes({.normaliseVarName = true, .normaliseFnName = false, .roots = {""}}, R"(
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -133,25 +133,22 @@ template <typename X> void run(int a, X x) {
 }
 
 int a() {
+  int a = 42;
   foo();
-  bar(42, 42);
+  bar(a, a);
   return EXIT_SUCCESS;
 }
 
 int b() {
-  run(42, [&](auto x, auto y) { bar(x, y); });
+  int a = 42;
+  run(a, [&](auto x, auto y) { bar(x, y); });
   return EXIT_SUCCESS;
 }
 )") ^ collect([](auto x) {
-                 return x.children ^ head_maybe() ^ filter([](auto v) {
-                          return v.value == "Function: a" || v.value == "Function: b";
-                        })
-                     //               ^ map([](auto n) { return n.children; })
-                     ;
-               });
-
-  trees[0].print(std::identity(), std::cout);
-  trees[1].print(std::identity(), std::cout);
-  //  REQUIRE(trees.size() == 2);
-  //  CHECK(trees[0] == trees[1]);
+        return x.children ^ head_maybe() ^
+               filter([](auto v) { return v.value == "Function: a" || v.value == "Function: b"; }) ^
+               map([](auto n) { return n.children; });
+      });
+  REQUIRE(trees.size() == 2);
+  CHECK(trees[0] == trees[1]);
 }

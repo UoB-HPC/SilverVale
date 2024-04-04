@@ -106,7 +106,7 @@ list(APPEND P3MD_COMPILE_FLAGS
 list(APPEND P3MD_LINK_FLAGS
         "$<$<CONFIG:Debug>:${P3MD_LINK_DEBUG_FLAGS}>")
 
-add_clang_library(P3MD src/options.cpp src/tree.cpp src/p3md.cpp src/database.cpp)
+add_clang_library(P3MD src/options.cpp src/tree.cpp src/p3md.cpp src/database.cpp src/glob.cpp)
 target_include_directories(P3MD PRIVATE include ${json_SOURCE_DIR})
 target_link_libraries(P3MD PRIVATE
         Aspartame::Aspartame

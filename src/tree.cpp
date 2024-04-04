@@ -1,4 +1,5 @@
 #include "clang/Basic/SourceManager.h"
+#include <iostream>
 
 #include "aspartame/optional.hpp"
 #include "aspartame/string.hpp"
@@ -10,16 +11,35 @@
 using namespace clang;
 using namespace aspartame;
 
+static inline CXXMethodDecl *extractLambdaCallMethodFromDeclRefTpe(Expr *expr) {
+  if (auto ref = llvm::dyn_cast<DeclRefExpr>(expr->IgnoreUnlessSpelledInSource()); ref) {
+    if (auto recordTpe = llvm::dyn_cast<RecordType>(ref->getType().getCanonicalType()); recordTpe) {
+
+
+
+
+      if (auto cxxRecordDecl = llvm::dyn_cast<CXXRecordDecl>(recordTpe->getDecl()); cxxRecordDecl && cxxRecordDecl->isLambda() ) {
+
+
+        return cxxRecordDecl->getLambdaCallOperator();
+      }
+    }
+  }
+  return {};
+}
+
 p3md::TreeSemanticVisitor::TreeSemanticVisitor(p3md::SemanticNode<std::string> *root,
                                                clang::ASTContext &Context,
                                                p3md::TreeSemanticVisitor::Option option)
     : node(root), Context(Context), option(std::move(option)) {}
+
 bool p3md::TreeSemanticVisitor::TraverseStmt(clang::Stmt *stmt) { // NOLINT(*-no-recursion)
   // Remove implicits
   if (Expr *expr = llvm::dyn_cast_or_null<Expr>(stmt); expr) {
     stmt = expr->IgnoreUnlessSpelledInSource();
   }
   if (!stmt) return single("<<<NULL>>>");
+
   return visitDyn<bool>(
              stmt,
              [&](CompoundStmt *compound) {
@@ -53,25 +73,26 @@ bool p3md::TreeSemanticVisitor::TraverseStmt(clang::Stmt *stmt) { // NOLINT(*-no
                                   });
              if (projectSymbol && direct->hasBody()) { // Symbol part of project root, inline
 
-               node->children.emplace_back("Inline: " + direct->getDeclName().getAsString() +
-                                           " @ " + sm.getFilename(direct->getLocation()).str());
+//               node->children.emplace_back("Inline: " + direct->getDeclName().getAsString() +
+//                                           " @ " + sm.getFilename(direct->getLocation()).str());
 
                return TraverseStmt(direct->getBody());
 
              } else { // Symbol outside the project root, expand all executables here instead
-               node->children.emplace_back("No Inline: " + direct->getDeclName().getAsString() +
-                                           " @ " + sm.getFilename(direct->getLocation()).str());
-
+//               node->children.emplace_back("No Inline: " + direct->getDeclName().getAsString() +
+//                                           " @ " + sm.getFilename(direct->getLocation()).str());
                return scoped(
                    [&]() {
-
-                     return RecursiveASTVisitor<TreeSemanticVisitor>::TraverseStmt(stmt);
-//                     return call->arguments() | forall([&](Expr* arg) {
-//                                                            node->children.emplace_back("Arg kind:"
-//                                                            + std::string (arg->getStmtClassName()));
-//
-//                              return TraverseStmt(arg);
-//                            });
+                     return call->arguments() | forall([&](Expr *arg) {
+                              // for DeclRefs to a lambda in a no-inline case, expand the body here
+                              if (auto lambdaApply = extractLambdaCallMethodFromDeclRefTpe(arg);
+                                  lambdaApply) {
+                                node->children.emplace_back("App: " + lambdaApply->getNameAsString());
+                                return TraverseStmt(lambdaApply->getBody());
+                              } else {
+                                return TraverseStmt(arg);
+                              }
+                            });
                    },
                    name);
              }
