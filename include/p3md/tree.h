@@ -6,8 +6,8 @@
 #include <type_traits>
 #include <vector>
 
-#include "clang/AST/RecursiveASTVisitor.h"
 #include "json.hpp"
+#include "clang/AST/RecursiveASTVisitor.h"
 
 namespace p3md {
 

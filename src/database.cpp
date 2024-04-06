@@ -3,4 +3,3 @@
 
 using namespace clang;
 
-p3md::Database::Database(ASTUnit &unit) {}
