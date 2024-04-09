@@ -11,6 +11,8 @@
 
 namespace p3md {
 
+std::vector<clang::Decl *> topLevelDeclsInMainFile(clang::ASTUnit &unit);
+
 template <typename N>
 void printTree(int depth, std::vector<bool> branch, const N &node, std::ostream &out,
                const std::function<std::string(N)> &name,

@@ -8,10 +8,8 @@
 #include "tree_sitter_cpp/api.h"
 #include "tree_sitter_fortran/api.h"
 
-#include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendActions.h"
-#include "clang/Frontend/TextDiagnosticBuffer.h"
 #include "clang/Frontend/TextDiagnosticPrinter.h"
 #include "clang/Serialization/ASTReader.h"
 #include "clang/Serialization/ASTWriter.h"
@@ -22,18 +20,18 @@
 
 #include "aspartame/optional.hpp"
 #include "aspartame/set.hpp"
+#include "aspartame/unordered_map.hpp"
+#include "aspartame/variant.hpp"
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
 
 #include "p3md/build.h"
+#include "p3md/database.h"
 #include "p3md/glob.h"
 #include "p3md/p3md.h"
-#include "p3md/tree.h"
 
-#include <zlib.h>
-
-#include <sys/stat.h>
-#include <sys/types.h>
+// #include <zlib.h>
+#include "zstd.h"
 
 using namespace aspartame;
 using namespace clang;
@@ -44,24 +42,85 @@ using namespace clang::tooling;
 // #include "string_label.h"
 // #include "unit_cost_model.h"
 
-class gz_ostream : public llvm::raw_ostream {
-  gzFile GzFile;
+#include <fstream>
+#include <iostream>
+#include <system_error>
+
+class zstd_ostream : public llvm::raw_ostream {
+  llvm::raw_fd_ostream out;
+  ZSTD_CCtx *cctx;
+  size_t pos{};
+  std::vector<char> buffOut;
 
 public:
-  gz_ostream(const std::string &name, std::error_code &code) : GzFile(gzopen(name.c_str(), "wb")) {
-    if (!GzFile) {
-      code = std::make_error_code(static_cast<std::errc>(errno));
-      errno = 0;
+  static bool zStdIsError(size_t err) {
+    if (ZSTD_isError(err)) {
+      std::cerr << ZSTD_getErrorName(err) << std::endl;
+      return true;
     }
+    return false;
   }
-  ~gz_ostream() override { gzclose(GzFile); }
-  void write_impl(const char *Ptr, size_t Size) override { gzwrite(GzFile, Ptr, Size); }
-  [[nodiscard]] uint64_t current_pos() const override { return gztell(GzFile); }
-  void flush_nonempty() {
-    // Flushing gzip stream. It doesn't flush the underlying OS.
-    gzflush(GzFile, Z_FINISH);
+
+  zstd_ostream(const std::string &name, std::error_code &code, int cLevel = 1)
+      : out(name, code), cctx(ZSTD_createCCtx()), buffOut(ZSTD_CStreamOutSize(), 0)  {
+    if (!cctx) {
+      std::cerr << "Cannot create Zstd context" << std::endl;
+      code = std::make_error_code(std::errc::io_error);
+    }
+    if (zStdIsError(ZSTD_CCtx_setParameter(cctx, ZSTD_c_compressionLevel, cLevel)))
+      code = std::make_error_code(std::errc::io_error);
+
+    if (zStdIsError(ZSTD_CCtx_setParameter(cctx, ZSTD_c_checksumFlag, 1)))
+      code = std::make_error_code(std::errc::io_error);
   }
+
+  ~zstd_ostream() override {
+    std::cout << "End" << std::endl;
+//    if (zStdIsError(ZSTD_flushStream(cctx, &output))) std::abort();
+    ZSTD_outBuffer output = {buffOut.data(), buffOut.size(), 0};
+
+    if (zStdIsError(ZSTD_endStream(cctx, &output))) std::abort();
+    if (zStdIsError(ZSTD_freeCCtx(cctx))) { std::abort(); }
+    out.close();
+  }
+
+  void write_impl(const char *buffIn, size_t size) override {
+    ZSTD_inBuffer input = {buffIn, size, 0};
+    do {
+      ZSTD_outBuffer output = {buffOut.data(), buffOut.size(), 0};
+      const size_t remaining = ZSTD_compressStream2(cctx, &output, &input, ZSTD_e_continue);
+      if (zStdIsError(remaining)) std::abort();
+      out.write(buffOut.data(), output.pos);
+    } while (input.pos != input.size);
+    pos += size;
+  }
+
+  [[nodiscard]] uint64_t current_pos() const override { return   pos; }
 };
+
+// class gz_ostream : public llvm::raw_ostream {
+//   gzFile file;
+//   size_t pos{};
+//
+// public:
+//   gz_ostream(const std::string &name, std::error_code &code) : file(gzopen(name.c_str(), "wb")) {
+//     if (!file) {
+//       code = std::make_error_code(static_cast<std::errc>(errno));
+//       errno = 0;
+//     }
+//   }
+//   ~gz_ostream() override { gzclose(file); }
+//   void write_impl(const char *Ptr, size_t Size) override {
+//
+//     if (gzwrite(file, Ptr, Size) != Size) { std::cerr << "Cannot write " << file << std::endl; }
+//     pos += Size;
+//   }
+//   [[nodiscard]] uint64_t current_pos() const override { return pos; }
+//   //  void flush_nonempty() {
+//   //    // Flushing gzip stream. It doesn't flush the underlying OS.
+//   ////    gzflush(file, Z_NO_FLUSH);
+//   //  }
+// };
 
 static std::optional<std::pair<std::unique_ptr<CompilationDatabase>, std::string>>
 findCompilationDatabaseFromDirectory(StringRef root) {
@@ -76,23 +135,13 @@ findCompilationDatabaseFromDirectory(StringRef root) {
   return {};
 }
 
-std::optional<std::string> p3md::build::Options::resolve(const std::string &sourcePath) const {
-  if (llvm::sys::path::is_absolute(sourcePath)) {
-    return llvm::sys::fs::is_regular_file(sourcePath) ? std::optional{sourcePath} : std::nullopt;
-  }
-  for (auto &root : rootDirs) {
-    if (llvm::sys::fs::is_regular_file(root + "/" += sourcePath)) return sourcePath;
-  }
-  return {};
-}
-
 ArgumentsAdjuster p3md::build::Options::resolveAdjuster() const {
   return combineAdjusters(getInsertArgumentAdjuster(argsBefore, ArgumentInsertPosition::BEGIN),
                           getInsertArgumentAdjuster(argsAfter, ArgumentInsertPosition::END));
 }
 
 std::unique_ptr<CompilationDatabase>
-p3md::build::Options::resolveDatabase(ArgumentsAdjuster adjuster) const {
+p3md::build::Options::resolveDatabase(const ArgumentsAdjuster &adjuster) const {
   auto root = buildDir;
   while (!root.empty()) {
     std::string ignored;
@@ -114,42 +163,30 @@ p3md::build::Options::resolveDatabase(ArgumentsAdjuster adjuster) const {
 //   return n;
 // }
 
-std::vector<Decl *> p3md::build::topLevelDeclsInMainFile(ASTUnit &unit) {
-  std::vector<Decl *> xs;
-  unit.visitLocalTopLevelDecls(&xs, [](auto xsPtr, auto decl) {
-    reinterpret_cast<decltype(xs) *>(xsPtr)->push_back(const_cast<Decl *>(decl));
-    return true;
-  });
-  return xs ^
-         filter([&](Decl *d) { return unit.getSourceManager().isInMainFile(d->getLocation()); });
-}
-
 static int clearAndCreateDir(bool clear, const std::string &outDir) {
   auto dirOp = [&outDir](const std::string &op, auto f) {
-    if (auto err = f(); err != std::errc()) {
-      std::cerr << "Failed to " << op << " " << outDir << ": " << err.message() << "\n";
-      return EXIT_FAILURE;
+    if (auto error = f(); error) {
+      std::cerr << "Failed to " << op << " " << outDir << ": " << error.message() << "\n";
+      return error.value();
     }
     return EXIT_SUCCESS;
   };
 
+  auto code = EXIT_SUCCESS;
   if (clear) {
-    auto result = EXIT_SUCCESS;
-    result = dirOp("remove", [&]() { return llvm::sys::fs::remove_directories(outDir); });
-    if (result != EXIT_SUCCESS) return result;
-    result = dirOp("create", [&]() { return llvm::sys::fs::create_directories(outDir); });
-    if (result != EXIT_SUCCESS) return result;
-    return result;
+    code = dirOp("remove", [&]() { return llvm::sys::fs::remove_directories(outDir); });
+    if (code != EXIT_SUCCESS) return code;
+    code = dirOp("create", [&]() { return llvm::sys::fs::create_directories(outDir); });
+    if (code != EXIT_SUCCESS) return code;
   } else {
-    auto result = EXIT_SUCCESS;
-    result = dirOp("create", [&]() { return llvm::sys::fs::create_directories(outDir); });
-    if (result != EXIT_SUCCESS) return result;
-    std::error_code err;
-    auto begin = llvm::sys::fs::directory_iterator(outDir, err);
-    if (err != std::errc()) {
-      std::cerr << "Failed to traverse output directory " << outDir << ": " << err.message()
+    code = dirOp("create", [&]() { return llvm::sys::fs::create_directories(outDir); });
+    if (code != EXIT_SUCCESS) return code;
+    std::error_code error;
+    auto begin = llvm::sys::fs::directory_iterator(outDir, error);
+    if (error) {
+      std::cerr << "Failed to traverse output directory " << outDir << ": " << error.message()
                 << "\n";
-      return EXIT_FAILURE;
+      return error.value();
     }
     if (begin != llvm::sys::fs::directory_iterator()) {
       std::cerr << "Output directory " << outDir
@@ -157,7 +194,9 @@ static int clearAndCreateDir(bool clear, const std::string &outDir) {
       return EXIT_FAILURE;
     }
   }
+  return code;
 }
+
 struct Task {
   size_t idx;
   std::string sourceName;
@@ -168,7 +207,7 @@ struct Task {
     std::string sourceName;
     std::optional<std::string> pchName;
     std::string diagnostic;
-    std::unordered_set<std::string> dependentSources;
+    std::unordered_map<std::string, std::string> dependencies;
   };
 };
 
@@ -183,8 +222,8 @@ static std::vector<Task::Result> buildPCHParallel(const CompilationDatabase &db,
                                  std::to_string(idx) + "." + llvm::sys::path::filename(file).str() +
                                      ".pch.gz");
          Task task{idx, file, nameGZ.c_str(), std::make_error_code(std::errc()), nullptr};
-         auto stream = std::make_shared<llvm::raw_fd_stream>(task.pchName, task.error);
-         //         auto stream = std::make_shared<gz_ostream>(task.pchName, task.error);
+                  auto stream = std::make_shared<llvm::raw_fd_stream>(task.pchName, task.error);
+//         auto stream = std::make_shared<zstd_ostream>(task.pchName, task.error);
          if (task.error == std::errc()) task.stream = std::move(stream);
          return task;
        }) |
@@ -202,7 +241,7 @@ static std::vector<Task::Result> buildPCHParallel(const CompilationDatabase &db,
        | to_vector()) ^
       map([&](auto &tasks) {
         return std::thread([&, tasks, total = files.size()]() {
-          for (auto task : tasks) {
+          for (auto &task : tasks) {
             std::string messageStorage;
             llvm::raw_string_ostream message(messageStorage);
 
@@ -225,23 +264,27 @@ static std::vector<Task::Result> buildPCHParallel(const CompilationDatabase &db,
 
             if (out[0]->serialize(*task.stream)) // XXX true is fail
               message << "# Serialisation failed\n";
-
             results[task.idx] = {task.sourceName, task.pchName, messageStorage};
             auto &sm = out[0]->getSourceManager();
-            view(sm.fileinfo_begin(), sm.fileinfo_end())                                       //
-                | map([](auto entry) { return entry.getFirst()->tryGetRealPathName().str(); }) //
-                | filter([](auto s) { return !s.empty(); })                                    //
-                | for_each([&](auto x) { results[task.idx].dependentSources.emplace(x); });    //
+            std::for_each(sm.fileinfo_begin(), sm.fileinfo_end(), [&](auto entry) {
+              if (auto name = entry.getFirst()->getName().str(); !name.empty()) {
+                auto file = entry.getFirst()->tryGetRealPathName().str();
+                results[task.idx].dependencies.emplace(name, file);
+              }
+            }); //
+
+//            task.stream.reset();
           }
         });
       });
+  success.clear();
   for (auto &t : threads)
     t.join();
 
   std::cout << std::endl;
 
   success.clear(); // drop the streams so the file can close
-  for (auto t : failed)
+  for (auto &t : failed)
     results.emplace_back(t.sourceName, std::nullopt, t.error.message());
   return results;
 }
@@ -254,9 +297,9 @@ int p3md::build::run(const p3md::build::Options &options) {
       << " - Output:       " << options.outDir << "\n"
       << " - Clear output: " << (options.clearOutDir ? "yes" : "no") << "\n"
       << " - Max threads:  " << options.maxThreads << "\n";
-  std::cout << "Roots:\n";
-  for (auto &root : options.rootDirs)
-    std::cout << " - " << root << "\n";
+  //  std::cout << "Roots:\n";
+  //  for (auto &root : options.rootDirs)
+  //    std::cout << " - " << root << "\n";
 
   auto adjuster = options.resolveAdjuster();
 
@@ -280,10 +323,10 @@ int p3md::build::run(const p3md::build::Options &options) {
     return EXIT_FAILURE;
   }
   auto regex = globToRegex(options.sourceGlob);
-  auto allFiles = db->getAllFiles() ^ collect([&](auto x) { return options.resolve(x); });
-  auto files = allFiles ^ filter([&](auto file) { return std::regex_match(file, regex); }) ^ sort();
+  auto files =
+      db->getAllFiles() ^ filter([&](auto file) { return std::regex_match(file, regex); }) ^ sort();
   std::cout << "Adjustments: " << (adjuster({"${ARGS}"}, "${FILE}") | mk_string(" ")) << "\n";
-  std::cout << "Sources (" << files.size() << "/" << allFiles.size() << "):\n";
+  std::cout << "Sources (" << files.size() << "/" << db->getAllFiles().size() << "):\n";
   for (auto &file : files) {
     std::cout << " - " << file << "\n";
   }
@@ -293,76 +336,166 @@ int p3md::build::run(const p3md::build::Options &options) {
     return result;
   }
 
+  std::error_code error;
+  auto dbFile =
+      llvm::raw_fd_ostream(options.outDir + "/db.json", error, llvm::sys::fs::CD_CreateAlways);
+  if (error) {
+    std::cerr << "Cannot create db.json:" << error.message() << std::endl;
+    return error.value();
+  }
+
   auto unitsPerThread =
       static_cast<size_t>(std::ceil(static_cast<double>(files.size()) / options.maxThreads));
 
   std::cout << "Scheduling " << unitsPerThread << " unit(s) per thread for a total of "
-            << options.maxThreads << " thread(s)" << std::endl;
+            << options.maxThreads << " thread(s) to process " << files.size() << " entries."
+            << std::endl;
 
-  auto xs = buildPCHParallel(*db, files, options.outDir, unitsPerThread);
+  auto results = buildPCHParallel(*db, files, options.outDir, unitsPerThread);
 
-  xs ^ for_each([&](auto &r) {
-    std::cout << r.sourceName << " " << (r.pchName ? *r.pchName : "(failed)") << " = \n"
-              << " = " << r.diagnostic.size() << "\n";
-
-    IntrusiveRefCntPtr<DiagnosticOptions> DiagOpts2 = new DiagnosticOptions();
-    auto diagnostics = CompilerInstance::createDiagnostics(DiagOpts2.get());
-
-    if (r.pchName) {
-
-      IntrusiveRefCntPtr<llvm::vfs::InMemoryFileSystem> VFS = new llvm::vfs::InMemoryFileSystem();
-
-      std::ifstream stream(r.pchName->c_str(), std::ios::in | std::ios::binary);
-      std::vector<char> contents((std::istreambuf_iterator<char>(stream)),
-                                 std::istreambuf_iterator<char>());
-
-      //
-      //      char outbuffer[1024*64];
-      //      auto infile =  fopen(r.pchName->c_str(), "rb");
-      ////      frewind(infile);
-      //
-      //      std::vector<char> outfile;
-      //      while(!feof(infile))
-      //      {
-      //        int len = fread( (void*)outbuffer, sizeof(outbuffer),1, infile);
-      //        outfile.insert(outfile.end(), outbuffer, outbuffer+len);
-      //      }
-      //      fclose(infile);
-
-      auto mb = llvm::MemoryBuffer::getMemBuffer(llvm::StringRef(contents.data(), contents.size()),
-                                                 "", false);
-      VFS->addFile(*r.pchName + "a", 1, std::move(mb));
-
-      for (auto f : r.dependentSources) {
-
-        struct stat rr;
-        if (stat(f.c_str(), &rr) == 0) {
-          auto mod_time = rr.st_mtime;
-          if (f.empty()) continue;
-          std::cout << f << "\n";
-          auto mb2 = llvm::MemoryBuffer::getFileAsStream(f);
-          VFS->addFile(f, mod_time, std::move(mb2.get()));
-        }
+  std::unordered_map<std::string, p3md::Database::Source> dependencies;
+  for (auto &result : results) {
+    for (auto &[_, file] : result.dependencies) {
+      auto buffer = llvm::MemoryBuffer::getFile(file, /*isText*/ true);
+      if (auto e = buffer.getError()) {
+        std::cerr << "Cannot read file " << file << ": " << e.message() << std::endl;
+        return e.value();
       }
-
-      //      auto e = llvm::sys::fs::rename("/home/tom/CloverLeaf", "/home/tom/CloverLeaf2");
-      //      std::cout << e.message() << "\n";
-
-      auto opt = std::make_shared<clang::HeaderSearchOptions>();
-      opt->ModulesValidateOncePerBuildSession = true;
-      auto that =
-          ASTUnit::LoadFromASTFile((*r.pchName + "a"),               //
-                                   clang::RawPCHContainerReader(),   //
-                                   ASTUnit::WhatToLoad::LoadASTOnly, //
-                                   diagnostics,                      //
-                                   clang::FileSystemOptions(""),     //
-                                   opt, false, true, CaptureDiagsKind::None, true, true, VFS);
-
-      std::cout << that << "\n";
+      llvm::sys::fs::file_status status;
+      if (auto e = llvm::sys::fs::status(file, status); e) {
+        std::cerr << "Cannot stat file " << file << ": " << e.message() << std::endl;
+        return e.value();
+      }
+      dependencies.emplace(
+          file, p3md::Database::Source{llvm::sys::toTimeT(status.getLastModificationTime()),
+                                       (*buffer)->getBuffer().str()});
     }
-  });
+  }
 
-  return 0;
+  auto dbEntries =
+      results | collect([&](auto &result) {
+        return result.pchName ^ map([&](auto name) {
+                 return std::pair{result.sourceName,
+                                  p3md::Database::PCHEntry{
+                                      db->getCompileCommands(result.sourceName) ^ map([](auto &cc) {
+                                        return cc.CommandLine ^ mk_string(" ");
+                                      }),
+                                      name, "", result.dependencies
+
+                                  }};
+               });
+      }) |
+      and_then([](auto xs) { return std::unordered_map{xs.begin(), xs.end()}; });
+
+  auto totalSourceBytes = dependencies | values() | map([](auto x) { return x.content.size(); }) |
+                          fold_left(0, std::plus<>());
+
+  std::cout << "Database contains " << dependencies.size() << " dependent sources (total "
+            << std::round(static_cast<double>(totalSourceBytes) / 1000 / 1000) << " MB)"
+            << std::endl;
+
+  nlohmann::json databaseJson = p3md::Database( //
+      CLANG_VERSION_MAJOR, CLANG_VERSION_MINOR, CLANG_VERSION_PATCHLEVEL, dbEntries, dependencies);
+
+  dbFile << databaseJson.dump(1);
+  dbFile.close();
+
+  return EXIT_SUCCESS;
+
+  //
+  //  results ^ for_each([&](auto &r) {
+  //    std::cout << r.sourceName << " " << (r.pchName ? *r.pchName : "(failed)") << " = \n"
+  //              << " = " << r.diagnostic.size() << "\n";
+  //
+  //    IntrusiveRefCntPtr<DiagnosticOptions> DiagOpts2 = new DiagnosticOptions();
+  //    auto diagnostics = CompilerInstance::createDiagnostics(DiagOpts2.get());
+  //
+  //    if (r.pchName) {
+  //
+  //      IntrusiveRefCntPtr<llvm::vfs::InMemoryFileSystem> VFS =
+  //          new llvm::vfs::InMemoryFileSystem(true);
+  //
+  //      std::ifstream stream(r.pchName->c_str(), std::ios::in | std::ios::binary);
+  //      std::vector<char> contents((std::istreambuf_iterator<char>(stream)),
+  //                                 std::istreambuf_iterator<char>());
+  //
+  //      //
+  //      //      char outbuffer[1024*64];
+  //      //      auto infile =  fopen(r.pchName->c_str(), "rb");
+  //      ////      frewind(infile);
+  //      //
+  //      //      std::vector<char> outfile;
+  //      //      while(!feof(infile))
+  //      //      {
+  //      //        int len = fread( (void*)outbuffer, sizeof(outbuffer),1, infile);
+  //      //        outfile.insert(outfile.end(), outbuffer, outbuffer+len);
+  //      //      }
+  //      //      fclose(infile);
+  //
+  //      auto mb = llvm::MemoryBuffer::getMemBuffer(llvm::StringRef(contents.data(),
+  //      contents.size()),
+  //                                                 "", false);
+  //      VFS->addFile(*r.pchName + "a", 1, std::move(mb));
+  //
+  //      for (auto &[name, file] : r.dependencies) {
+  //
+  //        struct stat rr;
+  //        if (stat(file.c_str(), &rr) == 0) {
+  //          auto mod_time = rr.st_mtime;
+  //          if (file.empty()) continue;
+  //          //          std::cout << f << "\n";
+  //          auto mb2 = llvm::MemoryBuffer::getFileAsStream(file);
+  //          VFS->addFile(name, mod_time, std::move(mb2.get()));
+  //        }
+  //      }
+  //
+  //      //      auto x =
+  //      // VFS->status("/../lib/gcc/x86_64-redhat-linux/13/../../../../include/c++/13/iostream");
+  //      //
+  //      //
+  //      //      std::cout << "E=" << x.getError().message() << "\n";
+  //      //
+  //      //
+  //      //        std::cout << "AAAA << "<< x->exists() << std::endl;
+  //      //
+  //      //      std::abort();
+  //      //
+  //      //      for (auto f :
+  //      //      {"/../lib/gcc/x86_64-redhat-linux/13/../../../../include/c++/13/iostream"}) {
+  //      //
+  //      //        struct stat rr;
+  //      //        if (stat(f, &rr) == 0) {
+  //      //          auto mod_time = rr.st_mtime;
+  //      //          std::cout << f << "\n";
+  //      //          auto mb2 = llvm::MemoryBuffer::getFileAsStream(f);
+  //      //          VFS->addFile(f, mod_time, std::move(mb2.get()));
+  //      //        }
+  //      //      }
+  //
+  //      //      auto e = llvm::sys::fs::rename("/home/tom/CloverLeaf", "/home/tom/CloverLeaf2");
+  //      //      std::cout << e.message() << "\n";
+  //
+  //      auto opt = std::make_shared<clang::HeaderSearchOptions>();
+  //      opt->ModulesValidateSystemHeaders = false;
+  //      opt->ModulesValidateOncePerBuildSession = false;
+  //      opt->ModulesValidateDiagnosticOptions = false;
+  //      std::unique_ptr<ASTUnit> that =
+  //          ASTUnit::LoadFromASTFile((*r.pchName + "a"),               //
+  //                                   clang::RawPCHContainerReader(),   //
+  //                                   ASTUnit::WhatToLoad::LoadASTOnly, //
+  //                                   diagnostics,                      //
+  //                                   clang::FileSystemOptions(""),     //
+  //                                   opt, false, true, CaptureDiagsKind::None, true, true, VFS);
+  //
+  //      std::cout << that << "\n";
+  //
+  //      //      topLevelDeclsInMainFile(*that) | for_each([](auto x){
+  //      //        x->dump();
+  //      //      });
+  //    }
+  //  });
+  //
+  //  return 0;
 
   //  ClangTool Tool(*that, files);
   //

@@ -5,7 +5,7 @@
 namespace p3md::list {
 
 struct Options {
-  std::string dbFile;
+  std::string dbDir;
 };
 int run(const Options &options);
 

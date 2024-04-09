@@ -80,7 +80,6 @@ llvm::Expected<p3md::build::Options> p3md::parseBuildOpts(int argc, const char *
 
   build::Options options;
   options.buildDir = buildDir.getValue();
-  options.rootDirs = rootDirs;
   options.sourceGlob = sourceGlob.getValue();
   options.argsBefore = argsBefore;
   options.argsAfter = argsAfter;

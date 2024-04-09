@@ -19,6 +19,16 @@ message(STATUS "Using ClangConfig.cmake in: ${Clang_DIR}")
 include(${LLVM_DIR}/AddLLVM.cmake)
 include(${Clang_DIR}/AddClang.cmake)
 
+set(ZSTD_BUILD_STATIC ON)
+set(ZSTD_BUILD_SHARED OFF)
+
+FetchContent_Declare(
+        zstd
+        URL https://github.com/facebook/zstd/releases/download/v1.5.6/zstd-1.5.6.tar.gz
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        SOURCE_SUBDIR build/cmake)
+FetchContent_MakeAvailable(zstd)
+
 FetchContent_Declare(
         Aspartame
         #        SOURCE_DIR /home/tom/Aspartame
@@ -118,6 +128,7 @@ add_clang_library(P3MD
 target_include_directories(P3MD PRIVATE include ${json_SOURCE_DIR})
 target_link_libraries(P3MD PRIVATE
         z
+        libzstd_static
         Aspartame::Aspartame
         tree-sitter
         tree-sitter-c
