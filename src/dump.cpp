@@ -1,5 +1,8 @@
 #include "p3md/dump.h"
 
-int p3md::dump ::run(const p3md::dump::Options &options){
-  return 0;
+#include <iostream>
+
+int p3md::dump ::run(const p3md::dump::Options &options) {
+  std::cout << "Not implemented yet" << std::endl;
+  return EXIT_SUCCESS;
 }

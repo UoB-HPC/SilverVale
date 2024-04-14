@@ -30,7 +30,6 @@ std::map<std::string, std::pair<Kind, std::string>> table = {
     {"dump-source", {Kind::DumpSource, "Dump a P3MD database's source data of selected entries"}},
     {"dump-tsnode", {Kind::DumpTSNode, "Dump a P3MD database's tsnode data of selected entries"}}};
 
-static cl::list<std::string> Argv(cl::ConsumeAfter, cl::desc("<program arguments>..."));
 
 int main(int argc, const char **argv) {
 
@@ -75,13 +74,13 @@ int main(int argc, const char **argv) {
                  case Kind::DiffSource:
                    return p3md::diff_main(p3md::DataKind::Source, sliced.size(), sliced.data());
                  case Kind::DiffTSNode:
-                   return p3md::diff_main(p3md::DataKind::TSNode, sliced.size(), sliced.data());
+                   return p3md::diff_main(p3md::DataKind::TSTree, sliced.size(), sliced.data());
                  case Kind::DumpSTree:
                    return p3md::dump_main(p3md::DataKind::STree, sliced.size(), sliced.data());
                  case Kind::DumpSource:
                    return p3md::dump_main(p3md::DataKind::Source, sliced.size(), sliced.data());
                  case Kind::DumpTSNode:
-                   return p3md::dump_main(p3md::DataKind::TSNode, sliced.size(), sliced.data());
+                   return p3md::dump_main(p3md::DataKind::TSTree, sliced.size(), sliced.data());
                }
                return EXIT_SUCCESS;
              },

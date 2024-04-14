@@ -11,8 +11,12 @@
 #include "clang/Tooling/Tooling.h"
 #include "llvm/Support/CommandLine.h"
 
+#include "aspartame/string.hpp"
+#include "aspartame/vector.hpp"
+
 #include "p3md/p3md.h"
 
+using namespace aspartame;
 using namespace llvm;
 using namespace clang::tooling;
 using namespace clang;
@@ -37,41 +41,32 @@ llvm::Expected<p3md::build::Options> p3md::parseBuildOpts(int argc, const char *
 
   static cl::opt<std::string> buildDir(
       "build", cl::desc("The build directory containing compile_command.json"), //
-      cl::cat(category), cl::sub(cl::SubCommand::getAll()));
+      cl::cat(category));
 
   static cl::opt<std::string> outDir(
       "out",
       cl::desc("The output directory for storing database files, "
                "defaults to the last 2 segments of the build directory joined with full stop"), //
-      cl::init(""), cl::cat(category), cl::sub(cl::SubCommand::getAll()));
-
-  static cl::list<std::string> rootDirs( //
-      "root",
-      cl::desc("Base path for sources in CSV format, "
-               "this also prevents analysis (tree inlining, etc) from escaping this path"),
-      cl::ZeroOrMore, cl::CommaSeparated, //
-      cl::cat(category), cl::sub(cl::SubCommand::getAll()));
+      cl::init(""), cl::cat(category));
 
   static cl::list<std::string> argsAfter( //
       "args-before", cl::desc("Extra arguments to prepend to the compiler command line"),
-      cl::cat(category), cl::sub(cl::SubCommand::getAll()));
+      cl::cat(category));
 
   static cl::list<std::string> argsBefore( //
       "args-after", cl::desc("Extra arguments to append to the compiler command line"),
-      cl::cat(category), cl::sub(cl::SubCommand::getAll()));
+      cl::cat(category));
 
   static cl::opt<bool> clearOutDir( //
-      "clear", cl::desc("Clear database output directory even if non-empty"), cl::cat(category),
-      cl::sub(cl::SubCommand::getAll()));
+      "clear", cl::desc("Clear database output directory even if non-empty"), cl::cat(category));
 
   static cl::opt<int> maxThreads( //
       "j", cl::desc("Number of parallel AST jobs in parallel, defaults to total number of threads"),
-      cl::init(std::thread::hardware_concurrency()), cl::cat(category),
-      cl::sub(cl::SubCommand::getAll()));
+      cl::init(std::thread::hardware_concurrency()), cl::cat(category));
 
   static cl::opt<std::string> sourceGlob( //
       cl::Positional, cl::desc("Glob pattern for files to include in the database"), cl::init("*"),
-      cl::cat(category), cl::sub(cl::SubCommand::getAll()));
+      cl::cat(category));
 
   cl::ResetAllOptionOccurrences();
   cl::HideUnrelatedOptions(category);
@@ -98,44 +93,60 @@ llvm::Expected<p3md::build::Options> p3md::parseBuildOpts(int argc, const char *
 
 Expected<p3md::list::Options> p3md::parseListOpts(int argc, const char **argv) {
   static cl::OptionCategory category("List options");
+
   static cl::opt<std::string> dbPath(
       "db", cl::desc("The path to the P3MD database, as generated using the build command"),
       cl::Required, cl::cat(category));
 
-  if (auto e = parseCategory(category, argc, argv); e) return std::move(*e);
+  static cl::opt<p3md::list::Kind> kind(
+      "kind", cl::desc("The kind of data to list"),
+      cl::values(
+          clEnumValN(p3md::list::Kind::Entry, "entry", "Enable trivial optimizations"),
+          clEnumValN(p3md::list::Kind::Dependencies, "deps", "Enable default optimizations")),
+      cl::Required, cl::cat(category));
 
-  return list::Options{dbPath.getValue()};
+  if (auto e = parseCategory(category, argc, argv); e) return std::move(*e);
+  return list::Options{dbPath.getValue(), kind};
 }
 
 Expected<p3md::diff::Options> p3md::parseDiffOpts(int argc, const char **argv) {
-  static cl::OptionCategory category("Diff options");
-  static cl::opt<std::string> leftDbPath(
-      "l", cl::desc("The path to the first P3MD database, as generated using the build command"),
-      cl::Required, cl::cat(category));
+  static cl::OptionCategory category("Diff options", "");
 
-  static cl::opt<std::string> rightDbPath(
-      "r", cl::desc("The path to the second P3MD database, as generated using the build command"),
-      cl::Required, cl::cat(category));
+  static cl::opt<std::string> root(
+      "root",
+      cl::desc("The root path shared by all models. "
+               "Analysis (diff) will not escape the unions of all root paths."),
+      cl::Optional);
 
   static cl::list<std::string> entries( //
-      cl::Positional, cl::desc("<entry0> [... <entryN>]"), cl::OneOrMore, cl::cat(category),
-      cl::sub(cl::SubCommand::getAll()));
+      cl::FormattingFlags::Positional,
+      cl::desc("<entry> [... <entryN>]\n"
+               "  Compare all databases against the first entry.\n"
+               "  Each entry can be suffixed by a colon separated list of root base paths (e.g "
+               "db_path_1:rootA:rootB db_path_2:rootC:rootD).\n"
+               "  Analysis (diff) will not escape the union of all base paths."),
+      cl::cat(category));
 
   if (auto e = parseCategory(category, argc, argv); e) return std::move(*e);
 
-  return diff::Options{leftDbPath.getValue(), rightDbPath.getValue(), entries};
+  return diff::Options{entries | map([](auto &x) {
+                         auto paths = x ^ split(":");
+                         return std::pair{paths ^ head_maybe() ^ get_or_else(x),
+                                          root.empty() ? paths ^ tail()
+                                                       : paths ^ tail() ^ append(root)};
+                       }) |
+                       to_vector()};
 }
 
 Expected<p3md::dump::Options> p3md::parseDumpOpts(int argc, const char **argv) {
-  static cl::OptionCategory category("Diff options");
+  static cl::OptionCategory category("Dump options");
 
   static cl::opt<std::string> dbPath(
       "db", cl::desc("The path to the P3MD database, as generated using the build command"),
       cl::Required, cl::cat(category));
 
   static cl::list<std::string> Entries( //
-      cl::Positional, cl::desc("<entry0> [... <entryN>]"), cl::OneOrMore, cl::cat(category),
-      cl::sub(cl::SubCommand::getAll()));
+      cl::Positional, cl::desc("<entry0> [... <entryN>]"), cl::OneOrMore, cl::cat(category));
 
   if (auto e = parseCategory(category, argc, argv); e) return std::move(*e);
 
@@ -146,7 +157,7 @@ template <typename P, typename F>
 static int parseAndRun(int argc, const char **argv, P parse, F run) {
   auto maybeOptions = parse(argc, argv);
   if (auto x = maybeOptions.takeError()) {
-    std::cout << toString(std::move(x));
+    std::cerr << toString(std::move(x));
     return EXIT_FAILURE;
   }
   return run(maybeOptions.get());

@@ -1,9 +1,12 @@
 #pragma once
 
 #include <ctime>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include "clang/Frontend/ASTUnit.h"
 
 #include "json.hpp"
 
@@ -23,10 +26,21 @@ struct Database {
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(PCHEntry, compileCommands, pchName, pchHash, dependencies);
   };
   size_t clangMajorVersion{}, clangMinorVersion{}, clangPatchVersion{};
-  std::unordered_map<std::string, PCHEntry> entries;
-  std::unordered_map<std::string, Source> dependencies;
-  NLOHMANN_DEFINE_TYPE_INTRUSIVE(Database, clangMajorVersion, clangMinorVersion, clangPatchVersion,
-                                 entries, dependencies);
+  std::unordered_map<std::string, PCHEntry> entries{};
+  std::unordered_map<std::string, Source> dependencies{};
+  NLOHMANN_DEFINE_TYPE_INTRUSIVE(Database, //
+                                 clangMajorVersion, clangMinorVersion, clangPatchVersion, entries,
+                                 dependencies);
+
+  static std::unique_ptr<Database> fromJson(const std::string &json);
+
+  class Materialised {
+    std::vector<std::vector<char>> astBackingBuffer;
+
+  public:
+    explicit Materialised(const Database &db);
+    std::unordered_map<std::string, std::unique_ptr<clang::ASTUnit>> units;
+  };
 };
 
 } // namespace p3md

@@ -6,7 +6,10 @@
 #include <type_traits>
 #include <vector>
 
+#include "aspartame/view.hpp"
+
 #include "json.hpp"
+#include "tree_sitter/api.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 
 namespace p3md {
@@ -29,19 +32,19 @@ void printTree(int depth, std::vector<bool> branch, const N &node, std::ostream 
   }
 }
 
-template <typename T> struct SemanticNode;
+template <typename T> struct SemanticTree;
 template <typename T> class SemanticTreeIterator {
-  std::stack<SemanticNode<T> *> stack;
+  std::stack<SemanticTree<T> *> stack;
 
 public:
   using iterator_category = std::forward_iterator_tag;
-  using value_type = SemanticNode<T>;
+  using value_type = SemanticTree<T>;
   using difference_type = std::ptrdiff_t;
   using pointer = value_type *;
   using reference = value_type &;
 
   SemanticTreeIterator() = default;
-  explicit SemanticTreeIterator(SemanticNode<T> *node) {
+  explicit SemanticTreeIterator(SemanticTree<T> *node) {
     if (node) stack.push(node);
   }
 
@@ -68,31 +71,40 @@ public:
   bool operator!=(const SemanticTreeIterator &other) const { return !other.operator==(*this); }
 };
 
-template <typename T> struct SemanticNode {
+template <typename T> struct SemanticTree {
   T value;
-  std::vector<SemanticNode<T>> children;
+  std::vector<SemanticTree<T>> children;
 
-  NLOHMANN_DEFINE_TYPE_INTRUSIVE(SemanticNode<T>, value, children);
+  NLOHMANN_DEFINE_TYPE_INTRUSIVE(SemanticTree<T>, value, children);
 
   template <typename Show> void print(Show show, std::ostream &out) const {
-    printTree<SemanticNode>(
-        0, {}, *this, out, [&](const SemanticNode<T> &n) { return show(n.value); },
-        [&](const SemanticNode<T> &n) { return n.children; });
+    printTree<SemanticTree>(
+        0, {}, *this, out, [&](const SemanticTree<T> &n) { return show(n.value); },
+        [&](const SemanticTree<T> &n) { return n.children; });
   }
 
-  [[nodiscard]] bool operator!=(const SemanticNode<T> &rhs) const { return !rhs.operator==(*this); }
-  [[nodiscard]] bool operator==(const SemanticNode<T> &rhs) const {
+  [[nodiscard]] bool operator!=(const SemanticTree<T> &rhs) const { return !rhs.operator==(*this); }
+  [[nodiscard]] bool operator==(const SemanticTree<T> &rhs) const {
     return value == rhs.value && children == rhs.children;
   }
   template <typename U>
-  friend std::ostream &operator<<(std::ostream &os, const SemanticNode<U> &node);
+  friend std::ostream &operator<<(std::ostream &os, const SemanticTree<U> &node);
 
   template <typename F> void walk(F f) const {
-    static_assert(std::is_same_v<std::invoke_result_t<F, const SemanticNode<T> &>, bool>);
+    static_assert(std::is_same_v<std::invoke_result_t<F, const SemanticTree<T> &>, bool>);
     if (f(*this)) {
-      for (auto &child : children)
-        walk<F>(child);
+      for (const auto &child : children)
+        child.walk(f);
     }
+  }
+
+  template <typename U, typename Alloc, typename Insert>
+  U traverse(Alloc alloc, Insert insert, int depth = 0) const {
+    U n = alloc(value);
+    for (const auto &child : children) {
+      insert(n, std::move(child.template traverse<U, Alloc, Insert>(alloc, insert, depth + 1)));
+    }
+    return n;
   }
 
   [[nodiscard]] SemanticTreeIterator<T> begin() { return SemanticTreeIterator<T>{this}; }
@@ -100,7 +112,7 @@ template <typename T> struct SemanticNode {
 };
 
 template <typename U>
-std::ostream &operator<<(std::ostream &os, const SemanticNode<U> &node) { // NOLINT(*-no-recursion)
+std::ostream &operator<<(std::ostream &os, const SemanticTree<U> &node) { // NOLINT(*-no-recursion)
   if (node.children.empty()) {
     os << "{\"" << node.value << "\"}";
   } else {
@@ -142,12 +154,12 @@ public:
   };
 
 private:
-  SemanticNode<std::string> *node;
+  SemanticTree<std::string> *node;
   clang::ASTContext &Context;
   Option option;
 
   template <typename F, typename... Args> [[nodiscard]] bool scoped(F f, Args... args) {
-    SemanticNode<std::string> *prev = node;
+    SemanticTree<std::string> *prev = node;
     node = &node->children.emplace_back(std::forward<Args &&>(args)...);
     auto x = f();
     node = prev;
@@ -160,10 +172,67 @@ private:
   }
 
 public:
-  TreeSemanticVisitor(SemanticNode<std::string> *root, clang::ASTContext &Context, Option option);
+  TreeSemanticVisitor(SemanticTree<std::string> *root, clang::ASTContext &Context, Option option);
 
   bool TraverseDecl(clang::Decl *decl);
   bool TraverseStmt(clang::Stmt *stmt);
+};
+
+struct TsTree {
+
+public:
+  std::string source;
+  TSParser *parser;
+  TSTree *tree;
+
+  TsTree(const std::string &source, const TSLanguage *lang);
+
+  ~TsTree();
+
+  [[nodiscard]] TSNode root() const;
+
+  [[nodiscard]] TsTree deleteNodes(const std::string &type,
+                                   const std::optional<TSNode> &node = {}) const;
+
+  template <typename F> void walk(F f, const std::optional<TSNode> &node = {}) const {
+    static_assert(std::is_same_v<std::invoke_result_t<F, const TSNode &>, bool>);
+    if (!node) walk<F>(f, root());
+    else if (f(*node)) {
+      for (uint32_t i = 0; i < ts_node_child_count(*node); ++i) {
+        walk(f, ts_node_child(*node, i));
+      }
+    }
+  }
+
+  template <typename U, typename Alloc, typename Insert>
+  U traverse(Alloc alloc, Insert insert, int depth = 0,
+             const std::optional<TSNode> &node = {}) const {
+    if (!node) return traverse<U, Alloc, Insert>(alloc, insert, depth, root());
+    else {
+      U n = alloc((ts_node_type(*node)));
+      for (uint32_t i = 0; i < ts_node_child_count(*node); ++i) {
+        insert(n, std::move(traverse<U, Alloc, Insert>(alloc, insert, depth + 1,
+                                                       ts_node_child(*node, i))));
+      }
+      return n;
+    }
+  }
+
+  template <typename Show>
+  void print(Show show, std::ostream &out, const std::optional<TSNode> &node = {}) const {
+    using namespace aspartame;
+    printTree<TSNode>(
+        0, {}, node, out, [&](const TSNode &n) { return show(ts_node_type(n)); },
+        [&](const TSNode &n) -> std::vector<TSNode> {
+          return iota<uint32_t>(0, ts_node_child_count(n))              //
+                 | map([&](uint32_t i) { return ts_node_child(n, i); }) //
+                 | to_vector();
+        });
+  }
+
+private:
+  static void deleteNodes(const TSNode &node, const std::string &type, size_t &offset,
+                          std::string &out);
 };
 
 } // namespace p3md

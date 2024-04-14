@@ -37,7 +37,7 @@ static inline CXXMethodDecl *extractLambdaCallMethodFromDeclRefTpe(Expr *expr) {
   return {};
 }
 
-p3md::TreeSemanticVisitor::TreeSemanticVisitor(p3md::SemanticNode<std::string> *root,
+p3md::TreeSemanticVisitor::TreeSemanticVisitor(p3md::SemanticTree<std::string> *root,
                                                clang::ASTContext &Context,
                                                p3md::TreeSemanticVisitor::Option option)
     : node(root), Context(Context), option(std::move(option)) {}
@@ -145,6 +145,7 @@ bool p3md::TreeSemanticVisitor::TraverseStmt(clang::Stmt *stmt) { // NOLINT(*-no
          });
 }
 bool p3md::TreeSemanticVisitor::TraverseDecl(clang::Decl *decl) { // NOLINT(*-no-recursion)
+  if(!decl) return true;
   auto suffix = visitDyn<std::string>(
       decl, //
       [&](FunctionDecl *fn) {
@@ -156,4 +157,34 @@ bool p3md::TreeSemanticVisitor::TraverseDecl(clang::Decl *decl) { // NOLINT(*-no
   std::string name = decl->getDeclKindName();
   return scoped([&]() { return RecursiveASTVisitor<TreeSemanticVisitor>::TraverseDecl(decl); },
                 suffix ^ map([&](auto s) { return name + ": " + s; }) ^ get_or_else(name));
+}
+p3md::TsTree::TsTree(const std::string &source, const TSLanguage *lang)
+    : source(source), parser(ts_parser_new()) {
+  ts_parser_set_language(parser, lang);
+  tree = ts_parser_parse_string(parser, nullptr, source.c_str(), source.size());
+}
+p3md::TsTree::~TsTree() {
+  ts_tree_delete(tree);
+  ts_parser_delete(parser);
+}
+TSNode p3md::TsTree::root() const { return ts_tree_root_node(tree); }
+p3md::TsTree p3md::TsTree::deleteNodes(const std::string &type,
+                                       const std::optional<TSNode> &node) const {
+  size_t offset = 0;
+  std::string out = source;
+  deleteNodes(node ? *node : root(), type, offset, out);
+  return {out, ts_parser_language(parser)};
+}
+void p3md::TsTree::deleteNodes(const TSNode &node, const std::string &type, size_t &offset,
+                               std::string &out) {
+  if (std::string(ts_node_type(node)) == type) {
+    auto start = ts_node_start_byte(node);
+    auto end = ts_node_end_byte(node);
+    out.erase(start - offset, end - start);
+    offset += end - start;
+  } else {
+    for (uint32_t i = 0; i < ts_node_child_count(node); ++i) {
+      deleteNodes(ts_node_child(node, i), type, offset, out);
+    }
+  }
 }

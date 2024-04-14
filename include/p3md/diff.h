@@ -6,9 +6,7 @@
 namespace p3md::diff {
 
 struct Options {
-  std::string leftDbFile;
-  std::string rightDbFile;
-  std::vector<std::string> entries;
+  std::vector<std::pair<std::string, std::vector<std::string>>> entries;
 };
 int run(const Options &options);
 

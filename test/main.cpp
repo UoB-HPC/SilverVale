@@ -28,11 +28,11 @@ std::unique_ptr<ASTUnit> makeASTUnit(const std::string &content) {
   return std::move(xs[0]);
 }
 
-std::vector<p3md::SemanticNode<std::string>>
+std::vector<p3md::SemanticTree<std::string>>
 makeNodes(const p3md::TreeSemanticVisitor::Option &option, const std::string &content) {
   auto unit = makeASTUnit(content);
   return p3md::topLevelDeclsInMainFile(*unit) ^ map([&](auto decl) {
-           p3md::SemanticNode<std::string> root{"root", {}};
+           p3md::SemanticTree<std::string> root{"root", {}};
            p3md::TreeSemanticVisitor V(&root, unit->getASTContext(), option);
            V.TraverseDecl(decl);
            //           decl->dump();
