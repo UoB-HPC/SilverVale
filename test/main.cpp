@@ -3,6 +3,8 @@
 #include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Tooling/Tooling.h"
 
+#include "tree_sitter_cpp/api.h"
+
 #include "aspartame/optional.hpp"
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
@@ -40,9 +42,34 @@ makeNodes(const p3md::TreeSemanticVisitor::Option &option, const std::string &co
          });
 }
 
+TEST_CASE("ts-normalise-comments") {
+
+  auto source = R"(
+//*Foo*/
+int main(/**/)/* a */{
+// a
+return 0 /**/ + 1;// b
+}//
+//
+// a // b
+)";
+
+  CHECK(p3md::TsTree(source, tree_sitter_cpp()).deleteNodes("comment").source == R"(
+
+int main(){
+
+return 0  + 1;
+}
+
+
+)");
+}
+
 TEST_CASE("inline") {
   auto trees =
-      makeNodes({.normaliseVarName = false, .normaliseFnName = false, .roots = {""}}, R"(
+      makeNodes(
+          {.inlineCalls = true, .normaliseVarName = false, .normaliseFnName = false, .roots = {""}},
+          R"(
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -81,7 +108,9 @@ int b() {
 
 TEST_CASE("inlines invariant") {
   auto trees =
-      makeNodes({.normaliseVarName = true, .normaliseFnName = false, .roots = {""}}, R"(
+      makeNodes(
+          {.inlineCalls = true, .normaliseVarName = true, .normaliseFnName = false, .roots = {""}},
+          R"(
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -120,7 +149,9 @@ int b() {
 
 TEST_CASE("two layers") {
   auto trees =
-      makeNodes({.normaliseVarName = true, .normaliseFnName = false, .roots = {""}}, R"(
+      makeNodes(
+          {.inlineCalls = true, .normaliseVarName = true, .normaliseFnName = false, .roots = {""}},
+          R"(
 #include <stdio.h>
 #include <stdlib.h>
 

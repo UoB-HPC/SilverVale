@@ -110,7 +110,17 @@ Expected<p3md::list::Options> p3md::parseListOpts(int argc, const char **argv) {
 }
 
 Expected<p3md::diff::Options> p3md::parseDiffOpts(int argc, const char **argv) {
-  static cl::OptionCategory category("Diff options", "");
+  static cl::OptionCategory category("Diff options");
+
+  static cl::opt<DataKind> kind(
+      "kind", cl::desc("Available data for applying diff"), cl::init(DataKind::Source),
+      cl::values(
+          clEnumValN(DataKind::Source, "source", "Direct source code SLOC diff"),
+          clEnumValN(DataKind::TSTree, "tstree", "Tree-sitter tree with comments removed"),
+          clEnumValN(DataKind::STree, "stree",
+                     "ClangAST based semantic tree with symbols normalised"),
+          clEnumValN(DataKind::STreeInline, "stree+i",
+                     "ClangAST based semantic tree with symbols normalised and calls inlined")));
 
   static cl::opt<std::string> root(
       "root",
@@ -128,14 +138,13 @@ Expected<p3md::diff::Options> p3md::parseDiffOpts(int argc, const char **argv) {
       cl::cat(category));
 
   if (auto e = parseCategory(category, argc, argv); e) return std::move(*e);
-
-  return diff::Options{entries | map([](auto &x) {
-                         auto paths = x ^ split(":");
-                         return std::pair{paths ^ head_maybe() ^ get_or_else(x),
-                                          root.empty() ? paths ^ tail()
-                                                       : paths ^ tail() ^ append(root)};
-                       }) |
-                       to_vector()};
+  return diff::Options{kind.getValue(), entries | map([](auto &x) {
+                                          auto paths = x ^ split(":");
+                                          return std::pair{paths ^ head_maybe() ^ get_or_else(x),
+                                                           root.empty()
+                                                               ? paths ^ tail()
+                                                               : paths ^ tail() ^ append(root)};
+                                        }) | to_vector()};
 }
 
 Expected<p3md::dump::Options> p3md::parseDumpOpts(int argc, const char **argv) {
@@ -171,10 +180,10 @@ int p3md::list_main(int argc, const char **argv) {
   return parseAndRun(argc, argv, &p3md::parseListOpts, &p3md::list::run);
 }
 
-int p3md::dump_main(DataKind kind, int argc, const char **argv) {
+int p3md::dump_main(int argc, const char **argv) {
   return parseAndRun(argc, argv, &p3md::parseDumpOpts, &p3md::dump::run);
 }
 
-int p3md::diff_main(DataKind kind, int argc, const char **argv) {
+int p3md::diff_main(int argc, const char **argv) {
   return parseAndRun(argc, argv, &p3md::parseDiffOpts, &p3md::diff::run);
 }

@@ -15,7 +15,7 @@ namespace p3md {
 
 [[nodiscard]] int build_main(int argc, const char **argv);
 [[nodiscard]] int list_main(int argc, const char **argv);
-[[nodiscard]] int diff_main(DataKind kind, int argc, const char **argv);
-[[nodiscard]] int dump_main(DataKind kind, int argc, const char **argv);
+[[nodiscard]] int diff_main(int argc, const char **argv);
+[[nodiscard]] int dump_main(int argc, const char **argv);
 
 } // namespace p3md

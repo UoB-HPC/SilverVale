@@ -1,8 +1,6 @@
 cmake_minimum_required(VERSION 3.19 FATAL_ERROR)
 project(P3MD C CXX)
 
-set(FETCHCONTENT_FULLY_DISCONNECTED ON)
-
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_STANDARD 11)
 
@@ -152,15 +150,15 @@ target_link_libraries(P3MD
         PRIVATE
         libzstd_static
         Aspartame::Aspartame
-        tree-sitter-c
-        tree-sitter-cpp
-        tree-sitter-fortran
         TreeSimilarity
         dtl
         TBB::tbb
 
         PUBLIC
         tree-sitter
+        tree-sitter-c
+        tree-sitter-cpp
+        tree-sitter-fortran
         clang-cpp
         LLVM
 )

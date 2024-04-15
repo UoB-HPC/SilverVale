@@ -5,7 +5,8 @@
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/TextDiagnosticBuffer.h"
 
-#include "aspartame/unordered_map.hpp"
+#include "aspartame/map.hpp"
+#include "aspartame/view.hpp"
 
 using namespace aspartame;
 using namespace clang;

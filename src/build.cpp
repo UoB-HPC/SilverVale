@@ -17,11 +17,8 @@
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Tooling/Tooling.h"
-#include "llvm/Support/CommandLine.h"
 
 #include "aspartame/optional.hpp"
-#include "aspartame/set.hpp"
-#include "aspartame/unordered_map.hpp"
 #include "aspartame/variant.hpp"
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
@@ -31,6 +28,8 @@
 #include "p3md/database.h"
 #include "p3md/glob.h"
 
+#include "oneapi/tbb.h"
+
 // #include "apted_tree_index.h"
 // #include "node.h"
 // #include "string_label.h"
@@ -39,7 +38,6 @@
 using namespace aspartame;
 using namespace clang;
 using namespace clang::tooling;
-
 
 static std::optional<std::pair<std::unique_ptr<CompilationDatabase>, std::string>>
 findCompilationDatabaseFromDirectory(StringRef root) {
@@ -126,7 +124,7 @@ struct Task {
     std::string sourceName;
     std::optional<std::string> pchName;
     std::string diagnostic;
-    std::unordered_map<std::string, std::string> dependencies;
+    std::map<std::string, std::string> dependencies;
   };
 };
 
@@ -154,46 +152,48 @@ static std::vector<Task::Result> buildPCHParallel(const CompilationDatabase &db,
                        });
   std::atomic_size_t completed{};
   std::vector<Task::Result> results(success.size());
-  auto threads =
-      (success | grouped(unitsPerThread)             //
-       | map([](auto v) { return v | to_vector(); }) //
-       | to_vector()) ^
-      map([&](auto &tasks) {
-        return std::thread([&, tasks, total = files.size()]() {
-          for (auto &task : tasks) {
-            std::string messageStorage;
-            llvm::raw_string_ostream message(messageStorage);
 
-            IntrusiveRefCntPtr<DiagnosticOptions> DiagOpts = new DiagnosticOptions();
-            TextDiagnosticPrinter diagPrinter(message, DiagOpts.get());
+      auto threads =
+          (success | grouped(unitsPerThread)             //
+           | map([](auto v) { return v | to_vector(); }) //
+           | to_vector()) ^
+          map([&](auto &tasks) {
+            return std::thread([&, tasks, total = files.size()]() {
+              for (auto &task : tasks) {
+                std::string messageStorage;
+                llvm::raw_string_ostream message(messageStorage);
 
-            ClangTool Tool(db, {task.sourceName});
-            Tool.setDiagnosticConsumer(&diagPrinter);
-            std::vector<std::unique_ptr<ASTUnit>> out;
-            auto result = Tool.buildASTs(out);
-            diagPrinter.finish();
-            if (result != 0)
-              message << "# Clang-Tool exited with non-zero code: " << result << "\n";
-            std::cout << "[" << completed++ << "/" << total << "] " << task.sourceName
-                      << std::setw(maxFileLength) << "\r";
-            std::cout.flush();
-            if (out.size() != 1)
-              message << "# More than one AST unit produced; "
+                IntrusiveRefCntPtr<DiagnosticOptions> DiagOpts = new DiagnosticOptions();
+                TextDiagnosticPrinter diagPrinter(message, DiagOpts.get());
+
+                ClangTool Tool(db, {task.sourceName});
+                Tool.setDiagnosticConsumer(&diagPrinter);
+                std::vector<std::unique_ptr<ASTUnit>> out;
+                auto result = Tool.buildASTs(out);
+                diagPrinter.finish();
+                if (result != 0)
+                  message << "# Clang-Tool exited with non-zero code: " << result << "\n";
+                std::cout << "[" << completed++ << "/" << total << "] " << task.sourceName
+                          << std::setw(maxFileLength) << "\r";
+                std::cout.flush();
+                if (out.size() != 1)
+                  message
+                      << "# More than one AST unit produced; "
                       << "input command is ill-formed and only the first unit will be preserved\n";
 
-            if (out[0]->serialize(*task.stream)) // XXX true is fail
-              message << "# Serialisation failed\n";
-            results[task.idx] = {task.sourceName, task.pchName, messageStorage, {}};
-            auto &sm = out[0]->getSourceManager();
-            std::for_each(sm.fileinfo_begin(), sm.fileinfo_end(), [&](auto entry) {
-              if (auto name = entry.getFirst()->getName().str(); !name.empty()) {
-                auto file = entry.getFirst()->tryGetRealPathName().str();
-                results[task.idx].dependencies.emplace(name, file);
+                if (out[0]->serialize(*task.stream)) // XXX true is fail
+                  message << "# Serialisation failed\n";
+                results[task.idx] = {task.sourceName, task.pchName, messageStorage, {}};
+                auto &sm = out[0]->getSourceManager();
+                std::for_each(sm.fileinfo_begin(), sm.fileinfo_end(), [&](auto entry) {
+                  if (auto name = entry.getFirst()->getName().str(); !name.empty()) {
+                    auto file = entry.getFirst()->tryGetRealPathName().str();
+                    results[task.idx].dependencies.emplace(name, file);
+                  }
+                });
               }
             });
-          }
-        });
-      });
+          });
   success.clear();
   for (auto &t : threads)
     t.join();
@@ -270,7 +270,7 @@ int p3md::build::run(const p3md::build::Options &options) {
 
   auto results = buildPCHParallel(*db, files, options.outDir, unitsPerThread);
 
-  std::unordered_map<std::string, p3md::Database::Source> dependencies;
+  std::map<std::string, p3md::Database::Source> dependencies;
   for (auto &result : results) {
     for (auto &[_, file] : result.dependencies) {
       auto buffer = llvm::MemoryBuffer::getFile(file, /*isText*/ true);
@@ -303,7 +303,7 @@ int p3md::build::run(const p3md::build::Options &options) {
                });
       }) |
       and_then([](auto xs) {
-        return std::unordered_map{xs.begin(), xs.end()};
+        return std::map{xs.begin(), xs.end()};
       });
 
   auto totalSourceBytes = dependencies | values() | map([](auto x) { return x.content.size(); }) |

@@ -3,7 +3,7 @@
 #include <ctime>
 #include <memory>
 #include <string>
-#include <unordered_map>
+#include <map>
 #include <vector>
 
 #include "clang/Frontend/ASTUnit.h"
@@ -22,12 +22,12 @@ struct Database {
     std::vector<std::string> compileCommands;
     std::string pchName;
     std::string pchHash;
-    std::unordered_map<std::string, std::string> dependencies;
+    std::map<std::string, std::string> dependencies;
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(PCHEntry, compileCommands, pchName, pchHash, dependencies);
   };
   size_t clangMajorVersion{}, clangMinorVersion{}, clangPatchVersion{};
-  std::unordered_map<std::string, PCHEntry> entries{};
-  std::unordered_map<std::string, Source> dependencies{};
+  std::map<std::string, PCHEntry> entries{};
+  std::map<std::string, Source> dependencies{};
   NLOHMANN_DEFINE_TYPE_INTRUSIVE(Database, //
                                  clangMajorVersion, clangMinorVersion, clangPatchVersion, entries,
                                  dependencies);
@@ -39,7 +39,7 @@ struct Database {
 
   public:
     explicit Materialised(const Database &db);
-    std::unordered_map<std::string, std::unique_ptr<clang::ASTUnit>> units;
+    std::map<std::string, std::unique_ptr<clang::ASTUnit>> units;
   };
 };
 

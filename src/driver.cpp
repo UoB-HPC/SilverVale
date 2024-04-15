@@ -12,24 +12,16 @@ using namespace aspartame;
 enum class Kind : uint8_t {
   Build = 1,
   List,
-  DiffSTree,
-  DiffSource,
-  DiffTSNode,
-  DumpSTree,
-  DumpSource,
-  DumpTSNode,
+  Diff,
+  Dump,
 };
 
 std::map<std::string, std::pair<Kind, std::string>> table = {
     {"build", {Kind::Build, "Build P3MD database"}},
     {"list", {Kind::List, "List entries in a P3MD database"}},
-    {"diff-stree", {Kind::DiffSTree, "Diff two P3MD database's stree data of selected entries"}},
-    {"diff-source", {Kind::DiffSource, "Diff two P3MD database's source data of selected entries"}},
-    {"diff-tsnode", {Kind::DiffTSNode, "Diff two P3MD database's tsnode data of selected entries"}},
-    {"dump-stree", {Kind::DumpSTree, "Dump a P3MD database's stree data of selected entries"}},
-    {"dump-source", {Kind::DumpSource, "Dump a P3MD database's source data of selected entries"}},
-    {"dump-tsnode", {Kind::DumpTSNode, "Dump a P3MD database's tsnode data of selected entries"}}};
-
+    {"diff", {Kind::Diff, "Diff one or more P3MD database against a base database"}},
+    {"dump", {Kind::Dump, "Dump selected entries from a P3MD database"}} //
+};
 
 int main(int argc, const char **argv) {
 
@@ -69,18 +61,8 @@ int main(int argc, const char **argv) {
                switch (kind) {
                  case Kind::Build: return p3md::build_main(sliced.size(), sliced.data());
                  case Kind::List: return p3md::list_main(sliced.size(), sliced.data());
-                 case Kind::DiffSTree:
-                   return p3md::diff_main(p3md::DataKind::STree, sliced.size(), sliced.data());
-                 case Kind::DiffSource:
-                   return p3md::diff_main(p3md::DataKind::Source, sliced.size(), sliced.data());
-                 case Kind::DiffTSNode:
-                   return p3md::diff_main(p3md::DataKind::TSTree, sliced.size(), sliced.data());
-                 case Kind::DumpSTree:
-                   return p3md::dump_main(p3md::DataKind::STree, sliced.size(), sliced.data());
-                 case Kind::DumpSource:
-                   return p3md::dump_main(p3md::DataKind::Source, sliced.size(), sliced.data());
-                 case Kind::DumpTSNode:
-                   return p3md::dump_main(p3md::DataKind::TSTree, sliced.size(), sliced.data());
+                 case Kind::Diff: return p3md::diff_main(sliced.size(), sliced.data());
+                 case Kind::Dump: return p3md::dump_main(sliced.size(), sliced.data());
                }
                return EXIT_SUCCESS;
              },

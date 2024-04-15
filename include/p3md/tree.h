@@ -148,6 +148,7 @@ class TreeSemanticVisitor : public clang::RecursiveASTVisitor<TreeSemanticVisito
 
 public:
   struct Option {
+    bool inlineCalls;
     bool normaliseVarName;
     bool normaliseFnName;
     std::vector<std::string> roots;
@@ -182,15 +183,11 @@ struct TsTree {
 
 public:
   std::string source;
-  TSParser *parser;
-  TSTree *tree;
-
+  std::shared_ptr<TSParser> parser;
+  std::shared_ptr<TSTree> tree;
+  TsTree();
   TsTree(const std::string &source, const TSLanguage *lang);
-
-  ~TsTree();
-
   [[nodiscard]] TSNode root() const;
-
   [[nodiscard]] TsTree deleteNodes(const std::string &type,
                                    const std::optional<TSNode> &node = {}) const;
 
@@ -209,7 +206,7 @@ public:
              const std::optional<TSNode> &node = {}) const {
     if (!node) return traverse<U, Alloc, Insert>(alloc, insert, depth, root());
     else {
-      U n = alloc((ts_node_type(*node)));
+      U n = alloc(std::string(ts_node_type(*node)));
       for (uint32_t i = 0; i < ts_node_child_count(*node); ++i) {
         insert(n, std::move(traverse<U, Alloc, Insert>(alloc, insert, depth + 1,
                                                        ts_node_child(*node, i))));
