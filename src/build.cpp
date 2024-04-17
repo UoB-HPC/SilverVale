@@ -4,10 +4,11 @@
 #include <system_error>
 #include <thread>
 
-#include "tree_sitter/api.h"
-#include "tree_sitter_c/api.h"
-#include "tree_sitter_cpp/api.h"
-#include "tree_sitter_fortran/api.h"
+#include "p3md/build.h"
+#include "p3md/compress.h"
+#include "p3md/database.h"
+#include "p3md/glob.h"
+#include "p3md/term.h"
 
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendActions.h"
@@ -23,11 +24,6 @@
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
 
-#include "p3md/build.h"
-#include "p3md/compress.h"
-#include "p3md/database.h"
-#include "p3md/glob.h"
-
 #include "oneapi/tbb.h"
 
 // #include "apted_tree_index.h"
@@ -38,19 +34,6 @@
 using namespace aspartame;
 using namespace clang;
 using namespace clang::tooling;
-
-static std::optional<std::pair<std::unique_ptr<CompilationDatabase>, std::string>>
-findCompilationDatabaseFromDirectory(StringRef root) {
-  while (!root.empty()) {
-    std::string discard;
-    if (std::unique_ptr<CompilationDatabase> DB =
-            CompilationDatabase::loadFromDirectory(root, discard)) {
-      return std::pair{std::move(DB), (root + "/compile_command.json").str()};
-    }
-    root = llvm::sys::path::parent_path(root);
-  }
-  return {};
-}
 
 ArgumentsAdjuster p3md::build::Options::resolveAdjuster() const {
   return combineAdjusters(getInsertArgumentAdjuster(argsBefore, ArgumentInsertPosition::BEGIN),
@@ -71,14 +54,6 @@ p3md::build::Options::resolveDatabase(const ArgumentsAdjuster &adjuster) const {
   }
   return {};
 }
-
-// node::Node<label::StringLabel> makeTree(int depth, const TSTree &node) {
-//   node::Node<label::StringLabel> n{{std::string(ts_node_type(node))}};
-//   for (uint32_t i = 0; i < ts_node_child_count(node); ++i) {
-//     n.add_child(makeTree(depth + 1, ts_node_child(node, i)));
-//   }
-//   return n;
-// }
 
 static int clearAndCreateDir(bool clear, const std::string &outDir) {
   auto dirOp = [&outDir](const std::string &op, auto f) {
@@ -130,7 +105,7 @@ struct Task {
 
 static std::vector<Task::Result> buildPCHParallel(const CompilationDatabase &db,
                                                   const std::vector<std::string> &files,
-                                                  std::string outDir, size_t unitsPerThread) {
+                                                  std::string outDir, bool verbose) {
 
   auto [success, failed] =
       (files | zip_with_index() | map([&](auto file, auto idx) {
@@ -152,54 +127,54 @@ static std::vector<Task::Result> buildPCHParallel(const CompilationDatabase &db,
                        });
   std::atomic_size_t completed{};
   std::vector<Task::Result> results(success.size());
+  tbb::parallel_for(size_t{}, success.size(), [&, total = files.size()](auto idx) {
+    auto &task = success[idx];
 
-      auto threads =
-          (success | grouped(unitsPerThread)             //
-           | map([](auto v) { return v | to_vector(); }) //
-           | to_vector()) ^
-          map([&](auto &tasks) {
-            return std::thread([&, tasks, total = files.size()]() {
-              for (auto &task : tasks) {
-                std::string messageStorage;
-                llvm::raw_string_ostream message(messageStorage);
+    auto compileCommand = [&]() {
+      return (db.getCompileCommands(task.sourceName) ^
+              mk_string("\n", [](auto &cc) { return cc.CommandLine ^ mk_string(" "); }));
+    };
 
-                IntrusiveRefCntPtr<DiagnosticOptions> DiagOpts = new DiagnosticOptions();
-                TextDiagnosticPrinter diagPrinter(message, DiagOpts.get());
+    std::string messageStorage;
+    llvm::raw_string_ostream message(messageStorage);
 
-                ClangTool Tool(db, {task.sourceName});
-                Tool.setDiagnosticConsumer(&diagPrinter);
-                std::vector<std::unique_ptr<ASTUnit>> out;
-                auto result = Tool.buildASTs(out);
-                diagPrinter.finish();
-                if (result != 0)
-                  message << "# Clang-Tool exited with non-zero code: " << result << "\n";
-                std::cout << "[" << completed++ << "/" << total << "] " << task.sourceName
-                          << std::setw(maxFileLength) << "\r";
-                std::cout.flush();
-                if (out.size() != 1)
-                  message
-                      << "# More than one AST unit produced; "
-                      << "input command is ill-formed and only the first unit will be preserved\n";
+    IntrusiveRefCntPtr<DiagnosticOptions> DiagOpts = new DiagnosticOptions();
+    TextDiagnosticPrinter diagPrinter(message, DiagOpts.get());
 
-                if (out[0]->serialize(*task.stream)) // XXX true is fail
-                  message << "# Serialisation failed\n";
-                results[task.idx] = {task.sourceName, task.pchName, messageStorage, {}};
-                auto &sm = out[0]->getSourceManager();
-                std::for_each(sm.fileinfo_begin(), sm.fileinfo_end(), [&](auto entry) {
-                  if (auto name = entry.getFirst()->getName().str(); !name.empty()) {
-                    auto file = entry.getFirst()->tryGetRealPathName().str();
-                    results[task.idx].dependencies.emplace(name, file);
-                  }
-                });
-              }
-            });
-          });
+    ClangTool Tool(db, {task.sourceName});
+
+    Tool.setDiagnosticConsumer(&diagPrinter);
+    std::vector<std::unique_ptr<ASTUnit>> out;
+    auto result = Tool.buildASTs(out);
+    diagPrinter.finish();
+    if (result != 0) message << "# Clang-Tool exited with non-zero code: " << result << "\n";
+    (P3MD_COUT << "[" << completed++ << "/" << total << "] " << std::left
+               << std::setw(maxFileLength) << task.sourceName << "\r")
+        .flush();
+    if (out.size() != 1)
+      message << "# More than one AST unit produced; "
+              << "input command is ill-formed and only the first unit will be preserved\n";
+
+    if (out[0]->serialize(*task.stream)) // XXX true is fail
+      message << "# Serialisation failed\n";
+    results[task.idx] = {task.sourceName, task.pchName, messageStorage, {}};
+    auto &sm = out[0]->getSourceManager();
+    std::for_each(sm.fileinfo_begin(), sm.fileinfo_end(), [&](auto entry) {
+      if (auto name = entry.getFirst()->getName().str(); !name.empty()) {
+        auto file = entry.getFirst()->tryGetRealPathName().str();
+        results[task.idx].dependencies.emplace(name, file);
+      }
+    });
+    if (!messageStorage.empty()) {
+      if (verbose) (P3MD_COUT << messageStorage).flush(); // skip dump command
+      else (P3MD_COUT << compileCommand() << "\n" << messageStorage).flush();
+    } else {
+      if (verbose) { P3MD_COUT << compileCommand() << std::endl; }
+    }
+  });
   success.clear();
-  for (auto &t : threads)
-    t.join();
 
-  std::cout << std::endl;
-
+  P3MD_COUT << std::endl;
   success.clear(); // drop the streams so the file can close
   for (auto &t : failed)
     results.emplace_back(t.sourceName, std::nullopt, t.error.message());
@@ -208,44 +183,50 @@ static std::vector<Task::Result> buildPCHParallel(const CompilationDatabase &db,
 
 int p3md::build::run(const p3md::build::Options &options) {
 
-  std::cout //
+  P3MD_COUT //
       << "Build:\n"
       << " - Build:        " << options.buildDir << " (compile_commands.json, ...)\n"
       << " - Output:       " << options.outDir << "\n"
-      << " - Clear output: " << (options.clearOutDir ? "yes" : "no") << "\n"
+      << " - Clear output: " << (options.clearOutDir ? "true" : "false") << "\n"
       << " - Max threads:  " << options.maxThreads << "\n";
-  //  std::cout << "Roots:\n";
-  //  for (auto &root : options.rootDirs)
-  //    std::cout << " - " << root << "\n";
+
+  tbb::global_control global_limit(tbb::global_control::max_allowed_parallelism,
+                                   options.maxThreads);
 
   auto adjuster = options.resolveAdjuster();
 
-  adjuster = combineAdjusters(
-      adjuster, getInsertArgumentAdjuster(
-                    CommandLineArguments{
-                        "-Wno-unknown-attributes",
-                        "-Wno-deprecated-declarations",
-                        "-fno-sycl",
-                        //                                                              "-v",
-                        "-I/usr/lib/clang/17/include",
-                        "-I/opt/intel/oneapi/compiler/2024.1/include",
-                        "-I/opt/intel/oneapi/compiler/2024.1/include/sycl",
-                    },
-                    ArgumentInsertPosition::END));
+  if (options.clangResourceDir) {
+    adjuster = combineAdjusters( //
+        adjuster, getInsertArgumentAdjuster(
+                      CommandLineArguments{
+                          "-Xclang",
+                          "-resource-dir",
+                          "-Xclang",
+                          *options.clangResourceDir,
+                          "-Xclang",
+                          "-internal-isystem",
+                          "-Xclang",
+                          *options.clangResourceDir,
+                      },
+                      ArgumentInsertPosition::END));
+  }
 
   std::shared_ptr<CompilationDatabase> db = options.resolveDatabase(adjuster);
   if (!db) {
-    std::cerr << "Unable to open compilation database at build dir" << options.buildDir
-              << ", please check if compile_commands.json exists in that directory\n";
+    std::cerr << "Unable to open compilation database at build dir `" << options.buildDir
+              << "`, please check if compile_commands.json exists in that directory." << std::endl;
     return EXIT_FAILURE;
   }
-  auto regex = globToRegex(options.sourceGlob);
-  auto files =
-      db->getAllFiles() ^ filter([&](auto file) { return std::regex_match(file, regex); }) ^ sort();
-  std::cout << "Adjustments: " << (adjuster({"${ARGS}"}, "${FILE}") | mk_string(" ")) << "\n";
-  std::cout << "Sources (" << files.size() << "/" << db->getAllFiles().size() << "):\n";
+  auto regexes = options.sourceGlobs ^ map([](auto &glob) { return globToRegex(glob); });
+  auto files = db->getAllFiles() ^ filter([&](auto file) {
+                 return regexes ^ exists([&](auto &r) { return std::regex_match(file, r); });
+               }) ^
+               sort();
+
+  P3MD_COUT << "Adjustments: " << (adjuster({"${ARGS}"}, "${FILE}") | mk_string(" ")) << "\n";
+  P3MD_COUT << "Sources (" << files.size() << "/" << db->getAllFiles().size() << "):\n";
   for (auto &file : files) {
-    std::cout << " - " << file << "\n";
+    P3MD_COUT << " - " << file << "\n";
   }
 
   if (auto result = clearAndCreateDir(options.clearOutDir, options.outDir);
@@ -261,14 +242,7 @@ int p3md::build::run(const p3md::build::Options &options) {
     return error.value();
   }
 
-  auto unitsPerThread =
-      static_cast<size_t>(std::ceil(static_cast<double>(files.size()) / options.maxThreads));
-
-  std::cout << "Scheduling " << unitsPerThread << " unit(s) per thread for a total of "
-            << options.maxThreads << " thread(s) to process " << files.size() << " entries."
-            << std::endl;
-
-  auto results = buildPCHParallel(*db, files, options.outDir, unitsPerThread);
+  auto results = buildPCHParallel(*db, files, options.outDir, options.verbose);
 
   std::map<std::string, p3md::Database::Source> dependencies;
   for (auto &result : results) {
@@ -302,14 +276,12 @@ int p3md::build::run(const p3md::build::Options &options) {
                                   }};
                });
       }) |
-      and_then([](auto xs) {
-        return std::map{xs.begin(), xs.end()};
-      });
+      and_then([](auto xs) { return std::map{xs.begin(), xs.end()}; });
 
-  auto totalSourceBytes = dependencies | values() | map([](auto x) { return x.content.size(); }) |
+  auto totalSourceBytes = dependencies | values() | map([](auto &x) { return x.content.size(); }) |
                           fold_left(0, std::plus<>());
 
-  std::cout << "Database contains " << dependencies.size() << " dependent sources (total "
+  P3MD_COUT << "Database contains " << dependencies.size() << " dependent sources (total="
             << std::round(static_cast<double>(totalSourceBytes) / 1000 / 1000) << " MB)"
             << std::endl;
 

@@ -40,47 +40,62 @@ llvm::Expected<p3md::build::Options> p3md::parseBuildOpts(int argc, const char *
   static cl::OptionCategory category("Build options");
 
   static cl::opt<std::string> buildDir(
-      "build", cl::desc("The build directory containing compile_command.json"), //
+      "build", cl::desc("The build directory containing compile_command.json."), //
       cl::cat(category));
+
+  static cl::list<std::string> sourceGlobs( //
+      cl::Positional, cl::ZeroOrMore,
+      cl::desc("<glob patterns for file to include in the database, defaults to *>"),
+      cl::list_init<std::string>({"*"}), cl::cat(category));
 
   static cl::opt<std::string> outDir(
       "out",
       cl::desc("The output directory for storing database files, "
-               "defaults to the last 2 segments of the build directory joined with full stop"), //
+               "defaults to the last 2 segments of the build directory joined with full stop."), //
       cl::init(""), cl::cat(category));
 
   static cl::list<std::string> argsAfter( //
-      "args-before", cl::desc("Extra arguments to prepend to the compiler command line"),
+      "args-before", cl::desc("Extra arguments to prepend to the compiler command line."),
       cl::cat(category));
 
   static cl::list<std::string> argsBefore( //
-      "args-after", cl::desc("Extra arguments to append to the compiler command line"),
+      "args-after", cl::desc("Extra arguments to append to the compiler command line."),
       cl::cat(category));
+
+  static cl::opt<std::string> clangResourceDir(
+      "resource-dir",
+      cl::desc("Force the compiler to use a specific Clang resource directory (e.g path to "
+               "`/usr/lib/clang/<VERSION>/include`); "
+               "Use this if system headers such has <stddef.h> is not found."), //
+      cl::init(""), cl::cat(category));
 
   static cl::opt<bool> clearOutDir( //
       "clear", cl::desc("Clear database output directory even if non-empty"), cl::cat(category));
 
-  static cl::opt<int> maxThreads( //
-      "j", cl::desc("Number of parallel AST jobs in parallel, defaults to total number of threads"),
-      cl::init(std::thread::hardware_concurrency()), cl::cat(category));
-
-  static cl::opt<std::string> sourceGlob( //
-      cl::Positional, cl::desc("Glob pattern for files to include in the database"), cl::init("*"),
+  static cl::opt<bool> verbose( //
+      "v",
+      cl::desc("Print compile command line used for each translation unit; "
+               "use -args-after=-v if you want to inspect detailed clang invocations"),
       cl::cat(category));
 
-  cl::ResetAllOptionOccurrences();
-  cl::HideUnrelatedOptions(category);
+  static cl::opt<int> maxThreads( //
+      "j",
+      cl::desc(
+          "Number of parallel AST frontend jobs in parallel, defaults to total number of threads"),
+      cl::init(std::thread::hardware_concurrency()), cl::cat(category));
 
   if (auto e = parseCategory(category, argc, argv); e) return std::move(*e);
 
   build::Options options;
   options.buildDir = buildDir.getValue();
-  options.sourceGlob = sourceGlob.getValue();
+  options.sourceGlobs = sourceGlobs;
   options.argsBefore = argsBefore;
   options.argsAfter = argsAfter;
+  options.clangResourceDir = clangResourceDir.getValue();
 
   options.clearOutDir = clearOutDir.getValue();
   options.maxThreads = maxThreads.getValue();
+  options.verbose = verbose.getValue();
 
   if (outDir.empty()) {
     auto lastSegment = llvm::sys::path::filename(options.buildDir);
@@ -112,6 +127,16 @@ Expected<p3md::list::Options> p3md::parseListOpts(int argc, const char **argv) {
 Expected<p3md::diff::Options> p3md::parseDiffOpts(int argc, const char **argv) {
   static cl::OptionCategory category("Diff options");
 
+  static cl::list<std::string> entries( //
+      cl::FormattingFlags::Positional,
+      cl::desc("<entry> [... <entryN>]\n"
+               "  Compare all databases against the base (first) entry.\n"
+               "  Each entry can be suffixed by a colon separated list of root base paths (e.g "
+               "db_path_1:rootA:rootB db_path_2:rootC:rootD).\n"
+               "  Analysis (diff) will not escape the union of all root paths of the entry it's "
+               "specified on."),
+      cl::cat(category));
+
   static cl::opt<DataKind> kind(
       "kind", cl::desc("Available data for applying diff"), cl::init(DataKind::Source),
       cl::values(
@@ -124,27 +149,49 @@ Expected<p3md::diff::Options> p3md::parseDiffOpts(int argc, const char **argv) {
 
   static cl::opt<std::string> root(
       "root",
-      cl::desc("The root path shared by all models. "
+      cl::desc("The root path shared by all databases. "
                "Analysis (diff) will not escape the unions of all root paths."),
       cl::Optional);
 
-  static cl::list<std::string> entries( //
-      cl::FormattingFlags::Positional,
-      cl::desc("<entry> [... <entryN>]\n"
-               "  Compare all databases against the first entry.\n"
-               "  Each entry can be suffixed by a colon separated list of root base paths (e.g "
-               "db_path_1:rootA:rootB db_path_2:rootC:rootD).\n"
-               "  Analysis (diff) will not escape the union of all base paths."),
+  static cl::opt<int> maxThreads( //
+      "j",
+      cl::desc(
+          "Number of parallel AST frontend jobs in parallel, defaults to total number of threads"),
+      cl::init(std::thread::hardware_concurrency()), cl::cat(category));
+
+  static cl::list<std::string> baseGlobs( //
+      "base-files", cl::ZeroOrMore, cl::CommaSeparated,
+      cl::desc("Comma separated glob patterns for file to include in the base, defaults to *"),
+      cl::list_init<std::string>({"*"}), cl::cat(category));
+
+  static cl::list<std::string> entryGlobPairs( //
+      "pairs", cl::ZeroOrMore, cl::CommaSeparated,
+      cl::desc(
+          "Comma separated glob pairs for matching files against the base entries. "
+          "The format is <base glob>:<model glob>,... where the diff will run on the first "
+          "matching pattern pair; malformed patterns are ignored."
+          "This overrides the default behaviour where files are matched by identical filenames."),
       cl::cat(category));
 
   if (auto e = parseCategory(category, argc, argv); e) return std::move(*e);
-  return diff::Options{kind.getValue(), entries | map([](auto &x) {
-                                          auto paths = x ^ split(":");
-                                          return std::pair{paths ^ head_maybe() ^ get_or_else(x),
-                                                           root.empty()
-                                                               ? paths ^ tail()
-                                                               : paths ^ tail() ^ append(root)};
-                                        }) | to_vector()};
+  return diff::Options{
+      kind.getValue(),
+      entries | map([](auto &x) {
+        auto paths = x ^ split(":");
+        return std::pair{paths ^ head_maybe() ^ get_or_else(x),
+                         root.empty() ? paths ^ tail() : paths ^ tail() ^ append(root)};
+      }) | to_vector(),
+      baseGlobs,
+      (entryGlobPairs | to_vector()) ^
+          collect([](auto &p) -> std::optional<std::pair<std::string, std::string>> {
+            auto pair = p ^ split(':');
+            if (pair.size() != 2) {
+              std::cerr << "Ignoring malformed pair pattern: `" << p << "`" << std::endl;
+              return std::nullopt;
+            }
+            return std::pair{pair[0], pair[1]};
+          }),
+      maxThreads};
 }
 
 Expected<p3md::dump::Options> p3md::parseDumpOpts(int argc, const char **argv) {

@@ -1,18 +1,14 @@
-#ifdef __cpp_lib_syncbuf
-  #include <syncstream>
-  #define CSOUT std::osyncstream(std::cout)
-#else
-  #include <iostream>
-  #define CSOUT std::cout
-#endif
+#include <utility>
+#include <fstream>
 
 #include "p3md/database.h"
 #include "p3md/diff.h"
+#include "p3md/glob.h"
+#include "p3md/term.h"
 #include "p3md/tree.h"
 
 #include "llvm/Support/MemoryBuffer.h"
 
-#include "aspartame/map.hpp"
 #include "aspartame/string.hpp"
 #include "aspartame/variant.hpp"
 #include "aspartame/vector.hpp"
@@ -31,13 +27,13 @@ namespace topdiff {
 
 struct StringLabel {
   std::string label{};
-  explicit StringLabel(const std::string &label) : label(label) {}
+  explicit StringLabel(std::string label) : label(std::move(label)) {}
   bool operator==(const StringLabel &other) const {
     return (label.compare(other.to_string()) == 0);
   }
-  unsigned int get_type() const { return 0; }
-  const std::string &get_label() const { return label; }
-  const std::string &to_string() const { return label; }
+  [[nodiscard]] unsigned int get_type() const { return 0; }
+  [[nodiscard]] const std::string &get_label() const { return label; }
+  [[nodiscard]] const std::string &to_string() const { return label; }
 };
 
 namespace std {
@@ -93,7 +89,7 @@ struct Model {
     p3md::SemanticTree<std::string> sTree;
     p3md::SemanticTree<std::string> sTreeInlined;
 
-    std::string fileName() const { return llvm::sys::path::filename(file).str(); }
+    [[nodiscard]] std::string fileName() const { return llvm::sys::path::filename(file).str(); }
   };
 
   std::string dir;
@@ -110,7 +106,7 @@ struct Model {
     }
     auto model =
         std::make_unique<Model>(dbDir, p3md::Database::fromJson((*buffer)->getBuffer().str()));
-    CSOUT << "# Model inflated from " << dbFile << std::endl;
+    P3MD_COUT << "# Model inflated from " << dbFile << std::endl;
     return model;
   }
 
@@ -118,23 +114,25 @@ struct Model {
     if (!ast) { ast = std::make_unique<p3md::Database::Materialised>(*db); }
     entries.resize(ast->units.size());
 
-    CSOUT << "# Loading " << db->entries.size() << " entries and " << db->dependencies.size()
-          << " dependencies." << std::endl;
-
-    auto maxFileLen = (ast->units | keys()                                        //
-                       | map([](auto &k) { return k.size(); })                    //
-                       | reduce([](auto l, auto r) { return std::max(l, r); })) ^ //
-                      get_or_else(0);
+    P3MD_COUT << "# Loading " << db->entries.size() << " entries and " << db->dependencies.size()
+              << " dependencies." << std::endl;
 
     tbb::parallel_for(
-        size_t{}, ast->units.size(), [&, keys = ast->units | keys() | to_vector()](auto idx) {
+        size_t{}, ast->units.size(),
+        [&,                                        //
+         keys = ast->units | keys() | to_vector(), //
+         maxFileLen =
+             static_cast<int>((ast->units | keys()                                        //
+                               | map([](auto &k) { return k.size(); })                    //
+                               | reduce([](auto l, auto r) { return std::max(l, r); })) ^ //
+                              get_or_else(0))](auto idx) {
           auto &f = keys[idx];
           auto &unit = ast->units[f];
           auto &sm = unit->getSourceManager();
           auto data = sm.getBufferDataOrNone(sm.getMainFileID());
           if (data) {
-            p3md::SemanticTree<std::string> sTree;
-            p3md::SemanticTree<std::string> sTreeInlined;
+            p3md::SemanticTree<std::string> sTree{"root", {}};
+            p3md::SemanticTree<std::string> sTreeInlined{"root", {}};
             for (auto decl : p3md::topLevelDeclsInMainFile(*unit)) {
               auto createTree = [&](const p3md::TreeSemanticVisitor::Option &option) {
                 p3md::SemanticTree<std::string> topLevel{"toplevel", {}};
@@ -150,17 +148,27 @@ struct Model {
               }));
               sTreeInlined.children.emplace_back(createTree({
                   .inlineCalls = true,
-                  .normaliseVarName = true, //
-                  .normaliseFnName = true,  //
+                  .normaliseVarName = false, //
+                  .normaliseFnName = false,  //
                   .roots = roots            //
               }));
             }
+
+
+            static int a =0;
+            std::ofstream outFile(llvm::sys::path::filename(unit->getMainFileName() ).str()+ "."  + std::to_string(a++) +".txt");
+            if (!outFile) {
+              std::cerr << "Failed to open the file for writing!" << std::endl;
+            }
+            sTreeInlined.print(std::identity(), outFile);
+            outFile.close();
+
             auto tsTree = p3md::TsTree(data->str(), tree_sitter_cpp()).deleteNodes("comment");
             entries[idx] = {unit->getMainFileName().str(), tsTree, sTree, sTreeInlined};
           }
-          CSOUT << "# Loaded " << std::left << std::setw(maxFileLen) << f << "\r";
+          P3MD_COUT << "# Loaded " << std::left << std::setw(maxFileLen) << f << "\r";
         });
-    CSOUT << std::endl;
+    P3MD_COUT << std::endl;
   }
 };
 
@@ -186,12 +194,12 @@ struct DiffState {
   DiffState(const p3md::DataKind &kind, const Model::Entry &lhs)
       : kind(kind), lhs(fromEntry(kind, lhs)) {}
 
-  double diff(const Model::Entry &entry) const {
+  [[nodiscard]] double diff(const Model::Entry &entry) const {
     auto rhs = fromEntry(kind, entry);
     if (auto lhsSrc = lhs ^ get<std::string>(); lhsSrc) {
       dtl::Diff<char, std::string> d(*lhsSrc, *(rhs ^ get<std::string>()));
       d.compose();
-      return d.getEditDistance();
+      return static_cast<double>(d.getEditDistance());
     } else if (auto lhsTree = lhs ^ get<topdiff::node::Node<StringLabel>>(); lhsTree) {
       return apTED(*lhsTree, *(rhs ^ get<topdiff::node::Node<StringLabel>>()));
     } else {
@@ -203,12 +211,23 @@ struct DiffState {
 
 int p3md::diff::run(const p3md::diff::Options &options) {
 
+  tbb::global_control global_limit(tbb::global_control::max_allowed_parallelism,
+                                   options.maxThreads);
+
   if (options.entries.empty()) {
     std::cerr << "At least 1 database required for comparison" << std::endl;
     return EXIT_FAILURE;
   }
 
-  CSOUT << "# Loading " << options.entries.size() << " models ..." << std::endl;
+  P3MD_COUT << "# Using base glob pattern: " << (options.baseGlobs ^ mk_string(", ")) << std::endl;
+  P3MD_COUT << "# Using pair glob pattern: "
+            << (options.entryGlobPairs.empty()
+                    ? "(filename match)"
+                    : (options.entryGlobPairs ^
+                       mk_string(", ", [](auto &l, auto &r) { return l + " -> " + r; })))
+            << std::endl;
+
+  P3MD_COUT << "# Loading " << options.entries.size() << " models ..." << std::endl;
   std::vector<std::shared_ptr<Model>> models(options.entries.size());
   tbb::parallel_for(size_t{}, options.entries.size(), [&](auto idx) {
     auto model = Model::fromFile(options.entries[idx].first);
@@ -216,83 +235,123 @@ int p3md::diff::run(const p3md::diff::Options &options) {
     models[idx] = std::move(model);
   });
 
+  auto regexes = options.baseGlobs ^ map([](auto &glob) { return globToRegex(glob); });
   auto &lhsModel = models[0];
   auto lhsEntriesSorted =
-      lhsModel->entries ^ map([](auto &e) { return std::ref(e); }) ^ sort_by([](auto &x) {
-        return -(x.get().tsTree.source ^ count([](auto c) { return c == '\n'; }));
-      });
+      lhsModel->entries                          //
+      ^ map([](auto &e) { return std::ref(e); }) //
+      ^ filter([&](auto &e) {
+          return regexes ^ exists([&](auto &r) { return std::regex_match(e.get().file, r); });
+        }) //
+      ^ sort_by([](auto &x) {
+          return -(x.get().tsTree.source ^ count([](auto c) { return c == '\n'; }));
+        });
 
-  std::vector<std::vector<std::string>> table(lhsModel->entries.size() + 1);
+  std::vector<std::vector<std::string>> diffTable(lhsEntriesSorted.size() + 1);
+  std::vector<std::vector<std::string>> fileTable(diffTable.size());
 
   if (models.size() == 1) {
-    auto commonPrefixLen =
-        lhsModel->entries ^ map([](auto &e) { return e.file; }) ^ and_then(&longestCommonPrefixLen);
+    auto commonPrefixLen = lhsEntriesSorted                            //
+                           ^ map([](auto &e) { return e.get().file; }) //
+                           ^ and_then(&longestCommonPrefixLen);        //
 
-    table[0] = lhsModel->entries | map([&](auto &e) { return e.file.substr(commonPrefixLen); }) |
-               prepend("entry") | to_vector();
+    diffTable[0] = lhsEntriesSorted                                                     //
+                   | map([&](auto &e) { return e.get().file.substr(commonPrefixLen); }) //
+                   | prepend("entry")                                                   //
+                   | to_vector();
+    fileTable[0] = diffTable[0];
+
     auto completed = std::atomic_size_t{};
     auto total = lhsEntriesSorted.size() * lhsEntriesSorted.size();
-    auto maxFilenameLength = lhsModel->entries | fold_left(size_t{}, [](auto acc, auto &e) {
-                               return std::max(acc, e.file.size());
+    auto maxFilenameLength = lhsEntriesSorted | fold_left(int{}, [](auto acc, auto &e) {
+                               return std::max(acc, static_cast<int>(e.get().file.size()));
                              });
-    CSOUT << "# Single model mode: comparing model against itself with " << total
-          << " entries total." << std::endl;
+    P3MD_COUT << "# Single model mode: comparing model against itself with " << total
+              << " entries total." << std::endl;
     tbb::parallel_for(size_t{}, lhsEntriesSorted.size(), [&](auto outerIdx) {
       auto &lhs = lhsEntriesSorted[outerIdx].get();
       auto state = DiffState(options.kind, lhs);
-      auto &row = table[outerIdx + 1];
+      auto &diffRow = diffTable[outerIdx + 1];
+      auto &fileRow = fileTable[outerIdx + 1];
+      diffRow.resize(lhsEntriesSorted.size() + 1);
+      fileRow.resize(diffRow.size());
+      diffRow[0] = lhs.file.substr(commonPrefixLen);
+      fileRow[0] = diffRow[0];
 
-      row.resize(lhsEntriesSorted.size() + 1);
-      row[0] = lhs.file.substr(commonPrefixLen);
       tbb::parallel_for(size_t{}, lhsEntriesSorted.size(), [&](auto innerIdx) {
         auto &rhs = lhsEntriesSorted[innerIdx].get();
-        row[innerIdx + 1] = std::to_string(state.diff(rhs));
-        (CSOUT << "# [" << completed++ << "/" << total << "] " << std::left
-               << std::setw(maxFilenameLength) << rhs.file << "\r")
+        diffRow[innerIdx + 1] = std::to_string(state.diff(rhs));
+        fileRow[innerIdx + 1] = rhs.fileName();
+        (P3MD_COUT << "# [" << completed++ << "/" << total << "] " << std::left
+                   << std::setw(maxFilenameLength) << rhs.file << "\r")
             .flush();
       });
-      (CSOUT << "# [" << completed << "/" << total << "] " << std::left
-             << std::setw(maxFilenameLength) << lhs.file << std::endl)
+      (P3MD_COUT << "# [" << completed << "/" << total << "] " << std::left
+                 << std::setw(maxFilenameLength) << lhs.file << std::endl)
           .flush();
     });
   } else {
     auto commonPrefixLen =
         models ^ map([](auto &m) { return m->dir; }) ^ and_then(&longestCommonPrefixLen);
 
-    table[0] = models ^ map([&](auto &m) { return m->dir.substr(commonPrefixLen); });
-    auto rhsModels = models ^ tail();
+    diffTable[0] = models ^ map([&](auto &m) { return m->dir.substr(commonPrefixLen); });
+    fileTable[0] = diffTable[0];
 
+    auto rhsModels = models ^ tail();
     auto completed = std::atomic_size_t{};
     auto total = lhsEntriesSorted.size() * rhsModels.size();
-    auto maxFilenameLength = lhsModel->entries | fold_left(size_t{}, [](auto acc, auto &e) {
-                               return std::max(acc, e.file.size());
+    auto maxFilenameLength = lhsEntriesSorted | fold_left(int{}, [](auto acc, auto &e) {
+                               return std::max(acc, static_cast<int>(e.get().file.size()));
                              });
+
+    auto globPairs = options.entryGlobPairs ^ map([](auto &baseGlob, auto &diffGlob) {
+                       return std::pair{globToRegex(baseGlob), globToRegex(diffGlob)};
+                     });
 
     tbb::parallel_for(size_t{}, lhsEntriesSorted.size(), [&](auto lhsEntriesIdx) {
       auto &lhs = lhsEntriesSorted[lhsEntriesIdx].get();
       auto state = DiffState(options.kind, lhs);
       auto lhsFileName = lhs.fileName();
-      auto &row = table[lhsEntriesIdx + 1];
-      row.resize(rhsModels.size() + 1);
-      row[0] = lhsFileName;
+      auto &diffRow = diffTable[lhsEntriesIdx + 1];
+      auto &fileRow = fileTable[lhsEntriesIdx + 1];
+      diffRow.resize(rhsModels.size() + 1);
+      fileRow.resize(diffRow.size());
+      diffRow[0] = lhsFileName;
+      fileRow[0] = diffRow[0];
+
+      auto diffGlob = globPairs ^ find([&](auto &baseGlob, auto &) {
+                        return std::regex_match(lhsFileName, baseGlob);
+                      });
+
       tbb::parallel_for(size_t{}, rhsModels.size(), [&](auto rhsModelIdx) {
-        auto rhs = rhsModels[rhsModelIdx]->entries ^
-                   find([&](auto &rhs) { return rhs.fileName() == lhsFileName; });
+        auto rhs = //
+            rhsModels[rhsModelIdx]->entries ^ find([&](auto &rhs) {
+              return diffGlob ^
+                     fold(
+                         [&](auto &, auto &glob) { return std::regex_match(rhs.fileName(), glob); },
+                         [&]() { return rhs.fileName() == lhsFileName; });
+            });
+
         if (rhs) {
-          row[rhsModelIdx + 1] = std::to_string(state.diff(*rhs));
+          diffRow[rhsModelIdx + 1] = std::to_string(state.diff(*rhs));
+          fileRow[rhsModelIdx + 1] = rhs->fileName();
         } else {
-          row[rhsModelIdx + 1] = std::to_string(std::numeric_limits<double>::infinity());
+          diffRow[rhsModelIdx + 1] = std::to_string(std::numeric_limits<double>::infinity());
+          fileRow[rhsModelIdx + 1] = "?";
         }
-        (CSOUT << "# [" << completed++ << "/" << total << "] " << std::left
-               << std::setw(maxFilenameLength) << lhsFileName << "\r")
+        (P3MD_COUT << "# [" << completed++ << "/" << total << "] " << std::left
+                   << std::setw(maxFilenameLength) << lhsFileName << "\r")
             .flush();
       });
     });
   }
-
-  CSOUT << std::endl;
-  for (auto row : table) {
-    CSOUT << (row | mk_string(",")) << std::endl;
+  P3MD_COUT << std::endl;
+  for (auto row : fileTable) {
+    P3MD_COUT << (row | mk_string(",")) << std::endl;
+  }
+  P3MD_COUT << std::endl;
+  for (auto row : diffTable) {
+    P3MD_COUT << (row | mk_string(",")) << std::endl;
   }
   return EXIT_SUCCESS;
 }

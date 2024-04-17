@@ -18,13 +18,13 @@ namespace p3md::build {
 struct Options {
 
   std::string buildDir;
-  //  std::vector<std::string> rootDirs;
-  //  std::unique_ptr<clang::tooling::CompilationDatabase> compilation;
-  std::string sourceGlob;
+  std::vector<std::string> sourceGlobs;
   std::vector<std::string> argsBefore;
   std::vector<std::string> argsAfter;
+  std::optional<std::string> clangResourceDir;
   std::string outDir;
   bool clearOutDir;
+  bool verbose;
   int maxThreads;
 
   [[nodiscard]] clang::tooling::ArgumentsAdjuster resolveAdjuster() const;

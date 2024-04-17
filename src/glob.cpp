@@ -61,21 +61,20 @@ std::regex p3md::globToRegex(const std::string &str, bool extended, bool globSta
         break;
 
       case '*': {
-
-        // Move over all consecutive "*"'s.
-        // Also store the previous and next characters
-        auto prevChar = str[i - 1];
-        auto starCount = 1;
-        while (str[i + 1] == '*') {
-          starCount++;
-          i++;
-        }
-        auto nextChar = str[i + 1];
-
         if (!globStar) {
           // globstar is disabled, so treat any number of "*" as one
           reStr += ".*";
         } else {
+          // Move over all consecutive "*"'s.
+          // Also store the previous and next characters
+          auto prevChar = str[i - 1];
+          auto starCount = 1;
+          while (str[i + 1] == '*') {
+            starCount++;
+            i++;
+          }
+          auto nextChar = str[i + 1];
+
           // globstar is enabled, so determine if this is a globstar segment
           auto isGlobstar = starCount > 1         // multiple "*"'s
                             && (prevChar == '/')  // from the start of the segment
