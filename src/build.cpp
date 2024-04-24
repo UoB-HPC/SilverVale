@@ -157,7 +157,7 @@ static std::vector<Task::Result> buildPCHParallel(const CompilationDatabase &db,
 
     if (out[0]->serialize(*task.stream)) // XXX true is fail
       message << "# Serialisation failed\n";
-    results[task.idx] = {task.sourceName, task.pchName, messageStorage, {}};
+    results[task.idx] = {task.sourceName, llvm::sys::path::filename(task.pchName).str(), messageStorage, {}};
     auto &sm = out[0]->getSourceManager();
     std::for_each(sm.fileinfo_begin(), sm.fileinfo_end(), [&](auto entry) {
       if (auto name = entry.getFirst()->getName().str(); !name.empty()) {

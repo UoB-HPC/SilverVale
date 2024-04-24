@@ -38,7 +38,7 @@ struct Database {
     std::vector<std::vector<char>> astBackingBuffer;
 
   public:
-    explicit Materialised(const Database &db);
+    explicit Materialised(const Database &db, const std::string &baseDir);
     std::map<std::string, std::unique_ptr<clang::ASTUnit>> units;
   };
 };

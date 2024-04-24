@@ -75,13 +75,13 @@ llvm::Expected<p3md::build::Options> p3md::parseBuildOpts(int argc, const char *
   static cl::opt<bool> verbose( //
       "v",
       cl::desc("Print compile command line used for each translation unit; "
-               "use -args-after=-v if you want to inspect detailed clang invocations"),
+               "use -args-after=-v if you want to inspect detailed clang invocations."),
       cl::cat(category));
 
   static cl::opt<int> maxThreads( //
       "j",
       cl::desc(
-          "Number of parallel AST frontend jobs in parallel, defaults to total number of threads"),
+          "Number of parallel AST frontend jobs in parallel, defaults to total number of threads."),
       cl::init(std::thread::hardware_concurrency()), cl::cat(category));
 
   if (auto e = parseCategory(category, argc, argv); e) return std::move(*e);
@@ -137,15 +137,16 @@ Expected<p3md::diff::Options> p3md::parseDiffOpts(int argc, const char **argv) {
                "specified on."),
       cl::cat(category));
 
-  static cl::opt<DataKind> kind(
-      "kind", cl::desc("Available data for applying diff"), cl::init(DataKind::Source),
+  static cl::list<DataKind> kinds(
+      "kinds", cl::CommaSeparated, cl::OneOrMore,
+      cl::desc("Comma separated kinds of metric to use for diff operation."),
       cl::values(
-          clEnumValN(DataKind::Source, "source", "Direct source code SLOC diff"),
-          clEnumValN(DataKind::TSTree, "tstree", "Tree-sitter tree with comments removed"),
+          clEnumValN(DataKind::Source, "source", "Direct source code SLOC diff."),
+          clEnumValN(DataKind::TSTree, "tstree", "Tree-sitter tree with comments removed."),
           clEnumValN(DataKind::STree, "stree",
-                     "ClangAST based semantic tree with symbols normalised"),
+                     "ClangAST based semantic tree with symbols normalised."),
           clEnumValN(DataKind::STreeInline, "stree+i",
-                     "ClangAST based semantic tree with symbols normalised and calls inlined")));
+                     "ClangAST based semantic tree with symbols normalised and calls inlined.")));
 
   static cl::opt<std::string> root(
       "root",
@@ -153,15 +154,18 @@ Expected<p3md::diff::Options> p3md::parseDiffOpts(int argc, const char **argv) {
                "Analysis (diff) will not escape the unions of all root paths."),
       cl::Optional);
 
+  static cl::opt<std::string> outputPrefix(
+      "output", cl::desc("The output file name prefix for all result CSV files."), cl::Optional);
+
   static cl::opt<int> maxThreads( //
       "j",
       cl::desc(
-          "Number of parallel AST frontend jobs in parallel, defaults to total number of threads"),
+          "Number of parallel AST frontend jobs in parallel, defaults to total number of threads."),
       cl::init(std::thread::hardware_concurrency()), cl::cat(category));
 
   static cl::list<std::string> baseGlobs( //
       "base-files", cl::ZeroOrMore, cl::CommaSeparated,
-      cl::desc("Comma separated glob patterns for file to include in the base, defaults to *"),
+      cl::desc("Comma separated glob patterns for file to include in the base, defaults to *."),
       cl::list_init<std::string>({"*"}), cl::cat(category));
 
   static cl::list<std::string> entryGlobPairs( //
@@ -175,7 +179,7 @@ Expected<p3md::diff::Options> p3md::parseDiffOpts(int argc, const char **argv) {
 
   if (auto e = parseCategory(category, argc, argv); e) return std::move(*e);
   return diff::Options{
-      kind.getValue(),
+      kinds,
       entries | map([](auto &x) {
         auto paths = x ^ split(":");
         return std::pair{paths ^ head_maybe() ^ get_or_else(x),
@@ -191,6 +195,7 @@ Expected<p3md::diff::Options> p3md::parseDiffOpts(int argc, const char **argv) {
             }
             return std::pair{pair[0], pair[1]};
           }),
+      outputPrefix.getValue(),
       maxThreads};
 }
 

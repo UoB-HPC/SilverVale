@@ -18,7 +18,7 @@ std::unique_ptr<p3md::Database> p3md::Database::fromJson(const std::string &json
   return database;
 }
 
-p3md::Database::Materialised::Materialised(const Database &db)
+p3md::Database::Materialised::Materialised(const Database &db, const std::string &baseDir)
     : units(db.entries ^ map_values([&](auto &pch) -> std::unique_ptr<clang::ASTUnit> {
               IntrusiveRefCntPtr<DiagnosticOptions> opts = new DiagnosticOptions();
               auto diagnostics = CompilerInstance::createDiagnostics(opts.get());
@@ -26,16 +26,18 @@ p3md::Database::Materialised::Materialised(const Database &db)
               IntrusiveRefCntPtr<llvm::vfs::InMemoryFileSystem> vfs =
                   new llvm::vfs::InMemoryFileSystem();
 
-              auto pchData = p3md::utils::zStdDecompress(pch.pchName);
+              auto pchFile = baseDir + "/" + pch.pchName;
+
+              auto pchData = p3md::utils::zStdDecompress(pchFile);
               if (!pchData) {
-                std::cerr << "Cannot read PCH data:" << pch.pchName << std::endl;
+                std::cerr << "Cannot read PCH data:" << pchFile << std::endl;
                 return nullptr;
               }
               auto &backing = astBackingBuffer.emplace_back(*pchData);
 
               auto mb = llvm::MemoryBuffer::getMemBuffer(
                   llvm::StringRef(backing.data(), backing.size()), "", false);
-              vfs->addFile(pch.pchName, 0, std::move(mb));
+              vfs->addFile(pchFile, 0, std::move(mb));
               for (auto &[name, actual] : pch.dependencies) {
                 if (auto source = db.dependencies.find(actual); source != db.dependencies.end()) {
                   vfs->addFile(name, source->second.modified,
@@ -46,7 +48,7 @@ p3md::Database::Materialised::Materialised(const Database &db)
               }
 
               auto opt = std::make_shared<clang::HeaderSearchOptions>();
-              return ASTUnit::LoadFromASTFile(pch.pchName,                      //
+              return ASTUnit::LoadFromASTFile(pchFile,                      //
                                               clang::RawPCHContainerReader(),   //
                                               ASTUnit::WhatToLoad::LoadASTOnly, //
                                               diagnostics,                      //

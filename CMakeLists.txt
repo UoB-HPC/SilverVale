@@ -35,7 +35,7 @@ FetchContent_MakeAvailable(zstd)
 FetchContent_Declare(Aspartame
         #        SOURCE_DIR /home/tom/Aspartame
         GIT_REPOSITORY https://github.com/tom91136/Aspartame.git
-        GIT_TAG 1668e2e5530938c28588e7c054e685a13d6aa6ff)
+        GIT_TAG 31a0e22298b0c89455f8edfbe48675c6858c2420)
 FetchContent_MakeAvailable(Aspartame)
 
 FetchContent_Declare(Catch2
