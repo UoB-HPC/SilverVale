@@ -452,28 +452,44 @@ int p3md::diff::run(const p3md::diff::Options &options) {
   tbb::global_control global_limit(tbb::global_control::max_allowed_parallelism,
                                    options.maxThreads);
 
-  if (options.entries.empty()) {
+  if (options.codeBases.empty()) {
     std::cerr << "At least 1 database required for comparison" << std::endl;
     return EXIT_FAILURE;
   }
 
-  P3MD_COUT << "# Using base glob pattern: " << (options.baseGlobs ^ mk_string(", ")) << std::endl;
-  P3MD_COUT << "# Using pair glob pattern: "
-            << (options.entryGlobPairs.empty()
-                    ? "(filename match)"
-                    : (options.entryGlobPairs ^
-                       mk_string(", ", [](auto &l, auto &r) { return l + " -> " + r; })))
-            << std::endl;
 
-  P3MD_COUT << "# Loading " << options.entries.size() << " models ..." << std::endl;
-  std::vector<std::shared_ptr<Model>> models(options.entries.size());
-  par_for(options.entries, [&](auto &entry, auto idx) {
-    auto model = Model::fromFile(entry.first);
-    model->populate(entry.second);
+
+  // P3MD_COUT << "# Using base glob pattern: " << (options.baseGlobs ^ mk_string(", ")) << std::endl;
+  // P3MD_COUT << "# Using pair glob pattern: "
+  //           << (options.entryGlobPairs.empty()
+  //                   ? "(filename match)"
+  //                   : (options.entryGlobPairs ^
+  //                      mk_string(", ", [](auto &l, auto &r) { return l + " -> " + r; })))
+  //           << std::endl;
+
+  P3MD_COUT << "# Loading " << options.codeBases.size() << " models ..." << std::endl;
+  std::vector<std::shared_ptr<Model>> models(options.codeBases.size());
+  par_for(options.codeBases, [&](auto &cb, auto idx) {
+    auto model = Model::fromFile(cb.db);
+    model->populate(cb.roots);
+
+
+    model->entries;
+
+    for (auto &xform : options.transforms) {
+      xform ^ foreach_total(
+                  [&](const p3md::diff::EntryFilter &filter) {
+                    // TODO
+                  },
+                  [&](const p3md::diff::EntryMerge &merge) {
+                    // TODO
+                  });
+    }
+
     models[idx] = std::move(model);
   });
 
-  auto outputPrefix = (options.outputPrefix.empty() ? "" : options.outputPrefix + ".");
+  auto outputPrefix = options.outputPrefix.empty() ? "" : options.outputPrefix + ".";
   auto lhsEntriesSorted =
       models[0]->entries                         //
       ^ map([](auto &e) { return std::ref(e); }) //
