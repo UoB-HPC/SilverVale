@@ -163,19 +163,31 @@ Expected<p3md::diff::Options> p3md::parseDiffOpts(int argc, const char **argv) {
           "Number of parallel AST frontend jobs in parallel, defaults to total number of threads."),
       cl::init(std::thread::hardware_concurrency()), cl::cat(category));
 
+  static cl::list<std::string> mergeGlobs( //
+      "merges", cl::ZeroOrMore, cl::CommaSeparated,
+      cl::desc( //
+          "Comma separated merge glob pairs for combining multiple TUs (files) into a single TU."
+          "The format is <TU glob>:<TU name>,... where all TUs matching TU glob will be merged "
+          "into a single TU with the given name."),
+      cl::cat(category));
+
   static cl::list<std::string> baseGlobs( //
       "base-files", cl::ZeroOrMore, cl::CommaSeparated,
-      cl::desc("Comma separated glob patterns for file to include in the base, defaults to *."),
+      cl::desc(
+          "Comma separated glob patterns for TUs (files) to include in the base, defaults to *."
+          "This runs after the merges-file option but before the pairs option."),
       cl::list_init<std::string>({"*"}), cl::cat(category));
 
   static cl::list<std::string> entryGlobPairs( //
       "pairs", cl::ZeroOrMore, cl::CommaSeparated,
       cl::desc(
-          "Comma separated glob pairs for matching files against the base entries. "
+          "Comma separated glob pairs for matching TUs (files) against the base TUs. "
           "The format is <base glob>:<model glob>,... where the diff will run on the first "
           "matching pattern pair; malformed patterns are ignored."
-          "This overrides the default behaviour where files are matched by identical filenames."),
+          "This overrides the default behaviour where TUs are matched by identical filenames."),
       cl::cat(category));
+
+
 
   if (auto e = parseCategory(category, argc, argv); e) return std::move(*e);
   return diff::Options{

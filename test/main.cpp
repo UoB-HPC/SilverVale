@@ -183,3 +183,79 @@ int b() {
   REQUIRE(trees.size() == 2);
   CHECK(trees[0] == trees[1]);
 }
+
+TEST_CASE("delete comments") {
+
+  std::string src = R"(
+/*
+ * Foo
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+
+/*foo*/// x
+
+int a = 3;// foo
+//
+void a() /*b*/ {
+// c
+return 42;// w
+}// d
+
+)";
+
+  std::string expected = R"(
+
+
+#include <stdio.h>
+#include <stdlib.h>
+
+
+
+int a = 3;
+
+void a()  {
+
+return 42;
+}
+
+)";
+
+  CHECK(p3md::TsTree(src, tree_sitter_cpp()).deleteNodes("comment").source == expected);
+}
+
+
+TEST_CASE("normalise ws") {
+
+  std::string src = R"(
+
+
+#include <stdio.h>
+#include <stdlib.h>
+
+
+
+int a = 3;
+
+void a ( )        {
+
+return 42;
+}
+
+auto f  = [   & ] ( auto   y )  {    return    2    ;   }   ;
+
+)";
+
+  std::string expected = R"(
+#include <stdio.h>
+#include <stdlib.h>
+int a=3;
+void a(){
+return 42;
+}
+auto f = [&](auto y){return 2;};
+)";
+
+  CHECK(p3md::TsTree(src, tree_sitter_cpp()).normaliseWhitespaces(1).source == expected);
+}

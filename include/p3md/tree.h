@@ -107,7 +107,7 @@ template <typename T> struct SemanticTree {
     return n;
   }
 
-  [[nodiscard]] SemanticTreeIterator<T> begin() { return SemanticTreeIterator<T>{this}; }
+  [[nodiscard]] SemanticTreeIterator<T> begin() const { return SemanticTreeIterator<T>{this}; }
   [[nodiscard]] SemanticTreeIterator<T> end() const { return SemanticTreeIterator<T>{}; }
 };
 
@@ -190,6 +190,11 @@ public:
   [[nodiscard]] TSNode root() const;
   [[nodiscard]] TsTree deleteNodes(const std::string &type,
                                    const std::optional<TSNode> &node = {}) const;
+  [[nodiscard]] TsTree normaliseWhitespaces(size_t maxWhitespaces = 1,
+                                            const std::optional<TSNode> &node = {}) const;
+
+  [[nodiscard]] size_t sloc(const std::optional<TSNode> &node = {}) const;
+  [[nodiscard]] size_t lloc(const std::optional<TSNode> &node = {}) const;
 
   template <typename F> void walk(F f, const std::optional<TSNode> &node = {}) const {
     static_assert(std::is_same_v<std::invoke_result_t<F, const TSNode &>, bool>);
@@ -230,6 +235,9 @@ public:
 private:
   static void deleteNodes(const TSNode &node, const std::string &type, size_t &offset,
                           std::string &out);
+
+  static void normaliseWhitespaces(const TSNode &node, size_t &offset, size_t maxWhitespaces,
+                                   std::string &out);
 };
 
 } // namespace p3md

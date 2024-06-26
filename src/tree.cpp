@@ -192,3 +192,60 @@ void p3md::TsTree::deleteNodes( // NOLINT(*-no-recursion)
     }
   }
 }
+
+p3md::TsTree p3md::TsTree::normaliseWhitespaces(size_t maxWhitespaces,
+                                                const std::optional<TSNode> &node) const {
+  size_t offset = 0;
+  std::string out = source;
+  normaliseWhitespaces(node ? *node : root(), offset, maxWhitespaces, out);
+  return {out ^ trim(), ts_parser_language(parser.get())};
+}
+void p3md::TsTree::normaliseWhitespaces( // NOLINT(*-no-recursion)
+    const TSNode &node, size_t &offset, size_t maxWhitespaces, std::string &out) {
+  auto count = ts_node_child_count(node);
+  for (uint32_t i = 0; i < count; ++i) {
+    auto current = ts_node_child(node, i);
+    if (i + 1 < count) {
+      auto next = ts_node_child(node, i + 1);
+      auto start = ts_node_end_byte(current);
+      auto end = ts_node_start_byte(next);
+      if (end - start > 0) {
+
+        // TODO
+        std::cout << "Drop `" << out.substr(start - offset, end - start) << "`\n";
+
+        //        out.erase(start - offset, end - start);
+//        out.replace(start - offset, end - start, std::string(end - start, '@'));
+        //        offset += end - start;
+      }
+    }
+    normaliseWhitespaces(current, offset, maxWhitespaces, out);
+  }
+}
+
+size_t p3md::TsTree::sloc(const std::optional<TSNode> &node) const {
+  std::unordered_set<uint32_t> rowsWithNode;
+  walk(
+      [&](auto x) {
+        rowsWithNode.emplace(ts_node_start_point(x).row);
+        rowsWithNode.emplace(ts_node_end_point(x).row);
+        return true;
+      },
+      node);
+  return rowsWithNode.size();
+}
+
+size_t p3md::TsTree::lloc(const std::optional<TSNode> &node) const {
+  size_t lloc = 0;
+  walk(
+      [&](auto x) {
+        std::string type = ts_node_type(x);
+        // don't count compound stmt as it contains children
+        if (type != "compound_statement" &&
+            (type ^ ends_with("declaration") || type ^ ends_with("statement")))
+          lloc++;
+        return true;
+      },
+      node);
+  return lloc;
+}

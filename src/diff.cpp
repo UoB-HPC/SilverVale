@@ -95,11 +95,35 @@ struct Model {
 
   struct Entry {
     std::string file;
-    p3md::TsTree tsTree;
+    std::vector<p3md::TsTree> tsTree;
     p3md::SemanticTree<std::string> sTree;
     p3md::SemanticTree<std::string> sTreeInlined;
 
     [[nodiscard]] std::string fileName() const { return llvm::sys::path::filename(file).str(); }
+
+    static Entry merge(const std::string &name, const std::vector<Entry> &xs) {
+
+      //      p3md::TsTree()
+
+      // xs[0].sTree
+
+      Entry out{name, //
+                {},   //
+                p3md::SemanticTree<std::string>{"root", {}},
+                p3md::SemanticTree<std::string>{"root", {}}};
+
+      for (auto &x : xs) {
+        out.tsTree.insert(out.tsTree.begin(), x.tsTree.begin(), x.tsTree.end());
+        out.sTree.children.insert(out.sTree.children.end(), //
+                                  x.sTree.children.begin(), //
+                                  x.sTree.children.end());
+        out.sTreeInlined.children.insert(out.sTreeInlined.children.end(), //
+                                         x.sTreeInlined.children.begin(),
+                                         x.sTreeInlined.children.end());
+      }
+
+      return out;
+    }
   };
 
   std::string dir;
@@ -182,7 +206,7 @@ struct Model {
         //            std::endl; } sTree.print(std::identity(), outFile); outFile.close();
 
         auto tsTree = p3md::TsTree(data->str(), tree_sitter_cpp()).deleteNodes("comment");
-        entries[idx] = {unit->getMainFileName().str(), tsTree, sTree, sTreeInlined};
+        entries[idx] = {unit->getMainFileName().str(), {tsTree}, sTree, sTreeInlined};
       }
       P3MD_COUT << "# Loaded " << std::left << std::setw(maxFileLen) << f << "\r";
     });
@@ -190,50 +214,152 @@ struct Model {
   }
 };
 
-struct DiffState {
+// template <typename Derived> struct DiffState {
+//
+//   virtual double max() const = 0;
+//   virtual double diff(Derived &that) const = 0;
 
-  static std::variant<std::string, topdiff::node::Node<StringLabel>>
-  fromEntry(const p3md::DataKind &kind, const Model::Entry &lhs) {
-    switch (kind) {
-      case p3md::DataKind::Source: return lhs.tsTree.source;
-      case p3md::DataKind::TSTree: return makeTree(lhs.tsTree);
-      case p3md::DataKind::STree: return makeTree(lhs.sTree);
-      case p3md::DataKind::STreeInline: return makeTree(lhs.sTreeInlined);
-      default:
-        std::cerr << "Unhandled kind" << static_cast<std::underlying_type_t<p3md::DataKind>>(kind)
-                  << std::endl;
-        std::abort();
-    }
+//
+//  static std::variant<std::vector<p3md::TsTree>, topdiff::node::Node<StringLabel>>
+//  fromEntry(const p3md::DataKind &kind, const Model::Entry &lhs) {
+//    switch (kind) {
+//      case p3md::DataKind::SLOC: [[fallthrough]];
+//      case p3md::DataKind::LLOC: [[fallthrough]];
+//      case p3md::DataKind::Source: return lhs.tsTree;
+//      case p3md::DataKind::TSTree: {
+//        topdiff::node::Node<StringLabel> root{StringLabel("root")};
+//        for_each(lhs.tsTree, [&](auto &t) { root.add_child(makeTree(t)); });
+//        return root;
+//      }
+//      case p3md::DataKind::STree: return makeTree(lhs.sTree);
+//      case p3md::DataKind::STreeInline: return makeTree(lhs.sTreeInlined);
+//      default:
+//        std::cerr << "Unhandled kind" <<
+//        static_cast<std::underlying_type_t<p3md::DataKind>>(kind)
+//                  << std::endl;
+//        std::abort();
+//    }
+//  }
+//
+//  p3md::DataKind kind;
+//  std::variant<std::vector<p3md::TsTree>, topdiff::node::Node<StringLabel>> lhs;
+//
+//  DiffState(const p3md::DataKind &kind, const Model::Entry &lhs)
+//      : kind(kind), lhs(fromEntry(kind, lhs)) {}
+//
+//  [[nodiscard]] double max() const {
+//
+//    switch (kind) {
+//      case p3md::DataKind::SLOC:
+//
+//        auto m = lhs ^ get<std::vector<p3md::TsTree>>() ^ get_or_else(
+//        std::vector<p3md::TsTree>{} );
+//
+//
+//
+//        break;
+//      case p3md::DataKind::LLOC: break;
+//      case p3md::DataKind::Source:
+//
+//
+//
+//        break;
+//      case p3md::DataKind::TSTree: break;
+//      case p3md::DataKind::STree: break;
+//      case p3md::DataKind::STreeInline: break;
+//    }
+//
+//    if (auto lhsSrc = lhs ^ get<std::vector<p3md::TsTree>>(); lhsSrc) {
+//
+//
+//
+//      return static_cast<double>(lhsSrc->size());
+//    } else if (auto lhsTree = lhs ^ get<topdiff::node::Node<StringLabel>>(); lhsTree) {
+//      return lhsTree->get_tree_size();
+//    } else {
+//      std::cerr << "Unexpected variant state " << std::endl;
+//      std::abort();
+//    }
+//  }
+//
+//  [[nodiscard]] double diff(const Model::Entry &entry) const {
+//    auto rhs = fromEntry(kind, entry);
+//    if (auto lhsSrc = lhs ^ get<std::vector<p3md::TsTree>>(); lhsSrc) {
+//      dtl::Diff<char, std::string> d(*lhsSrc, *(rhs ^ get<std::string>()));
+//      d.compose();
+//      return static_cast<double>(d.getEditDistance());
+//    } else if (auto lhsTree = lhs ^ get<topdiff::node::Node<StringLabel>>(); lhsTree) {
+//      return apTED(*lhsTree, *(rhs ^ get<topdiff::node::Node<StringLabel>>()));
+//    } else {
+//      std::cerr << "Unexpected variant state " << std::endl;
+//      std::abort();
+//    }
+//  }
+//};
+
+class DiffState {
+  p3md::DataKind kind;
+  std::variant<std::vector<p3md::TsTree>, topdiff::node::Node<StringLabel>> data;
+
+  template <typename T> [[nodiscard]] T as() const {
+    return data ^ get<T>() ^ fold([&]() -> T {
+             throw std::logic_error(
+                 "Unexpected kind" +
+                 std::to_string(static_cast<std::underlying_type_t<p3md::DataKind>>(kind)) +
+                 " for tree diff");
+           });
   }
 
-  p3md::DataKind kind;
-  std::variant<std::string, topdiff::node::Node<StringLabel>> lhs;
+public:
+  DiffState(const p3md::DataKind &kind, const Model::Entry &lhs) : kind(kind) {
+    switch (kind) {
+      case p3md::DataKind::SLOC: [[fallthrough]];
+      case p3md::DataKind::LLOC: [[fallthrough]];
+      case p3md::DataKind::Source: data = lhs.tsTree; break;
 
-  DiffState(const p3md::DataKind &kind, const Model::Entry &lhs)
-      : kind(kind), lhs(fromEntry(kind, lhs)) {}
+      case p3md::DataKind::TSTree: {
+        topdiff::node::Node<StringLabel> root{StringLabel("root")};
+        for_each(lhs.tsTree, [&](auto &t) { root.add_child(makeTree(t)); });
+        data = root;
+        break;
+      }
+      case p3md::DataKind::STree: data = makeTree(lhs.sTree); break;
+      case p3md::DataKind::STreeInline: data = makeTree(lhs.sTreeInlined); break;
+    }
+  }
 
   [[nodiscard]] double max() const {
-    if (auto lhsSrc = lhs ^ get<std::string>(); lhsSrc) {
-      return static_cast<double>(lhsSrc->size());
-    } else if (auto lhsTree = lhs ^ get<topdiff::node::Node<StringLabel>>(); lhsTree) {
-      return lhsTree->get_tree_size();
-    } else {
-      std::cerr << "Unexpected variant state " << std::endl;
-      std::abort();
+    auto tsTreeMax = [&](auto f) {
+      return as<std::vector<p3md::TsTree>>() | map(f) | fold_left(double{}, std::plus<>());
+    };
+    switch (kind) {
+      case p3md::DataKind::SLOC: return tsTreeMax([&](auto &x) { return x.sloc(); });
+      case p3md::DataKind::LLOC: return tsTreeMax([&](auto &x) { return x.lloc(); });
+      case p3md::DataKind::Source: return tsTreeMax([&](auto &x) { return x.source.size(); });
+      case p3md::DataKind::TSTree: [[fallthrough]];
+      case p3md::DataKind::STree: [[fallthrough]];
+      case p3md::DataKind::STreeInline:
+        return as<topdiff::node::Node<StringLabel>>().get_tree_size();
     }
   }
-
-  [[nodiscard]] double diff(const Model::Entry &entry) const {
-    auto rhs = fromEntry(kind, entry);
-    if (auto lhsSrc = lhs ^ get<std::string>(); lhsSrc) {
-      dtl::Diff<char, std::string> d(*lhsSrc, *(rhs ^ get<std::string>()));
-      d.compose();
-      return static_cast<double>(d.getEditDistance());
-    } else if (auto lhsTree = lhs ^ get<topdiff::node::Node<StringLabel>>(); lhsTree) {
-      return apTED(*lhsTree, *(rhs ^ get<topdiff::node::Node<StringLabel>>()));
-    } else {
-      std::cerr << "Unexpected variant state " << std::endl;
-      std::abort();
+  [[nodiscard]] double diff(const DiffState &that) const {
+    switch (kind) {
+      case p3md::DataKind::SLOC: [[fallthrough]];
+      case p3md::DataKind::LLOC: return max() / that.max();
+      case p3md::DataKind::Source:
+        return as<std::vector<p3md::TsTree>>() | bind([&](auto x) {
+                 return that.as<std::vector<p3md::TsTree>>() | map([&](auto y) {
+                          dtl::Diff<char, std::string> d(x.source, y.source);
+                          d.compose();
+                          return static_cast<double>(d.getEditDistance());
+                        });
+               }) |
+               fold_left(double{}, [](auto l, auto r) { return std::fmin(l, r); });
+      case p3md::DataKind::TSTree: [[fallthrough]];
+      case p3md::DataKind::STree: [[fallthrough]];
+      case p3md::DataKind::STreeInline:
+        return apTED(as<topdiff::node::Node<StringLabel>>(),
+                     that.as<topdiff::node::Node<StringLabel>>());
     }
   }
 };
@@ -355,9 +481,12 @@ int p3md::diff::run(const p3md::diff::Options &options) {
                              map([](auto &glob) { return globToRegex(glob); })](auto &e) {
           return regexes ^ exists([&](auto &r) { return std::regex_match(e.get().file, r); });
         }) //
-      ^ sort_by([](auto &x) {
-          return -(x.get().tsTree.source ^ count([](auto c) { return c == '\n'; }));
-        });
+      ^
+      sort_by([](auto &x) {
+        return -(x.get().tsTree |
+                 map([&](auto &x) { return x.source ^ count([](auto c) { return c == '\n'; }); }) |
+                 fold_left(0, std::plus<>()));
+      });
 
   if (models.size() == 1) {
     auto commonPrefixLen = lhsEntriesSorted                            //
@@ -381,9 +510,9 @@ int p3md::diff::run(const p3md::diff::Options &options) {
     par_for(lhsEntriesSorted, [&](auto &lhsRef, auto lhsIdx) {
       par_for(options.kinds, [&, &lhs = lhsRef.get()](auto kind, auto) {
         model.set(lhsIdx, kind, lhs.file.substr(commonPrefixLen));
-        par_for(lhsEntriesSorted, [&, state = DiffState(kind, lhs)](auto &rhsRef, auto rhsIdx) {
+        par_for(lhsEntriesSorted, [&, state = DiffState{kind, lhs}](auto &rhsRef, auto rhsIdx) {
           auto &rhs = rhsRef.get();
-          model.set(lhsIdx, rhsIdx, kind, rhs.fileName(), state.diff(rhs));
+          model.set(lhsIdx, rhsIdx, kind, rhs.fileName(), state.diff(DiffState{kind, rhs}));
           logger.log(rhs.file);
         });
         logger.log(lhs.file, false);
@@ -435,7 +564,8 @@ int p3md::diff::run(const p3md::diff::Options &options) {
                 });
             model.set(lhsIdx, rhsIdx, kind, //
                       rhs ? rhs->fileName() : "?",
-                      rhs ? state.diff(*rhs) : std::numeric_limits<double>::infinity());
+                      rhs ? state.diff(DiffState{kind, *rhs})
+                          : std::numeric_limits<double>::infinity());
           }
           logger.log(lhsFileName);
         });
