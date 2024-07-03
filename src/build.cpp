@@ -105,20 +105,21 @@ struct Task {
 
 static std::vector<Task::Result> buildPCHParallel(const CompilationDatabase &db,
                                                   const std::vector<std::string> &files,
-                                                  std::string outDir, bool verbose, bool compress) {
+                                                  std::string outDir, bool verbose,
+                                                  bool noCompress) {
 
   auto [success, failed] =
       (files | zip_with_index() | map([&](auto file, auto idx) {
          llvm::SmallString<128> nameGZ;
          llvm::sys::path::append(nameGZ, outDir,
                                  std::to_string(idx) + "." + llvm::sys::path::filename(file).str() +
-                                     ".pch" + (compress ? ".zstd" : ""));
+                                     ".pch" + (noCompress ? ".zstd" : ""));
          Task task{idx, file, nameGZ.c_str(), std::make_error_code(std::errc()), nullptr};
          if (task.error == std::errc()) {
-           if (compress) {
-             task.stream = std::make_shared<p3md::utils::zstd_ostream>(task.pchName, task.error, 6);
-           } else {
+           if (noCompress) {
              task.stream = std::make_shared<llvm::raw_fd_stream>(task.pchName, task.error);
+           } else {
+             task.stream = std::make_shared<p3md::utils::zstd_ostream>(task.pchName, task.error, 6);
            }
          }
          return task;
@@ -247,7 +248,7 @@ int p3md::build::run(const p3md::build::Options &options) {
     return error.value();
   }
 
-  auto results = buildPCHParallel(*db, files, options.outDir, options.verbose, options.compress);
+  auto results = buildPCHParallel(*db, files, options.outDir, options.verbose, options.noCompress);
 
   std::map<std::string, p3md::Database::Source> dependencies;
   for (auto &result : results) {

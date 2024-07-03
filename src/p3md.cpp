@@ -72,9 +72,8 @@ llvm::Expected<p3md::build::Options> p3md::parseBuildOpts(int argc, const char *
   static cl::opt<bool> clearOutDir( //
       "clear", cl::desc("Clear database output directory even if non-empty."), cl::cat(category));
 
-  static cl::opt<bool> compress( //
-      "compress", cl::desc("Compress individual entries in the database."), cl::init(true),
-      cl::cat(category));
+  static cl::opt<bool> noCompress( //
+      "no-compress", cl::desc("Compress individual entries in the database."), cl::cat(category));
 
   static cl::opt<bool> verbose( //
       "v",
@@ -100,7 +99,7 @@ llvm::Expected<p3md::build::Options> p3md::parseBuildOpts(int argc, const char *
   options.clearOutDir = clearOutDir.getValue();
   options.maxThreads = maxThreads.getValue();
   options.verbose = verbose.getValue();
-  options.compress = compress.getValue();
+  options.noCompress = noCompress.getValue();
 
   if (outDir.empty()) {
     auto lastSegment = llvm::sys::path::filename(options.buildDir);

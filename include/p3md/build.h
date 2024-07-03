@@ -25,7 +25,7 @@ struct Options {
   std::string outDir;
   bool clearOutDir;
   bool verbose;
-  bool compress;
+  bool noCompress;
   int maxThreads;
 
   [[nodiscard]] clang::tooling::ArgumentsAdjuster resolveAdjuster() const;
