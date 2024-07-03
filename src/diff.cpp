@@ -102,11 +102,6 @@ struct Model {
     [[nodiscard]] std::string fileName() const { return llvm::sys::path::filename(file).str(); }
 
     static Entry merge(const std::string &name, const std::vector<Entry> &xs) {
-
-      //      p3md::TsTree()
-
-      // xs[0].sTree
-
       Entry out{name, //
                 {},   //
                 p3md::SemanticTree<std::string>{"root", {}},
@@ -121,7 +116,6 @@ struct Model {
                                          x.sTreeInlined.children.begin(),
                                          x.sTreeInlined.children.end());
       }
-
       return out;
     }
   };
@@ -214,89 +208,6 @@ struct Model {
   }
 };
 
-// template <typename Derived> struct DiffState {
-//
-//   virtual double max() const = 0;
-//   virtual double diff(Derived &that) const = 0;
-
-//
-//  static std::variant<std::vector<p3md::TsTree>, topdiff::node::Node<StringLabel>>
-//  fromEntry(const p3md::DataKind &kind, const Model::Entry &lhs) {
-//    switch (kind) {
-//      case p3md::DataKind::SLOC: [[fallthrough]];
-//      case p3md::DataKind::LLOC: [[fallthrough]];
-//      case p3md::DataKind::Source: return lhs.tsTree;
-//      case p3md::DataKind::TSTree: {
-//        topdiff::node::Node<StringLabel> root{StringLabel("root")};
-//        for_each(lhs.tsTree, [&](auto &t) { root.add_child(makeTree(t)); });
-//        return root;
-//      }
-//      case p3md::DataKind::STree: return makeTree(lhs.sTree);
-//      case p3md::DataKind::STreeInline: return makeTree(lhs.sTreeInlined);
-//      default:
-//        std::cerr << "Unhandled kind" <<
-//        static_cast<std::underlying_type_t<p3md::DataKind>>(kind)
-//                  << std::endl;
-//        std::abort();
-//    }
-//  }
-//
-//  p3md::DataKind kind;
-//  std::variant<std::vector<p3md::TsTree>, topdiff::node::Node<StringLabel>> lhs;
-//
-//  DiffState(const p3md::DataKind &kind, const Model::Entry &lhs)
-//      : kind(kind), lhs(fromEntry(kind, lhs)) {}
-//
-//  [[nodiscard]] double max() const {
-//
-//    switch (kind) {
-//      case p3md::DataKind::SLOC:
-//
-//        auto m = lhs ^ get<std::vector<p3md::TsTree>>() ^ get_or_else(
-//        std::vector<p3md::TsTree>{} );
-//
-//
-//
-//        break;
-//      case p3md::DataKind::LLOC: break;
-//      case p3md::DataKind::Source:
-//
-//
-//
-//        break;
-//      case p3md::DataKind::TSTree: break;
-//      case p3md::DataKind::STree: break;
-//      case p3md::DataKind::STreeInline: break;
-//    }
-//
-//    if (auto lhsSrc = lhs ^ get<std::vector<p3md::TsTree>>(); lhsSrc) {
-//
-//
-//
-//      return static_cast<double>(lhsSrc->size());
-//    } else if (auto lhsTree = lhs ^ get<topdiff::node::Node<StringLabel>>(); lhsTree) {
-//      return lhsTree->get_tree_size();
-//    } else {
-//      std::cerr << "Unexpected variant state " << std::endl;
-//      std::abort();
-//    }
-//  }
-//
-//  [[nodiscard]] double diff(const Model::Entry &entry) const {
-//    auto rhs = fromEntry(kind, entry);
-//    if (auto lhsSrc = lhs ^ get<std::vector<p3md::TsTree>>(); lhsSrc) {
-//      dtl::Diff<char, std::string> d(*lhsSrc, *(rhs ^ get<std::string>()));
-//      d.compose();
-//      return static_cast<double>(d.getEditDistance());
-//    } else if (auto lhsTree = lhs ^ get<topdiff::node::Node<StringLabel>>(); lhsTree) {
-//      return apTED(*lhsTree, *(rhs ^ get<topdiff::node::Node<StringLabel>>()));
-//    } else {
-//      std::cerr << "Unexpected variant state " << std::endl;
-//      std::abort();
-//    }
-//  }
-//};
-
 class DiffState {
   p3md::DataKind kind;
   std::variant<std::vector<p3md::TsTree>, topdiff::node::Node<StringLabel>> data;
@@ -345,16 +256,24 @@ public:
   [[nodiscard]] double diff(const DiffState &that) const {
     switch (kind) {
       case p3md::DataKind::SLOC: [[fallthrough]];
-      case p3md::DataKind::LLOC: return max() / that.max();
-      case p3md::DataKind::Source:
-        return as<std::vector<p3md::TsTree>>() | bind([&](auto x) {
-                 return that.as<std::vector<p3md::TsTree>>() | map([&](auto y) {
-                          dtl::Diff<char, std::string> d(x.source, y.source);
-                          d.compose();
-                          return static_cast<double>(d.getEditDistance());
-                        });
-               }) |
-               fold_left(double{}, [](auto l, auto r) { return std::fmin(l, r); });
+      case p3md::DataKind::LLOC: return std::abs(max() - that.max());
+      case p3md::DataKind::Source: {
+        auto value = std::numeric_limits<double>::max();
+        auto lhs = as<std::vector<p3md::TsTree>>() ^ map([](auto &x) { return x.source; });
+        do {
+          auto lhsSrc =
+              lhs ^ fold_left(std::string{}, [](auto &&acc, auto &x) { return acc += x; });
+          auto rhs = that.as<std::vector<p3md::TsTree>>() ^ map([](auto &x) { return x.source; });
+          do {
+            auto rhsSrc =
+                rhs ^ fold_left(std::string{}, [](auto &&acc, auto &x) { return acc += x; });
+            dtl::Diff<char, std::string> d(lhsSrc, rhsSrc);
+            d.compose();
+            value = std::fmin(value, static_cast<double>(d.getEditDistance()));
+          } while (std::next_permutation(rhs.begin(), rhs.end()));
+        } while (std::next_permutation(lhs.begin(), lhs.end()));
+        return value;
+      }
       case p3md::DataKind::TSTree: [[fallthrough]];
       case p3md::DataKind::STree: [[fallthrough]];
       case p3md::DataKind::STreeInline:
@@ -452,82 +371,99 @@ int p3md::diff::run(const p3md::diff::Options &options) {
   tbb::global_control global_limit(tbb::global_control::max_allowed_parallelism,
                                    options.maxThreads);
 
-  if (options.codeBases.empty()) {
+  if (options.databases.empty()) {
     std::cerr << "At least 1 database required for comparison" << std::endl;
     return EXIT_FAILURE;
   }
 
-
-
-  // P3MD_COUT << "# Using base glob pattern: " << (options.baseGlobs ^ mk_string(", ")) << std::endl;
-  // P3MD_COUT << "# Using pair glob pattern: "
+  // P3MD_COUT << "# Using base glob pattern: " << (options.baseGlobs ^ mk_string(", ")) <<
+  // std::endl; P3MD_COUT << "# Using pair glob pattern: "
   //           << (options.entryGlobPairs.empty()
   //                   ? "(filename match)"
   //                   : (options.entryGlobPairs ^
   //                      mk_string(", ", [](auto &l, auto &r) { return l + " -> " + r; })))
   //           << std::endl;
 
-  P3MD_COUT << "# Loading " << options.codeBases.size() << " models ..." << std::endl;
-  std::vector<std::shared_ptr<Model>> models(options.codeBases.size());
-  par_for(options.codeBases, [&](auto &cb, auto idx) {
+  P3MD_COUT << "# Loading " << options.databases.size() << " models ..." << std::endl;
+  std::vector<std::shared_ptr<Model>> models(options.databases.size());
+  par_for(options.databases, [&](auto &cb, auto idx) {
     auto model = Model::fromFile(cb.db);
     model->populate(cb.roots);
 
-
-    model->entries;
-
     for (auto &xform : options.transforms) {
       xform ^ foreach_total(
-                  [&](const p3md::diff::EntryFilter &filter) {
-                    // TODO
+                  [&](const p3md::diff::EntryFilter &f) {
+                    model->entries =
+                        model->entries ^ filter([&, regex = globToRegex(f.glob)](auto &entry) {
+                          auto match = std::regex_match(entry.file, regex);
+                          return (f.include && match) || (!f.include && !match);
+                        });
                   },
-                  [&](const p3md::diff::EntryMerge &merge) {
-                    // TODO
+                  [&](const p3md::diff::EntryMerge &m) {
+                    auto [merge, keep] =
+                        model->entries ^ partition([&, regex = globToRegex(m.glob)](auto &entry) {
+                          return std::regex_match(entry.file, regex);
+                        });
+                    if (merge.empty()) return;                          // skip
+                    else if (merge.size() == 1) merge[0].file = m.name; // rename
+                    else {                                              // merge
+                      model->entries = keep;
+                      model->entries.push_back(Model::Entry::merge(m.name, merge));
+                    }
                   });
     }
 
+    model->entries = model->entries ^ sort_by([](auto &x) {
+                       return -(x.tsTree | map([&](auto &x) {
+                                  //                     return x.sloc();
+                                  return x.source ^ count([](auto c) { return c == '\n'; });
+                                }) |
+                                fold_left(0, std::plus<>()));
+                     });
+
     models[idx] = std::move(model);
   });
+  P3MD_COUT << "# All models loaded" << std::endl;
 
   auto outputPrefix = options.outputPrefix.empty() ? "" : options.outputPrefix + ".";
+
   auto lhsEntriesSorted =
-      models[0]->entries                         //
-      ^ map([](auto &e) { return std::ref(e); }) //
-      ^ filter([&, regexes = options.baseGlobs ^
-                             map([](auto &glob) { return globToRegex(glob); })](auto &e) {
-          return regexes ^ exists([&](auto &r) { return std::regex_match(e.get().file, r); });
-        }) //
-      ^
-      sort_by([](auto &x) {
-        return -(x.get().tsTree |
-                 map([&](auto &x) { return x.source ^ count([](auto c) { return c == '\n'; }); }) |
-                 fold_left(0, std::plus<>()));
-      });
+      (models ^ find([&](auto &m) { return m->dir == options.base; }) ^
+       fold(
+           [](auto &m) {
+             P3MD_COUT << "# Using base model " << m->dir << std::endl;
+             return m;
+           },
+           [&]() {
+             P3MD_COUT << "# Base model " << options.base
+                       << " not found, using the first database: " << models[0]->dir << std::endl;
+             return models[0];
+           }))
+          ->entries;
 
   if (models.size() == 1) {
-    auto commonPrefixLen = lhsEntriesSorted                            //
-                           ^ map([](auto &e) { return e.get().file; }) //
-                           ^ and_then(&longestCommonPrefixLen);        //
+    auto commonPrefixLen = lhsEntriesSorted                      //
+                           ^ map([](auto &e) { return e.file; }) //
+                           ^ and_then(&longestCommonPrefixLen);  //
 
-    auto model = DiffModel{
-        lhsEntriesSorted //
-            | map([&](auto &e) { return e.get().file.substr(commonPrefixLen); }) | to_vector(),
-        options.kinds, lhsEntriesSorted.size()};
+    auto model =
+        DiffModel{lhsEntriesSorted //
+                      | map([&](auto &e) { return e.file.substr(commonPrefixLen); }) | to_vector(),
+                  options.kinds, lhsEntriesSorted.size()};
 
     auto logger =
         ProgressLogger{lhsEntriesSorted.size() * lhsEntriesSorted.size() * options.kinds.size(),
                        lhsEntriesSorted | fold_left(int{}, [](auto acc, auto &e) {
-                         return std::max(acc, static_cast<int>(e.get().file.size()));
+                         return std::max(acc, static_cast<int>(e.file.size()));
                        })};
 
     P3MD_COUT << "# Single model mode: comparing model against itself with "
               << (lhsEntriesSorted.size() * lhsEntriesSorted.size()) << " entries total."
               << std::endl;
-    par_for(lhsEntriesSorted, [&](auto &lhsRef, auto lhsIdx) {
-      par_for(options.kinds, [&, &lhs = lhsRef.get()](auto kind, auto) {
+    par_for(lhsEntriesSorted, [&](auto &lhs, auto lhsIdx) {
+      par_for(options.kinds, [&](auto kind, auto) {
         model.set(lhsIdx, kind, lhs.file.substr(commonPrefixLen));
-        par_for(lhsEntriesSorted, [&, state = DiffState{kind, lhs}](auto &rhsRef, auto rhsIdx) {
-          auto &rhs = rhsRef.get();
+        par_for(lhsEntriesSorted, [&, state = DiffState{kind, lhs}](auto &rhs, auto rhsIdx) {
           model.set(lhsIdx, rhsIdx, kind, rhs.fileName(), state.diff(DiffState{kind, rhs}));
           logger.log(rhs.file);
         });
@@ -551,15 +487,14 @@ int p3md::diff::run(const p3md::diff::Options &options) {
                            }),
                            options.kinds, lhsEntriesSorted.size()};
 
-    auto globPairs = options.entryGlobPairs ^ map([](auto &baseGlob, auto &diffGlob) {
-                       return std::pair{globToRegex(baseGlob), globToRegex(diffGlob)};
+    auto globPairs = options.matches ^ map([](auto &m) {
+                       return std::pair{globToRegex(m.sourceGlob), globToRegex(m.targetGlob)};
                      });
     auto logger = ProgressLogger{lhsEntriesSorted.size() * models.size() * options.kinds.size(),
                                  lhsEntriesSorted | fold_left(int{}, [](auto acc, auto &e) {
-                                   return std::max(acc, static_cast<int>(e.get().file.size()));
+                                   return std::max(acc, static_cast<int>(e.file.size()));
                                  })};
-    par_for(lhsEntriesSorted, [&](auto &lhsRef, auto lhsIdx) {
-      auto &lhs = lhsRef.get();
+    par_for(lhsEntriesSorted, [&](auto &lhs, auto lhsIdx) {
       auto lhsFileName = lhs.fileName();
       auto diffGlob = globPairs ^ find([&](auto &baseGlob, auto &) {
                         return std::regex_match(lhsFileName, baseGlob);

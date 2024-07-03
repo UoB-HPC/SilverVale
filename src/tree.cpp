@@ -215,7 +215,7 @@ void p3md::TsTree::normaliseWhitespaces( // NOLINT(*-no-recursion)
         std::cout << "Drop `" << out.substr(start - offset, end - start) << "`\n";
 
         //        out.erase(start - offset, end - start);
-//        out.replace(start - offset, end - start, std::string(end - start, '@'));
+        //        out.replace(start - offset, end - start, std::string(end - start, '@'));
         //        offset += end - start;
       }
     }
@@ -241,8 +241,10 @@ size_t p3md::TsTree::lloc(const std::optional<TSNode> &node) const {
       [&](auto x) {
         std::string type = ts_node_type(x);
         // don't count compound stmt as it contains children
-        if (type != "compound_statement" &&
-            (type ^ ends_with("declaration") || type ^ ends_with("statement")))
+        if (type != "compound_statement" && (type ^ ends_with("declaration") || //
+                                             type ^ ends_with("statement") ||   //
+                                             type ^ ends_with("directive"))     //
+        )
           lloc++;
         return true;
       },

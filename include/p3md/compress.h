@@ -17,12 +17,12 @@ class zstd_ostream : public llvm::raw_ostream {
   std::vector<char> buffOut;
 
 public:
-  zstd_ostream(const std::string &name, std::error_code &code, int cLevel = 1);
+  zstd_ostream(const std::string &name, std::error_code &code, int cLevel = ZSTD_CLEVEL_DEFAULT);
   ~zstd_ostream() override;
   void write_impl(const char *buffIn, size_t size) override;
   [[nodiscard]] uint64_t current_pos() const override;
 };
 
-std::optional<std::vector<char>> zStdDecompress(const std::string &filename)  ;
+std::optional<std::vector<char>> zStdDecompress(const std::string &filename);
 
 } // namespace p3md::utils

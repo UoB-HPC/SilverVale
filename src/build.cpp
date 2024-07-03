@@ -105,18 +105,22 @@ struct Task {
 
 static std::vector<Task::Result> buildPCHParallel(const CompilationDatabase &db,
                                                   const std::vector<std::string> &files,
-                                                  std::string outDir, bool verbose) {
+                                                  std::string outDir, bool verbose, bool compress) {
 
   auto [success, failed] =
       (files | zip_with_index() | map([&](auto file, auto idx) {
          llvm::SmallString<128> nameGZ;
          llvm::sys::path::append(nameGZ, outDir,
                                  std::to_string(idx) + "." + llvm::sys::path::filename(file).str() +
-                                     ".pch.gz");
+                                     ".pch" + (compress ? ".zstd" : ""));
          Task task{idx, file, nameGZ.c_str(), std::make_error_code(std::errc()), nullptr};
-         auto stream = std::make_shared<llvm::raw_fd_stream>(task.pchName, task.error);
-         //         auto stream = std::make_shared<zstd_ostream>(task.pchName, task.error);
-         if (task.error == std::errc()) task.stream = std::move(stream);
+         if (task.error == std::errc()) {
+           if (compress) {
+             task.stream = std::make_shared<p3md::utils::zstd_ostream>(task.pchName, task.error, 6);
+           } else {
+             task.stream = std::make_shared<llvm::raw_fd_stream>(task.pchName, task.error);
+           }
+         }
          return task;
        }) |
        to_vector()) ^
@@ -157,7 +161,8 @@ static std::vector<Task::Result> buildPCHParallel(const CompilationDatabase &db,
 
     if (out[0]->serialize(*task.stream)) // XXX true is fail
       message << "# Serialisation failed\n";
-    results[task.idx] = {task.sourceName, llvm::sys::path::filename(task.pchName).str(), messageStorage, {}};
+    results[task.idx] = {
+        task.sourceName, llvm::sys::path::filename(task.pchName).str(), messageStorage, {}};
     auto &sm = out[0]->getSourceManager();
     std::for_each(sm.fileinfo_begin(), sm.fileinfo_end(), [&](auto entry) {
       if (auto name = entry.getFirst()->getName().str(); !name.empty()) {
@@ -242,7 +247,7 @@ int p3md::build::run(const p3md::build::Options &options) {
     return error.value();
   }
 
-  auto results = buildPCHParallel(*db, files, options.outDir, options.verbose);
+  auto results = buildPCHParallel(*db, files, options.outDir, options.verbose, options.compress);
 
   std::map<std::string, p3md::Database::Source> dependencies;
   for (auto &result : results) {

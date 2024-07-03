@@ -70,7 +70,11 @@ llvm::Expected<p3md::build::Options> p3md::parseBuildOpts(int argc, const char *
       cl::init(""), cl::cat(category));
 
   static cl::opt<bool> clearOutDir( //
-      "clear", cl::desc("Clear database output directory even if non-empty"), cl::cat(category));
+      "clear", cl::desc("Clear database output directory even if non-empty."), cl::cat(category));
+
+  static cl::opt<bool> compress( //
+      "compress", cl::desc("Compress individual entries in the database."), cl::init(true),
+      cl::cat(category));
 
   static cl::opt<bool> verbose( //
       "v",
@@ -96,6 +100,7 @@ llvm::Expected<p3md::build::Options> p3md::parseBuildOpts(int argc, const char *
   options.clearOutDir = clearOutDir.getValue();
   options.maxThreads = maxThreads.getValue();
   options.verbose = verbose.getValue();
+  options.compress = compress.getValue();
 
   if (outDir.empty()) {
     auto lastSegment = llvm::sys::path::filename(options.buildDir);
@@ -127,21 +132,31 @@ Expected<p3md::list::Options> p3md::parseListOpts(int argc, const char **argv) {
 Expected<p3md::diff::Options> p3md::parseDiffOpts(int argc, const char **argv) {
   static cl::OptionCategory category("Diff options");
 
-  static cl::list<std::string> entries( //
+  static cl::list<std::string> databases( //
       cl::FormattingFlags::Positional,
-      cl::desc("<entry> [... <entryN>]\n"
-               "  Compare all databases against the base (first) entry.\n"
-               "  Each entry can be suffixed by a colon separated list of root base paths (e.g "
+      cl::desc("<database> [... <databaseN>]\n"
+               "  Compare all databases against the base (first by default) database.\n"
+               "  Each database can be suffixed by a colon separated list of root base paths (e.g "
                "db_path_1:rootA:rootB db_path_2:rootC:rootD).\n"
-               "  Analysis (diff) will not escape the union of all root paths of the entry it's "
-               "specified on."),
+               "  Analysis (diff) will not escape the union of all root paths of the database it's "
+               "specified on."
+               "The base database can be specified via --base <database>"),
       cl::cat(category));
+
+  static cl::opt<std::string> base( //
+      "base",
+      cl::desc("The base database to compare against, defaults to the "
+               "first positional database argument."),
+      cl::Optional);
 
   static cl::list<DataKind> kinds(
       "kinds", cl::CommaSeparated, cl::OneOrMore,
-      cl::desc("Comma separated kinds of metric to use for diff operation."),
+      cl::desc("Comma separated kinds of metric to use for diff operation. Defaults to all "
+               "supported kinds."),
       cl::values(
-          clEnumValN(DataKind::Source, "source", "Direct source code SLOC diff."),
+          clEnumValN(DataKind::SLOC, "sloc", "Direct source code diff."),
+          clEnumValN(DataKind::LLOC, "lloc", "Direct source code diff."),
+          clEnumValN(DataKind::Source, "source", "Direct source code diff."),
           clEnumValN(DataKind::TSTree, "tstree", "Tree-sitter tree with comments removed."),
           clEnumValN(DataKind::STree, "stree",
                      "ClangAST based semantic tree with symbols normalised."),
@@ -163,52 +178,86 @@ Expected<p3md::diff::Options> p3md::parseDiffOpts(int argc, const char **argv) {
           "Number of parallel AST frontend jobs in parallel, defaults to total number of threads."),
       cl::init(std::thread::hardware_concurrency()), cl::cat(category));
 
-  static cl::list<std::string> mergeGlobs( //
-      "merges", cl::ZeroOrMore, cl::CommaSeparated,
+  static cl::opt<std::string> transforms( //
+      "transforms", cl::Optional,
       cl::desc( //
-          "Comma separated merge glob pairs for combining multiple TUs (files) into a single TU."
-          "The format is <TU glob>:<TU name>,... where all TUs matching TU glob will be merged "
-          "into a single TU with the given name."),
+          "A semicolon separated sequence of transform steps to apply for all loaded code bases.\n"
+          "\n * merge: [merge=<TU glob>:<TU name>] Combine multiple TUs (files) into a single TU "
+          "where all TUs matching TU glob will be merged"
+          "\n * include: [include=<TU glob>] Include TUs that match the TU glob."
+          "\n * exclude: [exclude=<TU glob>] Exclude TUs that match the TU glob."
+          "\nFor example, to select all TUs and merge everything into a single TU: `--transforms "
+          "\"include=*;merge=*:foo\"`"
+          "Note that steps are executed in the order they are specified and steps of the same type "
+          "can appear more than once."
+          "By default, the include all transform `--transforms \"include=*\"` will be used."),
       cl::cat(category));
 
-  static cl::list<std::string> baseGlobs( //
-      "base-files", cl::ZeroOrMore, cl::CommaSeparated,
+  static cl::list<std::string> matches( //
+      "matches", cl::ZeroOrMore, cl::CommaSeparated,
       cl::desc(
-          "Comma separated glob patterns for TUs (files) to include in the base, defaults to *."
-          "This runs after the merges-file option but before the pairs option."),
-      cl::list_init<std::string>({"*"}), cl::cat(category));
-
-  static cl::list<std::string> entryGlobPairs( //
-      "pairs", cl::ZeroOrMore, cl::CommaSeparated,
-      cl::desc(
-          "Comma separated glob pairs for matching TUs (files) against the base TUs. "
+          "A comma separated glob pairs for matching TUs (files) against the base TUs."
           "The format is <base glob>:<model glob>,... where the diff will run on the first "
           "matching pattern pair; malformed patterns are ignored."
           "This overrides the default behaviour where TUs are matched by identical filenames."),
       cl::cat(category));
 
-
-
   if (auto e = parseCategory(category, argc, argv); e) return std::move(*e);
-  return diff::Options{
-      kinds,
-      entries | map([](auto &x) {
+
+  // --transform "include=*;exclude=*;merge=A:N;merge=B*:C"
+  // --matches "a:b"
+
+  auto pairPattern = [](const std::string &in,
+                        char delim) -> std::optional<std::pair<std::string, std::string>> {
+    auto pair = in ^ split(delim);
+    if (pair.size() == 2) return std::pair{pair[0], pair[1]};
+    std::cerr << "Ignoring malformed pair pattern with delimiter (" << delim << "): `" //
+              << in << "`" << std::endl;
+    return std::nullopt;
+  };
+
+  using Step = std::variant<p3md::diff::EntryFilter, p3md::diff::EntryMerge>;
+
+  auto mappedTransforms =
+      transforms.empty()
+          ? std::vector<Step>{}
+          : transforms ^ split(';') ^ collect([&](auto &step) {
+              return pairPattern(step, '=') ^
+                     bind([&](auto name, auto value) -> std::optional<Step> {
+                       if (name != "merge") {
+                         return pairPattern(value, ':') ^ map([](auto glob, auto name) -> Step {
+                                  return p3md::diff::EntryMerge{.glob = glob, .name = name};
+                                });
+                       } else if (name != "include")
+                         return p3md::diff::EntryFilter{.include = true, .glob = value};
+                       else if (name != "exclude")
+                         return p3md::diff::EntryFilter{.include = false, .glob = value};
+                       else {
+                         std::cerr << "Unknown step name: `" << name << "`" << std::endl;
+                         return std::nullopt;
+                       }
+                     });
+            });
+
+  auto mappedDbs =
+      databases | map([](auto &x) {
         auto paths = x ^ split(":");
-        return std::pair{paths ^ head_maybe() ^ get_or_else(x),
-                         root.empty() ? paths ^ tail() : paths ^ tail() ^ append(root)};
-      }) | to_vector(),
-      baseGlobs,
-      (entryGlobPairs | to_vector()) ^
-          collect([](auto &p) -> std::optional<std::pair<std::string, std::string>> {
-            auto pair = p ^ split(':');
-            if (pair.size() != 2) {
-              std::cerr << "Ignoring malformed pair pattern: `" << p << "`" << std::endl;
-              return std::nullopt;
-            }
-            return std::pair{pair[0], pair[1]};
-          }),
-      outputPrefix.getValue(),
-      maxThreads};
+        return p3md::diff::Database{paths ^ head_maybe() ^ get_or_else(x),
+                                    root.empty() ? paths ^ tail() : paths ^ tail() ^ append(root)};
+      }) |
+      to_vector();
+  return diff::Options{.databases = mappedDbs,
+                       .base = base.empty() ? mappedDbs[0].db : base,
+                       .kinds = kinds,                                                    //
+                       .transforms = mappedTransforms,                                    //
+                       .matches = (matches | to_vector()) ^                               //
+                                  collect([&](auto &p) { return pairPattern(p, ':'); }) ^ //
+                                  map([](auto source, auto target) {                      //
+                                    return p3md::diff::EntryMatch{.sourceGlob = source,
+                                                                  .targetGlob = target};
+                                  }),
+                       .outputPrefix = outputPrefix.getValue(),
+                       .maxThreads = maxThreads};
 }
 
 Expected<p3md::dump::Options> p3md::parseDumpOpts(int argc, const char **argv) {

@@ -17,7 +17,8 @@ static bool zStdIsError(size_t err) {
 }
 
 p3md::utils::zstd_ostream::zstd_ostream(const std::string &name, std::error_code &code, int cLevel)
-    : out(name, code), cctx(ZSTD_createCCtx()), buffOut(ZSTD_CStreamOutSize(), 0) {
+    : raw_ostream(true), out(name, code), cctx(ZSTD_createCCtx()),
+      buffOut(ZSTD_CStreamOutSize(), '\0') {
   if (!cctx) {
     std::cerr << "Cannot create Zstd context" << std::endl;
     code = std::make_error_code(std::errc::io_error);
@@ -30,12 +31,10 @@ p3md::utils::zstd_ostream::zstd_ostream(const std::string &name, std::error_code
 }
 
 p3md::utils::zstd_ostream::~zstd_ostream() {
-  std::cout << "End" << std::endl;
-  //    if (zStdIsError(ZSTD_flushStream(cctx, &output))) std::abort();
   ZSTD_outBuffer output = {buffOut.data(), buffOut.size(), 0};
-
   if (zStdIsError(ZSTD_endStream(cctx, &output))) std::abort();
-  if (zStdIsError(ZSTD_freeCCtx(cctx))) { std::abort(); }
+  if (zStdIsError(ZSTD_freeCCtx(cctx))) std::abort();
+  out.write(buffOut.data(), output.pos);
   out.close();
 }
 
@@ -58,28 +57,50 @@ std::optional<std::vector<char>> p3md::utils::zStdDecompress(const std::string &
     std::cerr << error.message() << std::endl;
     return std::nullopt;
   }
+
   auto rSize = ZSTD_getFrameContentSize((*buffer)->getBufferStart(), (*buffer)->getBufferSize());
   if (rSize == ZSTD_CONTENTSIZE_ERROR) {
-    // XXX just return it as there's an option to no comperss in build
+    // Just return it as there's an option to not compress in build
     return std::vector<char>{(*buffer)->getBufferStart(), (*buffer)->getBufferEnd()};
   }
-  if (rSize == ZSTD_CONTENTSIZE_UNKNOWN) {
-    std::cerr << "File original size unknown: " << filename << std::endl;
-    return std::nullopt;
-  }
 
-  std::vector<char> rBuff(rSize, 0);
-  size_t dSize =
-      ZSTD_decompress(rBuff.data(), rSize, (*buffer)->getBufferStart(), (*buffer)->getBufferSize());
-  if (ZSTD_isError(dSize)) {
-    std::cerr << ZSTD_getErrorName(dSize) << std::endl;
-    return std::nullopt;
-  }
+  if (rSize != ZSTD_CONTENTSIZE_UNKNOWN) {
+    std::vector<char> result(rSize, 0);
+    size_t dSize = ZSTD_decompress(result.data(), rSize, (*buffer)->getBufferStart(),
+                                   (*buffer)->getBufferSize());
+    if (zStdIsError(dSize)) std::abort();
+    if (dSize != rSize) {
+      std::cerr << "Zstd invariant failed: decompressed size != frame content size" << std::endl;
+      std::abort();
+    }
+    return result;
+  } else {
+    ZSTD_DStream *dstream = ZSTD_createDStream();
+    if (!dstream) {
+      std::cerr << "Failed to create ZSTD_DStream" << std::endl;
+      return std::nullopt;
+    }
 
-  if (dSize != rSize) {
-    std::cerr << "Impossible because zstd will check this condition!" << std::endl;
-    return std::nullopt;
-  }
-  return rBuff;
+    size_t initResult = ZSTD_initDStream(dstream);
+    if (zStdIsError(initResult)) {
+      ZSTD_freeDStream(dstream);
+      std::abort();
+    }
 
+    std::vector<char> inBuffer(ZSTD_DStreamInSize());
+    std::vector<char> outBuffer(ZSTD_DStreamOutSize());
+    std::vector<char> result;
+    ZSTD_inBuffer input = {(*buffer)->getBufferStart(), (*buffer)->getBufferSize(), 0};
+    ZSTD_outBuffer output = {outBuffer.data(), outBuffer.size(), 0};
+    while (input.pos < input.size) {
+      if (zStdIsError(ZSTD_decompressStream(dstream, &output, &input))) {
+        ZSTD_freeDStream(dstream);
+        std::abort();
+      }
+      result.insert(result.end(), outBuffer.data(), outBuffer.data() + output.pos);
+      output.pos = 0;
+    }
+    ZSTD_freeDStream(dstream);
+    return result;
+  }
 } // namespace p3md::utils

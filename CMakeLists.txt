@@ -110,13 +110,19 @@ endfunction()
 
 add_tree_sitter_lang(tree-sitter c TAG v0.20.7)
 add_tree_sitter_lang(tree-sitter cpp TAG v0.20.5)
+add_tree_sitter_lang(tree-sitter julia TAG v0.22.0)
+add_tree_sitter_lang(tree-sitter rust TAG v0.21.2)
 add_tree_sitter_lang(stadelmanma fortran HASH f73d473)
+
+
 
 # =====================
 
 list(APPEND P3MD_COMPILE_DEBUG_FLAGS -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
+list(APPEND P3MD_COMPILE_RELEASE_FLAGS -O3 -march=native)
 list(APPEND P3MD_LINK_DEBUG_FLAGS -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
 list(APPEND P3MD_COMPILE_FLAGS
+        "$<$<CONFIG:Release>:${P3MD_COMPILE_RELEASE_FLAGS}>"
         "$<$<CONFIG:Debug>:${P3MD_COMPILE_DEBUG_FLAGS}>"
         -fexceptions
         -Wall
@@ -131,8 +137,7 @@ list(APPEND P3MD_COMPILE_FLAGS
         -Wno-unused-function
         -Wno-unused-variable
 )
-list(APPEND P3MD_LINK_FLAGS
-        "$<$<CONFIG:Debug>:${P3MD_LINK_DEBUG_FLAGS}>")
+list(APPEND P3MD_LINK_FLAGS "$<$<CONFIG:Debug>:${P3MD_LINK_DEBUG_FLAGS}>" )
 
 add_library(P3MD
         src/tree.cpp
@@ -158,6 +163,8 @@ target_link_libraries(P3MD
         tree-sitter
         tree-sitter-c
         tree-sitter-cpp
+        tree-sitter-julia
+        tree-sitter-rust
         tree-sitter-fortran
         clang-cpp
         LLVM
