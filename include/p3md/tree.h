@@ -1,18 +1,46 @@
 #pragma once
 
 #include <iosfwd>
-#include <ostream>
 #include <string>
 #include <type_traits>
 #include <vector>
 
 #include "aspartame/view.hpp"
-
 #include "json.hpp"
 #include "tree_sitter/api.h"
 #include "clang/AST/RecursiveASTVisitor.h"
+#include "llvm/IR/Module.h"
 
 namespace p3md {
+
+namespace {
+template <typename Ret, typename Arg, typename... Rest> Arg arg0_helper(Ret (*)(Arg, Rest...));
+template <typename Ret, typename F, typename Arg, typename... Rest>
+Arg arg0_helper(Ret (F::*)(Arg, Rest...));
+template <typename Ret, typename F, typename Arg, typename... Rest>
+Arg arg0_helper(Ret (F::*)(Arg, Rest...) const);
+template <typename F> decltype(arg0_helper(&F::operator())) arg0_helper(F);
+template <typename T> using arg0_t = decltype(arg0_helper(std::declval<T>()));
+template <typename T, typename Node, typename... Fs> std::optional<T> visitDyn(Node n, Fs... fs) {
+  std::optional<T> result{};
+  [[maybe_unused]] auto _ = {[&]() {
+    if (!result) {
+      if (auto x = llvm::dyn_cast<std::remove_pointer_t<arg0_t<Fs>>>(n)) { result = T(fs(x)); }
+    }
+    return 0;
+  }()...};
+  return result;
+}
+template <typename Node, typename... Fs> void visitDyn0(Node n, Fs... fs) {
+  [[maybe_unused]] auto _ = ([&]() -> bool {
+    if (auto x = llvm::dyn_cast<std::remove_pointer_t<arg0_t<Fs>>>(n)) {
+      fs(x);
+      return true;
+    }
+    return false;
+  }() || ...);
+}
+} // namespace
 
 std::vector<clang::Decl *> topLevelDeclsInMainFile(clang::ASTUnit &unit);
 
@@ -34,7 +62,7 @@ void printTree(int depth, std::vector<bool> branch, const N &node, std::ostream 
 
 template <typename T> struct SemanticTree;
 template <typename T> class SemanticTreeIterator {
-  std::stack<SemanticTree<T> *> stack;
+  std::stack<SemanticTree<T> *> stack{};
 
 public:
   using iterator_category = std::forward_iterator_tag;
@@ -90,11 +118,11 @@ template <typename T> struct SemanticTree {
   template <typename U>
   friend std::ostream &operator<<(std::ostream &os, const SemanticTree<U> &node);
 
-  template <typename F> void walk(F f) const {
-    static_assert(std::is_same_v<std::invoke_result_t<F, const SemanticTree<T> &>, bool>);
-    if (f(*this)) {
+  template <typename F> void walk(F f, size_t depth = 0) const {
+    static_assert(std::is_same_v<std::invoke_result_t<F, const SemanticTree<T> &, size_t>, bool>);
+    if (f(*this, depth)) {
       for (const auto &child : children)
-        child.walk(f);
+        child.walk(f, depth + 1);
     }
   }
 
@@ -124,27 +152,41 @@ std::ostream &operator<<(std::ostream &os, const SemanticTree<U> &node) { // NOL
   return os;
 }
 
-namespace {
-template <typename Ret, typename Arg, typename... Rest> Arg arg0_helper(Ret (*)(Arg, Rest...));
-template <typename Ret, typename F, typename Arg, typename... Rest>
-Arg arg0_helper(Ret (F::*)(Arg, Rest...));
-template <typename Ret, typename F, typename Arg, typename... Rest>
-Arg arg0_helper(Ret (F::*)(Arg, Rest...) const);
-template <typename F> decltype(arg0_helper(&F::operator())) arg0_helper(F);
-template <typename T> using arg0_t = decltype(arg0_helper(std::declval<T>()));
-template <typename T, typename Node, typename... Fs> std::optional<T> visitDyn(Node n, Fs... fs) {
-  std::optional<T> result{};
-  [[maybe_unused]] auto _ = {[&]() {
-    if (!result) {
-      if (auto x = llvm::dyn_cast<std::remove_pointer_t<arg0_t<Fs>>>(n)) { result = T(fs(x)); }
+template <typename T, typename R> class SemanticTreeVisitor {
+protected:
+  SemanticTree<T> *node{};
+  template <typename F, typename... Args> [[nodiscard]] R scoped(F f, Args... args) {
+    SemanticTree<T> *prev = node;
+    node = &node->children.emplace_back(std::forward<Args &&>(args)...);
+    if constexpr (std::is_void_v<R>) {
+      f();
+      node = prev;
+    } else {
+      auto x = f();
+      node = prev;
+      return x;
     }
-    return 0;
-  }()...};
-  return result;
-}
-} // namespace
+  }
+  template <typename... Args> R single(Args... args) {
+    node->children.emplace_back(std::forward<Args &&>(args)...);
+    if constexpr (!std::is_void_v<R>) { return {}; }
+  }
 
-class TreeSemanticVisitor : public clang::RecursiveASTVisitor<TreeSemanticVisitor> {
+  explicit SemanticTreeVisitor(SemanticTree<T> *root) : node(root) {}
+};
+
+class LLVMIRTreeVisitor : private SemanticTreeVisitor<std::string, void> {
+  bool normaliseName;
+  [[nodiscard]] std::string named(const std::string &kind, const std::string &name) const;
+  void walk(const llvm::Value *fn);
+
+public:
+  LLVMIRTreeVisitor(SemanticTree<std::string> *root, const llvm::Module &module,
+                    bool normaliseName);
+};
+
+class ClangASTSemanticTreeVisitor : private SemanticTreeVisitor<std::string, bool>,
+                                    public clang::RecursiveASTVisitor<ClangASTSemanticTreeVisitor> {
 
 public:
   struct Option {
@@ -155,26 +197,12 @@ public:
   };
 
 private:
-  SemanticTree<std::string> *node;
   clang::ASTContext &Context;
   Option option;
 
-  template <typename F, typename... Args> [[nodiscard]] bool scoped(F f, Args... args) {
-    SemanticTree<std::string> *prev = node;
-    node = &node->children.emplace_back(std::forward<Args &&>(args)...);
-    auto x = f();
-    node = prev;
-    return x;
-  }
-
-  template <typename... Args> bool single(Args... args) {
-    node->children.emplace_back(std::forward<Args &&>(args)...);
-    return true;
-  }
-
 public:
-  TreeSemanticVisitor(SemanticTree<std::string> *root, clang::ASTContext &Context, Option option);
-
+  ClangASTSemanticTreeVisitor(SemanticTree<std::string> *root, clang::ASTContext &Context,
+                              Option option);
   bool TraverseDecl(clang::Decl *decl);
   bool TraverseStmt(clang::Stmt *stmt);
 };

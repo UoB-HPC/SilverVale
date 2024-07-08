@@ -1,14 +1,9 @@
 #include <iostream>
 #include <thread>
 
-#include "tree_sitter/api.h"
-#include "tree_sitter_c/api.h"
-#include "tree_sitter_cpp/api.h"
-#include "tree_sitter_fortran/api.h"
-
 #include "clang/Tooling/CommonOptionsParser.h"
-#include "clang/Tooling/CompilationDatabase.h"
-#include "clang/Tooling/Tooling.h"
+// #include "clang/Tooling/CompilationDatabase.h"
+// #include "clang/Tooling/Tooling.h"
 #include "llvm/Support/CommandLine.h"
 
 #include "aspartame/string.hpp"
@@ -128,150 +123,45 @@ Expected<p3md::list::Options> p3md::parseListOpts(int argc, const char **argv) {
   return list::Options{dbPath.getValue(), kind};
 }
 
-Expected<p3md::diff::Options> p3md::parseDiffOpts(int argc, const char **argv) {
-  static cl::OptionCategory category("Diff options");
+Expected<p3md::run::Options> p3md::parseRunOpts(int argc, const char **argv) {
+  static cl::OptionCategory category("Run options");
 
-  static cl::list<std::string> databases( //
-      cl::FormattingFlags::Positional,
-      cl::desc("<database> [... <databaseN>]\n"
-               "  Compare all databases against the base (first by default) database.\n"
-               "  Each database can be suffixed by a colon separated list of root base paths (e.g "
-               "db_path_1:rootA:rootB db_path_2:rootC:rootD).\n"
-               "  Analysis (diff) will not escape the union of all root paths of the database it's "
-               "specified on."
-               "The base database can be specified via --base <database>"),
-      cl::cat(category));
+  static cl::opt<std::string> script(cl::Required, "script",
+                                     cl::desc("Path to the Lua script to run."), cl::cat(category));
 
-  static cl::opt<std::string> base( //
-      "base",
-      cl::desc("The base database to compare against, defaults to the "
-               "first positional database argument."),
-      cl::Optional);
+  static cl::list<std::string> scriptRoot(
+      cl::CommaSeparated, "script-roots",
+      cl::desc("Additional search paths in CSV format for Lua requires."), cl::cat(category));
 
-  static cl::list<DataKind> kinds(
-      "kinds", cl::CommaSeparated, cl::OneOrMore,
-      cl::desc("Comma separated kinds of metric to use for diff operation. Defaults to all "
-               "supported kinds."),
-      cl::values(
-          clEnumValN(DataKind::SLOC, "sloc", "Direct source code diff."),
-          clEnumValN(DataKind::LLOC, "lloc", "Direct source code diff."),
-          clEnumValN(DataKind::Source, "source", "Direct source code diff."),
-          clEnumValN(DataKind::TSTree, "tstree", "Tree-sitter tree with comments removed."),
-          clEnumValN(DataKind::STree, "stree",
-                     "ClangAST based semantic tree with symbols normalised."),
-          clEnumValN(DataKind::STreeInline, "stree+i",
-                     "ClangAST based semantic tree with symbols normalised and calls inlined.")));
-
-  static cl::opt<std::string> root(
-      "root",
-      cl::desc("The root path shared by all databases. "
-               "Analysis (diff) will not escape the unions of all root paths."),
-      cl::Optional);
-
-  static cl::opt<std::string> outputPrefix(
-      "output", cl::desc("The output file name prefix for all result CSV files."), cl::Optional);
-
-  static cl::opt<int> maxThreads( //
+  static cl::opt<int> maxThreads(
       "j",
-      cl::desc(
-          "Number of parallel AST frontend jobs in parallel, defaults to total number of threads."),
+      cl::desc("Global number of jobs to run in parallel, defaults to total number of threads."),
       cl::init(std::thread::hardware_concurrency()), cl::cat(category));
 
-  static cl::opt<std::string> transforms( //
-      "transforms", cl::Optional,
-      cl::desc( //
-          "A semicolon separated sequence of transform steps to apply for all loaded code bases.\n"
-          "\n * merge: [merge=<TU glob>:<TU name>] Combine multiple TUs (files) into a single TU "
-          "where all TUs matching TU glob will be merged"
-          "\n * include: [include=<TU glob>] Include TUs that match the TU glob."
-          "\n * exclude: [exclude=<TU glob>] Exclude TUs that match the TU glob."
-          "\nFor example, to select all TUs and merge everything into a single TU: `--transforms "
-          "\"include=*;merge=*:foo\"`"
-          "Note that steps are executed in the order they are specified and steps of the same type "
-          "can appear more than once."
-          "By default, the include all transform `--transforms \"include=*\"` will be used."),
-      cl::cat(category));
-
-  static cl::list<std::string> matches( //
-      "matches", cl::ZeroOrMore, cl::CommaSeparated,
-      cl::desc(
-          "A comma separated glob pairs for matching TUs (files) against the base TUs."
-          "The format is <base glob>:<model glob>,... where the diff will run on the first "
-          "matching pattern pair; malformed patterns are ignored."
-          "This overrides the default behaviour where TUs are matched by identical filenames."),
+  static cl::list<std::string> args( //
+      cl::FormattingFlags::Positional,
+      cl::desc(" [... args]\n"
+               "Arguments passed to the arg table for the Lua script."),
       cl::cat(category));
 
   if (auto e = parseCategory(category, argc, argv); e) return std::move(*e);
 
-  // --transform "include=*;exclude=*;merge=A:N;merge=B*:C"
-  // --matches "a:b"
-
-  auto pairPattern = [](const std::string &in,
-                        char delim) -> std::optional<std::pair<std::string, std::string>> {
-    auto pair = in ^ split(delim);
-    if (pair.size() == 2) return std::pair{pair[0], pair[1]};
-    std::cerr << "Ignoring malformed pair pattern with delimiter (" << delim << "): `" //
-              << in << "`" << std::endl;
-    return std::nullopt;
-  };
-
-  using Step = std::variant<p3md::diff::EntryFilter, p3md::diff::EntryMerge>;
-
-  auto mappedTransforms =
-      transforms.empty()
-          ? std::vector<Step>{}
-          : transforms ^ split(';') ^ collect([&](auto &step) {
-              return pairPattern(step, '=') ^
-                     bind([&](auto name, auto value) -> std::optional<Step> {
-                       if (name != "merge") {
-                         return pairPattern(value, ':') ^ map([](auto glob, auto name) -> Step {
-                                  return p3md::diff::EntryMerge{.glob = glob, .name = name};
-                                });
-                       } else if (name != "include")
-                         return p3md::diff::EntryFilter{.include = true, .glob = value};
-                       else if (name != "exclude")
-                         return p3md::diff::EntryFilter{.include = false, .glob = value};
-                       else {
-                         std::cerr << "Unknown step name: `" << name << "`" << std::endl;
-                         return std::nullopt;
-                       }
-                     });
-            });
-
-  auto mappedDbs =
-      databases | map([](auto &x) {
-        auto paths = x ^ split(":");
-        return p3md::diff::Database{paths ^ head_maybe() ^ get_or_else(x),
-                                    root.empty() ? paths ^ tail() : paths ^ tail() ^ append(root)};
-      }) |
-      to_vector();
-  return diff::Options{.databases = mappedDbs,
-                       .base = base.empty() ? mappedDbs[0].db : base,
-                       .kinds = kinds,                                                    //
-                       .transforms = mappedTransforms,                                    //
-                       .matches = (matches | to_vector()) ^                               //
-                                  collect([&](auto &p) { return pairPattern(p, ':'); }) ^ //
-                                  map([](auto source, auto target) {                      //
-                                    return p3md::diff::EntryMatch{.sourceGlob = source,
-                                                                  .targetGlob = target};
-                                  }),
-                       .outputPrefix = outputPrefix.getValue(),
-                       .maxThreads = maxThreads};
+  return run::Options{.script = script.getValue(),
+                      .scriptRoots = scriptRoot | to_vector(),
+                      .maxThreads = maxThreads,
+                      .args = args | to_vector()};
 }
 
-Expected<p3md::dump::Options> p3md::parseDumpOpts(int argc, const char **argv) {
-  static cl::OptionCategory category("Dump options");
+Expected<p3md::def::Options> p3md::parseDefOpts(int argc, const char **argv) {
+  static cl::OptionCategory category("Diff options");
 
-  static cl::opt<std::string> dbPath(
-      "db", cl::desc("The path to the P3MD database, as generated using the build command"),
-      cl::Required, cl::cat(category));
-
-  static cl::list<std::string> Entries( //
-      cl::Positional, cl::desc("<entry0> [... <entryN>]"), cl::OneOrMore, cl::cat(category));
+  static cl::opt<std::string> output(cl::Optional, "output",
+                                     cl::desc("File name of the Teal definition file for scripts; "
+                                              "will write to stdout if unspecified."),
+                                     cl::cat(category));
 
   if (auto e = parseCategory(category, argc, argv); e) return std::move(*e);
-
-  return dump::Options{dbPath.getValue(), Entries};
+  return def::Options{.output = output.getValue()};
 }
 
 template <typename P, typename F>
@@ -292,10 +182,10 @@ int p3md::list_main(int argc, const char **argv) {
   return parseAndRun(argc, argv, &p3md::parseListOpts, &p3md::list::run);
 }
 
-int p3md::dump_main(int argc, const char **argv) {
-  return parseAndRun(argc, argv, &p3md::parseDumpOpts, &p3md::dump::run);
+int p3md::run_main(int argc, const char **argv) {
+  return parseAndRun(argc, argv, &p3md::parseRunOpts, &p3md::run::run);
 }
 
-int p3md::diff_main(int argc, const char **argv) {
-  return parseAndRun(argc, argv, &p3md::parseDiffOpts, &p3md::diff::run);
+int p3md::def_main(int argc, const char **argv) {
+  return parseAndRun(argc, argv, &p3md::parseDefOpts, &p3md::def::run);
 }

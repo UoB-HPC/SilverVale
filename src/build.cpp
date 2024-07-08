@@ -8,6 +8,7 @@
 #include "p3md/compress.h"
 #include "p3md/database.h"
 #include "p3md/glob.h"
+#include "p3md/par.h"
 #include "p3md/term.h"
 
 #include "clang/Frontend/CompilerInstance.h"
@@ -23,13 +24,6 @@
 #include "aspartame/variant.hpp"
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
-
-#include "oneapi/tbb.h"
-
-// #include "apted_tree_index.h"
-// #include "node.h"
-// #include "string_label.h"
-// #include "unit_cost_model.h"
 
 using namespace aspartame;
 using namespace clang;
@@ -48,7 +42,7 @@ p3md::build::Options::resolveDatabase(const ArgumentsAdjuster &adjuster) const {
     if (auto db = CompilationDatabase::loadFromDirectory(root, ignored); db) {
       auto AdjustingCompilations = std::make_unique<ArgumentsAdjustingCompilations>(std::move(db));
       AdjustingCompilations->appendArgumentsAdjuster(adjuster);
-      return std::move(AdjustingCompilations);
+      return AdjustingCompilations;
     }
     root = llvm::sys::path::parent_path(root);
   }
@@ -91,52 +85,102 @@ static int clearAndCreateDir(bool clear, const std::string &outDir) {
 
 struct Task {
   size_t idx;
-  std::string sourceName;
+  CompileCommand cmd;
   std::string pchName;
+
   std::error_code error;
   std::shared_ptr<raw_ostream> stream;
   struct Result {
     std::string sourceName;
     std::optional<std::string> pchName;
+    std::vector<p3md::Database::Bitcode> bitcodes;
     std::string diagnostic;
     std::map<std::string, std::string> dependencies;
   };
 };
 
-static std::vector<Task::Result> buildPCHParallel(const CompilationDatabase &db,
-                                                  const std::vector<std::string> &files,
+static std::vector<Task::Result> buildPCHParallel(const std::string &root,
+                                                  const CompilationDatabase &db,
+                                                  const std::vector<CompileCommand> &commands,
                                                   std::string outDir, bool verbose,
                                                   bool noCompress) {
 
   auto [success, failed] =
-      (files | zip_with_index() | map([&](auto file, auto idx) {
-         llvm::SmallString<128> nameGZ;
-         llvm::sys::path::append(nameGZ, outDir,
-                                 std::to_string(idx) + "." + llvm::sys::path::filename(file).str() +
-                                     ".pch" + (noCompress ? ".zstd" : ""));
-         Task task{idx, file, nameGZ.c_str(), std::make_error_code(std::errc()), nullptr};
-         if (task.error == std::errc()) {
-           if (noCompress) {
-             task.stream = std::make_shared<llvm::raw_fd_stream>(task.pchName, task.error);
-           } else {
-             task.stream = std::make_shared<p3md::utils::zstd_ostream>(task.pchName, task.error, 6);
-           }
+      (commands | zip_with_index() | map([&](auto &cmd, auto idx) {
+         Task task{.idx = idx,
+                   .cmd = cmd,
+                   .pchName = outDir + "/" + std::to_string(idx) + "." +
+                              llvm::sys::path::filename(cmd.Filename).str() + ".pch" +
+                              (noCompress ? "" : ".zstd"),
+                   .error = std::make_error_code(std::errc()),
+                   .stream = nullptr};
+         if (noCompress) {
+           task.stream = std::make_shared<llvm::raw_fd_stream>(task.pchName, task.error);
+         } else {
+           task.stream = std::make_shared<p3md::utils::zstd_ostream>(task.pchName, task.error, 6);
          }
          return task;
        }) |
        to_vector()) ^
       partition([](auto &t) { return t.error == std::errc(); });
 
-  auto maxFileLength = files ^ fold_left(0, [](auto acc, auto &s) {
-                         return std::max(acc, static_cast<int>(s.size()));
+  auto maxFileLength = commands ^ fold_left(0, [](auto acc, auto &s) {
+                         return std::max(acc, static_cast<int>(s.Filename.size()));
                        });
   std::atomic_size_t completed{};
   std::vector<Task::Result> results(success.size());
-  tbb::parallel_for(size_t{}, success.size(), [&, total = files.size()](auto idx) {
-    auto &task = success[idx];
 
+  success | zip_with_index() | for_each([&](auto &task, auto idx) {
+    auto tuName = llvm::sys::path::stem(task.cmd.Filename).str();
+    auto searchPath = root + "/" + llvm::sys::path::parent_path(task.cmd.Output).str();
+
+    // The BC file exists at the same level as .o when using -save-temps=obj, with the
+    // following convention:
+    // Host
+    //    {OUTPUT}.bc
+    // CUDA/HIP
+    //   {OUTPUT}-host-{triple}.bc
+    //   {OUTPUT}-{cuda|hip}-{triple}.bc
+    // OpenMP target:
+    //   {OUTPUT}-host-{triple}.bc
+    //   {OUTPUT}-openmp-{triple}.bc
+
+    auto copyAndSaveBC = [&](const std::string &src, const std::string &destName,
+                             const std::string &kind, const std::string &triple) {
+      if (auto copyEC = llvm::sys::fs::copy_file(src, outDir + "/" + destName); copyEC)
+        std::cerr << "Warning: failed to copy BC (" + src << ") to " << (outDir + "/" + destName)
+                  << ": " << copyEC.message() << " D=" << llvm::sys::fs::exists(outDir)
+                  << std::endl;
+      else { results[task.idx].bitcodes.emplace_back(destName, kind, triple); }
+    };
+
+    // First handle the common case where the direct bc exists
+    if (auto hostBCFile = searchPath + "/" + tuName + ".bc"; llvm::sys::fs::exists(hostBCFile)) {
+      copyAndSaveBC(hostBCFile, std::to_string(idx) + "." + tuName + ".bc", "", "");
+    }
+
+    // Then the offload and host ones
+    std::regex pattern("^" + tuName + "-([a-zA-Z]+)-([a-zA-Z0-9-_]+)\\.bc$");
+    std::error_code walkEC{};
+    for (llvm::sys::fs::directory_iterator
+             it = llvm::sys::fs::directory_iterator(searchPath, walkEC),
+             itEnd;
+         it != itEnd && !walkEC; it.increment(walkEC)) {
+      std::smatch match;
+      std::string source = llvm::sys::path::filename(it->path()).str();
+      if (std::regex_match(source, match, pattern))
+        copyAndSaveBC(it->path(), std::to_string(idx) + "." + source, match[1].str(),
+                      match[2].str());
+    }
+    if (walkEC) {
+      std::cerr << "Warning: failed to traverse -save-temps path " + searchPath << ": "
+                << walkEC.message() << std::endl;
+    }
+  });
+
+  p3md::par_for(success, [&, total = commands.size()](auto &task, auto idx) {
     auto compileCommand = [&]() {
-      return (db.getCompileCommands(task.sourceName) ^
+      return (db.getCompileCommands(task.cmd.Filename) ^
               mk_string("\n", [](auto &cc) { return cc.CommandLine ^ mk_string(" "); }));
     };
 
@@ -146,7 +190,7 @@ static std::vector<Task::Result> buildPCHParallel(const CompilationDatabase &db,
     IntrusiveRefCntPtr<DiagnosticOptions> DiagOpts = new DiagnosticOptions();
     TextDiagnosticPrinter diagPrinter(message, DiagOpts.get());
 
-    ClangTool Tool(db, {task.sourceName});
+    ClangTool Tool(db, {task.cmd.Filename});
 
     Tool.setDiagnosticConsumer(&diagPrinter);
     std::vector<std::unique_ptr<ASTUnit>> out;
@@ -154,7 +198,7 @@ static std::vector<Task::Result> buildPCHParallel(const CompilationDatabase &db,
     diagPrinter.finish();
     if (result != 0) message << "# Clang-Tool exited with non-zero code: " << result << "\n";
     (P3MD_COUT << "[" << completed++ << "/" << total << "] " << std::left
-               << std::setw(maxFileLength) << task.sourceName << "\r")
+               << std::setw(maxFileLength) << task.cmd.Filename << "\r")
         .flush();
     if (out.size() != 1)
       message << "# More than one AST unit produced; "
@@ -162,8 +206,9 @@ static std::vector<Task::Result> buildPCHParallel(const CompilationDatabase &db,
 
     if (out[0]->serialize(*task.stream)) // XXX true is fail
       message << "# Serialisation failed\n";
-    results[task.idx] = {
-        task.sourceName, llvm::sys::path::filename(task.pchName).str(), messageStorage, {}};
+    results[task.idx].sourceName = task.cmd.Filename;
+    results[task.idx].pchName = llvm::sys::path::filename(task.pchName).str();
+    results[task.idx].diagnostic = messageStorage;
     auto &sm = out[0]->getSourceManager();
     std::for_each(sm.fileinfo_begin(), sm.fileinfo_end(), [&](auto entry) {
       if (auto name = entry.getFirst()->getName().str(); !name.empty()) {
@@ -178,12 +223,14 @@ static std::vector<Task::Result> buildPCHParallel(const CompilationDatabase &db,
       if (verbose) { P3MD_COUT << compileCommand() << std::endl; }
     }
   });
+
   success.clear();
 
   P3MD_COUT << std::endl;
   success.clear(); // drop the streams so the file can close
   for (auto &t : failed)
-    results.emplace_back(t.sourceName, std::nullopt, t.error.message());
+    results.emplace_back(t.cmd.Filename, std::nullopt, std::vector<p3md::Database::Bitcode>{},
+                         t.error.message());
   return results;
 }
 
@@ -196,8 +243,7 @@ int p3md::build::run(const p3md::build::Options &options) {
       << " - Clear output: " << (options.clearOutDir ? "true" : "false") << "\n"
       << " - Max threads:  " << options.maxThreads << "\n";
 
-  tbb::global_control global_limit(tbb::global_control::max_allowed_parallelism,
-                                   options.maxThreads);
+  auto global_limit = p3md::par_setup(options.maxThreads);
 
   auto adjuster = options.resolveAdjuster();
 
@@ -224,15 +270,17 @@ int p3md::build::run(const p3md::build::Options &options) {
     return EXIT_FAILURE;
   }
   auto regexes = options.sourceGlobs ^ map([](auto &glob) { return globToRegex(glob); });
-  auto files = db->getAllFiles() ^ filter([&](auto file) {
-                 return regexes ^ exists([&](auto &r) { return std::regex_match(file, r); });
-               }) ^
-               sort();
+
+  auto commands =
+      db->getAllCompileCommands() ^ filter([&](auto &cmd) {
+        return regexes ^ exists([&](auto &r) { return std::regex_match(cmd.Filename, r); });
+      }) ^
+      sort_by([](auto &cmd) { return cmd.Filename; });
 
   P3MD_COUT << "Adjustments: " << (adjuster({"${ARGS}"}, "${FILE}") | mk_string(" ")) << "\n";
-  P3MD_COUT << "Sources (" << files.size() << "/" << db->getAllFiles().size() << "):\n";
-  for (auto &file : files) {
-    P3MD_COUT << " - " << file << "\n";
+  P3MD_COUT << "Sources (" << commands.size() << "/" << db->getAllFiles().size() << "):\n";
+  for (auto &cmd : commands) {
+    P3MD_COUT << " - " << cmd.Filename << "\n";
   }
 
   if (auto result = clearAndCreateDir(options.clearOutDir, options.outDir);
@@ -248,9 +296,10 @@ int p3md::build::run(const p3md::build::Options &options) {
     return error.value();
   }
 
-  auto results = buildPCHParallel(*db, files, options.outDir, options.verbose, options.noCompress);
+  auto results = buildPCHParallel(options.buildDir, *db, commands, options.outDir, options.verbose,
+                                  options.noCompress);
 
-  std::map<std::string, p3md::Database::Source> dependencies;
+  std::map<std::string, p3md::Database::Dependency> dependencies;
   for (auto &result : results) {
     for (auto &[_, file] : result.dependencies) {
       auto buffer = llvm::MemoryBuffer::getFile(file, /*isText*/ true);
@@ -264,8 +313,8 @@ int p3md::build::run(const p3md::build::Options &options) {
         return e.value();
       }
       dependencies.emplace(
-          file, p3md::Database::Source{llvm::sys::toTimeT(status.getLastModificationTime()),
-                                       (*buffer)->getBuffer().str()});
+          file, p3md::Database::Dependency{llvm::sys::toTimeT(status.getLastModificationTime()),
+                                           (*buffer)->getBuffer().str()});
     }
   }
 
@@ -273,11 +322,14 @@ int p3md::build::run(const p3md::build::Options &options) {
       results | collect([&](auto &result) {
         return result.pchName ^ map([&](auto name) {
                  return std::pair{result.sourceName,
-                                  p3md::Database::PCHEntry{
-                                      db->getCompileCommands(result.sourceName) ^ map([](auto &cc) {
-                                        return cc.CommandLine ^ mk_string(" ");
-                                      }),
-                                      name, "", result.dependencies
+                                  p3md::Database::Entry{
+                                      .compileCommands = db->getCompileCommands(result.sourceName) ^
+                                                         map([](auto &cc) {
+                                                           return cc.CommandLine ^ mk_string(" ");
+                                                         }),
+                                      .pchName = name,
+                                      .bitcodes = result.bitcodes,
+                                      .dependencies = result.dependencies
 
                                   }};
                });

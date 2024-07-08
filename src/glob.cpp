@@ -30,27 +30,28 @@ std::regex p3md::globToRegex(const std::string &str, bool extended, bool globSta
           reStr += ".";
           break;
         }
+        [[fallthrough]];
       case '[':
       case ']':
         if (extended) {
           reStr += c;
           break;
         }
-
+        [[fallthrough]];
       case '{':
         if (extended) {
           inGroup = true;
           reStr += "(";
           break;
         }
-
+        [[fallthrough]];
       case '}':
         if (extended) {
           inGroup = false;
           reStr += ")";
           break;
         }
-
+        [[fallthrough]];
       case ',':
         if (inGroup) {
           reStr += "|";
@@ -59,7 +60,6 @@ std::regex p3md::globToRegex(const std::string &str, bool extended, bool globSta
         reStr += "\\";
         reStr += c;
         break;
-
       case '*': {
         if (!globStar) {
           // globstar is disabled, so treat any number of "*" as one

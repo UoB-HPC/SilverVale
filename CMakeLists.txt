@@ -40,7 +40,7 @@ FetchContent_MakeAvailable(Aspartame)
 
 FetchContent_Declare(Catch2
         GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-        GIT_TAG v3.4.0)
+        GIT_TAG v3.6.0)
 FetchContent_MakeAvailable(Catch2)
 
 FetchContent_Declare(json
@@ -62,6 +62,10 @@ FetchContent_MakeAvailable(dtl)
 add_library(dtl INTERFACE)
 target_include_directories(dtl INTERFACE "${dtl_SOURCE_DIR}")
 
+FetchContent_Declare(simplecpp
+        GIT_REPOSITORY https://github.com/danmar/simplecpp.git
+        GIT_TAG d90401601af4d7a747ce2b157db1f2d517467333)
+FetchContent_MakeAvailable(simplecpp)
 
 FetchContent_Declare(tree-sitter
         URL https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.22.2.tar.gz
@@ -115,8 +119,38 @@ add_tree_sitter_lang(tree-sitter rust TAG v0.21.2)
 add_tree_sitter_lang(stadelmanma fortran HASH f73d473)
 
 
+# =====================
+
+set(SOL_VERSION "v3.3.0")
+
+FetchContent_Declare(sol2-sol
+        URL https://github.com/ThePhD/sol2/releases/download/${SOL_VERSION}/sol.hpp
+        URL_HASH SHA256=e095a961a5189863745e6c101124fce944af991f3d4726a1e82c5b4a885a187f
+        DOWNLOAD_NO_EXTRACT YES)
+FetchContent_MakeAvailable(sol2-sol)
+
+FetchContent_Declare(sol2-forward
+        URL https://github.com/ThePhD/sol2/releases/download/${SOL_VERSION}/forward.hpp
+        URL_HASH SHA256=8fc34d74e9b4b8baa381f5e6ab7b6f6b44114cd355c718505495943ff6b85740
+        DOWNLOAD_NO_EXTRACT YES)
+FetchContent_MakeAvailable(sol2-forward)
+
+FetchContent_Declare(lua
+        URL https://www.lua.org/ftp/lua-5.4.7.tar.gz
+        URL_HASH SHA256=9fbf5e28ef86c69858f6d3d34eccc32e911c1a28b4120ff3e84aaa70cfbf1e30
+)
+FetchContent_MakeAvailable(lua)
+
+add_library(sol2 INTERFACE)
+target_include_directories(sol2 INTERFACE ${sol2-sol_SOURCE_DIR} ${sol2-forward_SOURCE_DIR})
+
+file(GLOB LUA_SOURCES ${lua_SOURCE_DIR}/src/*.c)
+add_library(lua ${LUA_SOURCES})
+target_include_directories(lua PUBLIC ${lua_SOURCE_DIR}/src)
+target_compile_definitions(lua PUBLIC LUA_USE_LINUX LUA_COMPAT_5_3)
 
 # =====================
+
 
 list(APPEND P3MD_COMPILE_DEBUG_FLAGS -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
 list(APPEND P3MD_COMPILE_RELEASE_FLAGS -O3 -march=native)
@@ -129,27 +163,29 @@ list(APPEND P3MD_COMPILE_FLAGS
         -Wextra
         -Werror=return-type
         -Werror=switch
-        -Wthread-safety
+        #        -Wthread-safety
         -Wcast-align
         -Wno-type-limits
 
         -Wno-unused-parameter
         -Wno-unused-function
         -Wno-unused-variable
+        -Wno-unknown-warning-option
 )
-list(APPEND P3MD_LINK_FLAGS "$<$<CONFIG:Debug>:${P3MD_LINK_DEBUG_FLAGS}>" )
+list(APPEND P3MD_LINK_FLAGS "$<$<CONFIG:Debug>:${P3MD_LINK_DEBUG_FLAGS}>")
 
 add_library(P3MD
         src/tree.cpp
-        src/diff.cpp
-        src/dump.cpp
+        src/run.cpp
+        src/def.cpp
         src/build.cpp
         src/list.cpp
+        src/diff.cpp
         src/p3md.cpp
         src/database.cpp
         src/compress.cpp
         src/glob.cpp)
-target_include_directories(P3MD PRIVATE include ${json_SOURCE_DIR})
+target_include_directories(P3MD PRIVATE include ${json_SOURCE_DIR} ${simplecpp_SOURCE_DIR})
 target_link_libraries(P3MD
 
         PRIVATE
@@ -158,6 +194,9 @@ target_link_libraries(P3MD
         TreeSimilarity
         dtl
         TBB::tbb
+        simplecpp_obj
+        sol2
+        lua
 
         PUBLIC
         tree-sitter
@@ -177,15 +216,29 @@ target_precompile_headers(P3MD PRIVATE
 
         [["clang/AST/RecursiveASTVisitor.h"]]
         [["clang/Frontend/FrontendActions.h"]]
+        [["clang/Frontend/ASTUnit.h"]]
         [["clang/Tooling/CommonOptionsParser.h"]]
         [["clang/Tooling/Tooling.h"]]
+
         [["llvm/Support/CommandLine.h"]]
+        [["llvm/Bitcode/BitcodeReader.h"]]
+        [["llvm/IR/LLVMContext.h"]]
+        [["llvm/IR/Module.h"]]
 
         [["aspartame/view.hpp"]]
         [["aspartame/vector.hpp"]]
         [["aspartame/optional.hpp"]]
 
+        [["oneapi/tbb.h"]]
+
         [["json.hpp"]]
+
+        [["aspartame/map.hpp"]]
+        [["aspartame/view.hpp"]]
+        [["aspartame/optional.hpp"]]
+        [["aspartame/string.hpp"]]
+        [["aspartame/vector.hpp"]]
+
 
         <optional>
         <iostream>
@@ -195,6 +248,7 @@ target_precompile_headers(P3MD PRIVATE
         <string>
         <regex>
 )
+
 
 add_executable(driver src/driver.cpp)
 add_executable(tests test/main.cpp)

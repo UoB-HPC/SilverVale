@@ -1,26 +1,21 @@
+#include <iostream>
+
 #include "aspartame/map.hpp"
 #include "aspartame/optional.hpp"
 #include "aspartame/string.hpp"
 #include "aspartame/view.hpp"
 #include "p3md/p3md.h"
-#include "llvm/Support/CommandLine.h"
-#include <iostream>
 
 using namespace llvm;
 using namespace aspartame;
 
-enum class Kind : uint8_t {
-  Build = 1,
-  List,
-  Diff,
-  Dump,
-};
+enum class Kind : uint8_t { Build = 1, List, Run, Def };
 
 std::map<std::string, std::pair<Kind, std::string>> table = {
     {"build", {Kind::Build, "Build P3MD database"}},
     {"list", {Kind::List, "List entries in a P3MD database"}},
-    {"diff", {Kind::Diff, "Diff one or more P3MD database against a base database"}},
-    {"dump", {Kind::Dump, "Dump selected entries from a P3MD database"}} //
+    {"run", {Kind::Run, "Execute Lua scripts against a loaded database"}},
+    {"def", {Kind::Def, "Emit Teal type declarations"}},
 };
 
 int main(int argc, const char **argv) {
@@ -61,8 +56,8 @@ int main(int argc, const char **argv) {
                switch (kind) {
                  case Kind::Build: return p3md::build_main(sliced.size(), sliced.data());
                  case Kind::List: return p3md::list_main(sliced.size(), sliced.data());
-                 case Kind::Diff: return p3md::diff_main(sliced.size(), sliced.data());
-                 case Kind::Dump: return p3md::dump_main(sliced.size(), sliced.data());
+                 case Kind::Run: return p3md::run_main(sliced.size(), sliced.data());
+                 case Kind::Def: return p3md::def_main(sliced.size(), sliced.data());
                }
                return EXIT_SUCCESS;
              },
@@ -71,6 +66,4 @@ int main(int argc, const char **argv) {
                          << "\", use --help for a list of commands." << std::endl;
                return EXIT_FAILURE;
              });
-
-  return EXIT_SUCCESS;
 }

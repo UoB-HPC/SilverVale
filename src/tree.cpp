@@ -37,12 +37,12 @@ static inline CXXMethodDecl *extractLambdaCallMethodFromDeclRefTpe(Expr *expr) {
   return {};
 }
 
-p3md::TreeSemanticVisitor::TreeSemanticVisitor(p3md::SemanticTree<std::string> *root,
-                                               clang::ASTContext &Context,
-                                               p3md::TreeSemanticVisitor::Option option)
-    : node(root), Context(Context), option(std::move(option)) {}
+p3md::ClangASTSemanticTreeVisitor::ClangASTSemanticTreeVisitor(
+    p3md::SemanticTree<std::string> *root, clang::ASTContext &Context,
+    p3md::ClangASTSemanticTreeVisitor::Option option)
+    : SemanticTreeVisitor(root), Context(Context), option(std::move(option)) {}
 
-bool p3md::TreeSemanticVisitor::TraverseStmt(clang::Stmt *stmt) { // NOLINT(*-no-recursion)
+bool p3md::ClangASTSemanticTreeVisitor::TraverseStmt(clang::Stmt *stmt) { // NOLINT(*-no-recursion)
   // Remove implicits
   if (Expr *expr = llvm::dyn_cast_or_null<Expr>(stmt); expr) {
     stmt = expr->IgnoreUnlessSpelledInSource();
@@ -140,12 +140,14 @@ bool p3md::TreeSemanticVisitor::TraverseStmt(clang::Stmt *stmt) { // NOLINT(*-no
                });
 
            return scoped(
-               [&]() { return RecursiveASTVisitor<TreeSemanticVisitor>::TraverseStmt(stmt); },
+               [&]() {
+                 return RecursiveASTVisitor<ClangASTSemanticTreeVisitor>::TraverseStmt(stmt);
+               },
                suffix ^ map([&](auto s) { return name + ": " + s; }) ^ get_or_else(name));
          });
 }
 
-bool p3md::TreeSemanticVisitor::TraverseDecl(clang::Decl *decl) { // NOLINT(*-no-recursion)
+bool p3md::ClangASTSemanticTreeVisitor::TraverseDecl(clang::Decl *decl) { // NOLINT(*-no-recursion)
   if (!decl) return true;
   auto suffix = visitDyn<std::string>(
       decl, //
@@ -156,8 +158,9 @@ bool p3md::TreeSemanticVisitor::TraverseDecl(clang::Decl *decl) { // NOLINT(*-no
         return option.normaliseVarName ? "" : var->getDeclName().getAsString();
       });
   std::string name = decl->getDeclKindName();
-  return scoped([&]() { return RecursiveASTVisitor<TreeSemanticVisitor>::TraverseDecl(decl); },
-                suffix ^ map([&](auto s) { return name + ": " + s; }) ^ get_or_else(name));
+  return scoped(
+      [&]() { return RecursiveASTVisitor<ClangASTSemanticTreeVisitor>::TraverseDecl(decl); },
+      suffix ^ map([&](auto s) { return name + ": " + s; }) ^ get_or_else(name));
 }
 
 p3md::TsTree::TsTree() = default;
@@ -250,4 +253,93 @@ size_t p3md::TsTree::lloc(const std::optional<TSNode> &node) const {
       },
       node);
   return lloc;
+}
+
+static std::string print(llvm::Type *t) {
+  std::string s;
+  llvm::raw_string_ostream rso(s);
+  t->print(rso);
+  return rso.str();
+}
+
+p3md::LLVMIRTreeVisitor::LLVMIRTreeVisitor(p3md::SemanticTree<std::string> *root,
+                                           const llvm::Module &module, bool normaliseName)
+    : SemanticTreeVisitor(root), normaliseName(normaliseName) {
+
+  module.globals() | for_each([&](const llvm::GlobalVariable &var) {
+    auto name = named("Global", var.getName().str() + ": " + print(var.getType()));
+    if (var.hasInitializer()) {
+      scoped([&]() { walk(var.getInitializer()); }, name);
+    } else {
+      single(name);
+    }
+  });
+  module.functions() | for_each([&](const llvm::Function &fn) {
+    auto args =
+        fn.args() | mk_string(",", [&](const llvm::Argument &arg) { return print(arg.getType()); });
+    auto sig =
+        ((!normaliseName ? fn.getName() : "") + "(" + args + "): " + print(fn.getReturnType()))
+            .str();
+
+    scoped(
+        [&]() {
+          fn | for_each([&](const llvm::BasicBlock &bb) {
+            scoped(
+                [&]() {
+                  bb | for_each([&](const llvm::Instruction &ins) { walk(&ins); });
+                  return true;
+                },
+                named("BB", bb.getName().str()));
+          });
+        },
+        "Fn: " + sig);
+  });
+}
+
+std::string p3md::LLVMIRTreeVisitor::named(const std::string &kind, const std::string &name) const {
+  return normaliseName ? kind : (kind + ": " + name);
+}
+
+void p3md::LLVMIRTreeVisitor::walk(const llvm::Value *value) {
+  if (!value) {
+    single("<<<NUll>>>");
+    return;
+  }
+  visitDyn0( //
+      value, //
+      [&](const llvm::Argument *arg) { return single("Arg: " + print(arg->getType())); },
+      [&](const llvm::Instruction *ins) {
+        std::string s;
+        llvm::raw_string_ostream rso(s);
+        ins->print(rso);
+
+        auto args = ins->operands() |
+                    mk_string(",", [](const llvm::Use &u) { return print(u->getType()); });
+        auto sig = std::string(ins->getOpcodeName()) + "(" + args + "):" + print(ins->getType());
+        //        scoped( //
+        //            [&]() {
+        //              ins->operand_values() | zip_with_index() |
+        //                  for_each([&](const llvm::Value *v, auto idx) {
+        //                    if (idx == 0) return; //  arg 0 should be the ins itself
+        //                    if (v == value) single("(identity)");
+        //                    else walk(v);
+        //                  });
+        //            },
+        //            sig);
+        single(sig);
+      },
+      [&](const llvm::Function *c) {
+        single(named("Fn", c->getName().str() + ": " + print(c->getType())));
+      },
+      [&](const llvm::Constant *c) {
+        std::string s;
+        llvm::raw_string_ostream rso(s);
+        c->print(rso);
+        single(named("Const", rso.str() + ": " + print(c->getType())));
+      },
+      [&](const llvm::Value *c) {
+        single(named("Val", c->getName().str() + ": " + print(c->getType())));
+      }
+
+  );
 }

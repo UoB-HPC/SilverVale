@@ -1,45 +1,14 @@
 #pragma once
 
-#include "kind.h"
-#include <string>
-#include <vector>
+#include "database.h"
 
-namespace p3md::diff {
+namespace p3md {
+struct Diff {
+  static double apted(const p3md::Tree &lhsTree, const p3md::Tree &rhsTree);
+  static double diff(const std::string &lhs, const std::string &rhs);
 
-struct Database {
-  std::string db;
-  std::vector<std::string> roots;
+  USERTYPE_DEFINE(Diff,                     //
+                  USERTYPE_FN(Diff, apted), //
+                  USERTYPE_FN(Diff, diff));
 };
-
-struct EntryFilter {
-  bool include;
-  std::string glob;
-};
-
-struct EntryMerge {
-  std::string glob;
-  std::string name;
-};
-
-struct EntryMatch {
-  std::string sourceGlob;
-  std::string targetGlob;
-};
-
-struct Options {
-  std::vector<Database> databases;
-  std::string base;
-  std::vector<DataKind> kinds;
-  std::vector<std::variant<EntryFilter, EntryMerge>> transforms;
-  std::vector<EntryMatch> matches;
-  std::string outputPrefix;
-  int maxThreads;
-};
-
-// TODO
-// --transform "include=*;exclude=*;merge=A:N;merge=B*:C"
-// --match "glob:dest"
-
-int run(const Options &lhsEntriesIdx);
-
-} // namespace p3md::diff
+} // namespace p3md
