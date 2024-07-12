@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.19 FATAL_ERROR)
-project(P3MD C CXX)
+project(SilverVale C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_STANDARD 11)
@@ -152,12 +152,12 @@ target_compile_definitions(lua PUBLIC LUA_USE_LINUX LUA_COMPAT_5_3)
 # =====================
 
 
-list(APPEND P3MD_COMPILE_DEBUG_FLAGS -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
-list(APPEND P3MD_COMPILE_RELEASE_FLAGS -O3 -march=native)
-list(APPEND P3MD_LINK_DEBUG_FLAGS -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
-list(APPEND P3MD_COMPILE_FLAGS
-        "$<$<CONFIG:Release>:${P3MD_COMPILE_RELEASE_FLAGS}>"
-        "$<$<CONFIG:Debug>:${P3MD_COMPILE_DEBUG_FLAGS}>"
+list(APPEND AGV_COMPILE_DEBUG_FLAGS -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
+list(APPEND AGV_COMPILE_RELEASE_FLAGS -O3 -march=native)
+list(APPEND AGV_LINK_DEBUG_FLAGS -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
+list(APPEND AGV_COMPILE_FLAGS
+        "$<$<CONFIG:Release>:${AGV_COMPILE_RELEASE_FLAGS}>"
+        "$<$<CONFIG:Debug>:${AGV_COMPILE_DEBUG_FLAGS}>"
         -fexceptions
         -Wall
         -Wextra
@@ -172,21 +172,21 @@ list(APPEND P3MD_COMPILE_FLAGS
         -Wno-unused-variable
         -Wno-unknown-warning-option
 )
-list(APPEND P3MD_LINK_FLAGS "$<$<CONFIG:Debug>:${P3MD_LINK_DEBUG_FLAGS}>")
+list(APPEND AGV_LINK_FLAGS "$<$<CONFIG:Debug>:${AGV_LINK_DEBUG_FLAGS}>")
 
-add_library(P3MD
+add_library(AGV
         src/tree.cpp
-        src/run.cpp
-        src/def.cpp
-        src/build.cpp
-        src/list.cpp
+        src/tool_script.cpp
+        src/tool_delta.cpp
+        src/tool_index.cpp
+        src/tool_inspect.cpp
         src/diff.cpp
-        src/p3md.cpp
+        src/cli.cpp
         src/database.cpp
         src/compress.cpp
         src/glob.cpp)
-target_include_directories(P3MD PRIVATE include ${json_SOURCE_DIR} ${simplecpp_SOURCE_DIR})
-target_link_libraries(P3MD
+target_include_directories(AGV PRIVATE include ${json_SOURCE_DIR} ${simplecpp_SOURCE_DIR})
+target_link_libraries(AGV
 
         PRIVATE
         libzstd_static
@@ -210,57 +210,99 @@ target_link_libraries(P3MD
 )
 
 
-target_compile_options(P3MD PRIVATE ${P3MD_COMPILE_FLAGS})
-target_link_options(P3MD PRIVATE ${P3MD_LINK_FLAGS})
-target_precompile_headers(P3MD PRIVATE
-
+target_compile_options(AGV PRIVATE ${AGV_COMPILE_FLAGS})
+target_link_options(AGV PRIVATE ${AGV_LINK_FLAGS})
+target_precompile_headers(AGV PRIVATE
+        [["clang/Tooling/Tooling.h"]]
+        [["clang/Frontend/ASTUnit.h"]]
         [["clang/AST/RecursiveASTVisitor.h"]]
         [["clang/Frontend/FrontendActions.h"]]
-        [["clang/Frontend/ASTUnit.h"]]
         [["clang/Tooling/CommonOptionsParser.h"]]
-        [["clang/Tooling/Tooling.h"]]
 
-        [["llvm/Support/CommandLine.h"]]
-        [["llvm/Bitcode/BitcodeReader.h"]]
-        [["llvm/IR/LLVMContext.h"]]
         [["llvm/IR/Module.h"]]
-
-        [["aspartame/view.hpp"]]
-        [["aspartame/vector.hpp"]]
-        [["aspartame/optional.hpp"]]
+        [["llvm/IR/LLVMContext.h"]]
+        [["llvm/Support/raw_ostream.h"]]
+        [["llvm/Bitcode/BitcodeReader.h"]]
 
         [["oneapi/tbb.h"]]
 
         [["json.hpp"]]
+#        [["lua.hpp"]]
+        [["sol.hpp"]]
+        [["zstd.h"]]
 
         [["aspartame/map.hpp"]]
-        [["aspartame/view.hpp"]]
         [["aspartame/optional.hpp"]]
         [["aspartame/string.hpp"]]
         [["aspartame/vector.hpp"]]
+        [["aspartame/view.hpp"]]
 
-
+        <map>
+        <tuple>
+        <ctime>
+        <cstdint>
+        <memory>
+        <regex>
+        <string>
+        <vector>
+        <utility>
         <optional>
         <iostream>
+        <type_traits>
+        <functional>
         <unordered_map>
-        <utility>
-        <vector>
-        <string>
-        <regex>
+
 )
 
-
 add_executable(driver src/driver.cpp)
-add_executable(tests test/main.cpp)
+add_executable(tests test/tree.cpp test/index.cpp)
 
 target_link_libraries(driver PRIVATE Aspartame::Aspartame)
 target_link_libraries(tests PRIVATE Aspartame::Aspartame Catch2::Catch2WithMain)
 
-set_target_properties(driver PROPERTIES OUTPUT_NAME "p3md")
+set_target_properties(driver PROPERTIES OUTPUT_NAME "agv")
+
+execute_process(
+        COMMAND clang -print-resource-dir
+        OUTPUT_VARIABLE CLANG_RESOURCE_DIR
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE CLANG_COMMAND_RESULT
+)
+
+if (CLANG_COMMAND_RESULT EQUAL 0)
+    message(STATUS "Found Clang resource directory: ${CLANG_RESOURCE_DIR}")
+    set(CLANG_RESOURCE_DIR "${CLANG_RESOURCE_DIR}/include")
+else ()
+    message(WARNING "Failed to get clang resource directory (${CLANG_COMMAND_RESULT}), index tests may not pass.")
+    set(CLANG_RESOURCE_DIR "(call to clang -print-resource-dir failed)")
+endif ()
+
+set(FIXTURE_MICROSTREAM_DIR ${CMAKE_BINARY_DIR}/microstream_build)
+set(FIXTURE_TMP_DIR ${CMAKE_BINARY_DIR})
+configure_file(test/fixture/fixture.h.in ${CMAKE_CURRENT_BINARY_DIR}/fixture.h @ONLY)
+
+
+add_custom_command(TARGET tests
+        PRE_BUILD
+        COMMAND ${CMAKE_COMMAND} -E env CC=clang CXX=clang++ CXXFLAGS="-save-temps=obj" ${CMAKE_COMMAND}
+        -S "${CMAKE_SOURCE_DIR}/test/fixture/microstream"
+        -B "${FIXTURE_MICROSTREAM_DIR}"
+        -DUSE_OMP=ON
+        -DCMAKE_BUILD_TYPE=Release
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+        -DCMAKE_VERBOSE_MAKEFILE=ON
+        -DCMAKE_CXX_LINK_EXECUTABLE='echo "" '
+        COMMAND ${CMAKE_COMMAND} --build "${FIXTURE_MICROSTREAM_DIR}"
+        BYPRODUCTS "${FIXTURE_MICROSTREAM_DIR}/CMakeCache.txt"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+        COMMENT "Configure microstream fixture"
+)
+target_include_directories(tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+
 
 foreach (target driver tests)
-    target_link_libraries(${target} PRIVATE P3MD)
+    target_link_libraries(${target} PRIVATE AGV)
     target_include_directories(${target} PRIVATE include ${json_SOURCE_DIR})
-    target_compile_options(${target} PRIVATE ${P3MD_COMPILE_FLAGS})
-    target_link_options(${target} PRIVATE ${P3MD_LINK_FLAGS})
+    target_compile_options(${target} PRIVATE ${AGV_COMPILE_FLAGS})
+    target_link_options(${target} PRIVATE ${AGV_LINK_FLAGS})
 endforeach ()

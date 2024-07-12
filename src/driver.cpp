@@ -4,18 +4,22 @@
 #include "aspartame/optional.hpp"
 #include "aspartame/string.hpp"
 #include "aspartame/view.hpp"
-#include "p3md/p3md.h"
+
+#include "agv/tool_delta.h"
+#include "agv/tool_index.h"
+#include "agv/tool_inspect.h"
+#include "agv/tool_script.h"
 
 using namespace llvm;
 using namespace aspartame;
 
-enum class Kind : uint8_t { Build = 1, List, Run, Def };
+enum class Kind : uint8_t { Build = 1, Inspect, Script, Delta };
 
 std::map<std::string, std::pair<Kind, std::string>> table = {
-    {"build", {Kind::Build, "Build P3MD database"}},
-    {"list", {Kind::List, "List entries in a P3MD database"}},
-    {"run", {Kind::Run, "Execute Lua scripts against a loaded database"}},
-    {"def", {Kind::Def, "Emit Teal type declarations"}},
+    {"index", {Kind::Build, "Build P3MD database"}},
+    {"inspect", {Kind::Inspect, "List entries in a P3MD database"}},
+    {"script", {Kind::Script, "Execute Lua scripts against a loaded database"}},
+    {"delta", {Kind::Delta, "Emit Teal type declarations"}},
 };
 
 int main(int argc, const char **argv) {
@@ -54,10 +58,10 @@ int main(int argc, const char **argv) {
                              | keys()                                      //
                              | to_vector();
                switch (kind) {
-                 case Kind::Build: return p3md::build_main(sliced.size(), sliced.data());
-                 case Kind::List: return p3md::list_main(sliced.size(), sliced.data());
-                 case Kind::Run: return p3md::run_main(sliced.size(), sliced.data());
-                 case Kind::Def: return p3md::def_main(sliced.size(), sliced.data());
+                 case Kind::Build: return agv::index::main(sliced.size(), sliced.data());
+                 case Kind::Inspect: return agv::inspect::main(sliced.size(), sliced.data());
+                 case Kind::Script: return agv::script::main(sliced.size(), sliced.data());
+                 case Kind::Delta: return agv::delta::main(sliced.size(), sliced.data());
                }
                return EXIT_SUCCESS;
              },

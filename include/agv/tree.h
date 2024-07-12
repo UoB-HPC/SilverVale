@@ -9,16 +9,17 @@
 #include "json.hpp"
 #include "tree_sitter/api.h"
 #include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/Frontend/ASTUnit.h"
 #include "llvm/IR/Module.h"
 
-namespace p3md {
+namespace agv {
 
 namespace {
 template <typename Ret, typename Arg, typename... Rest> Arg arg0_helper(Ret (*)(Arg, Rest...));
 template <typename Ret, typename F, typename Arg, typename... Rest>
-Arg arg0_helper(Ret (F::*)(Arg, Rest...));
+Arg arg0_helper(Ret (F:: *)(Arg, Rest...));
 template <typename Ret, typename F, typename Arg, typename... Rest>
-Arg arg0_helper(Ret (F::*)(Arg, Rest...) const);
+Arg arg0_helper(Ret (F:: *)(Arg, Rest...) const);
 template <typename F> decltype(arg0_helper(&F::operator())) arg0_helper(F);
 template <typename T> using arg0_t = decltype(arg0_helper(std::declval<T>()));
 template <typename T, typename Node, typename... Fs> std::optional<T> visitDyn(Node n, Fs... fs) {
@@ -268,4 +269,4 @@ private:
                                    std::string &out);
 };
 
-} // namespace p3md
+} // namespace agv

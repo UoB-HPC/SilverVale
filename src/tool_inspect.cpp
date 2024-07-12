@@ -2,21 +2,45 @@
 
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
-#include "p3md/database.h"
-#include "p3md/list.h"
+#include "agv/cli.h"
+#include "agv/database.h"
+#include "agv/tool_inspect.h"
 #include "llvm/Support/MemoryBuffer.h"
 
 using namespace aspartame;
 using namespace clang;
+using namespace llvm;
 
-int p3md::list::run(const p3md::list::Options &options) {
+static Expected<agv::inspect::Options> parseOpts(int argc, const char **argv) {
+  static cl::OptionCategory category("List options");
+
+  static cl::opt<std::string> dbPath(
+      "db", cl::desc("The path to the P3MD database, as generated using the build command"),
+      cl::Required, cl::cat(category));
+
+  static cl::opt<agv::inspect::Kind> kind(
+      "kind", cl::desc("The kind of data to list"),
+      cl::values(
+          clEnumValN(agv::inspect::Kind::Entry, "entry", "Enable trivial optimizations"),
+          clEnumValN(agv::inspect::Kind::Dependencies, "deps", "Enable default optimizations")),
+      cl::Required, cl::cat(category));
+
+  if (auto e = agv::parseCategory(category, argc, argv); e) return std::move(*e);
+  return agv::inspect::Options{dbPath.getValue(), kind};
+}
+
+int agv::inspect::main(int argc, const char **argv) {
+  return parseAndRun(argc, argv, &parseOpts, &run);
+}
+
+int agv::inspect::run(const Options &options) {
   auto dbDile = options.dbDir + "/db.json";
   auto buffer = llvm::MemoryBuffer::getFile(dbDile, /*IsText*/ true);
   if (auto e = buffer.getError()) {
     std::cerr << "Cannot read file " << dbDile << ": " << e.message() << std::endl;
     return e.value();
   }
-  auto database = p3md::Database::fromJson((*buffer)->getBuffer().str());
+  auto database = Database::fromJsonString((*buffer)->getBuffer().str());
   switch (options.kind) {
     case Kind::Entry:
       std::cout << "entry,deps\n";

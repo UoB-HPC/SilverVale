@@ -1,9 +1,9 @@
-#include "p3md/glob.h"
+#include "agv/glob.h"
 #include <regex>
 #include <string>
 
 // This is a direct port of https://github.com/fitzgen/glob-to-regexp from JS to C++
-std::regex p3md::globToRegex(const std::string &str, bool extended, bool globStar) {
+std::regex agv::globToRegex(const std::string &str, bool extended, bool globStar) {
 
   std::string reStr;
   bool inGroup = false;

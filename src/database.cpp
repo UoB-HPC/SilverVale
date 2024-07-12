@@ -1,9 +1,10 @@
-#include <iosfwd>
+#include <fstream>
 #include <utility>
 
-#include "p3md/compress.h"
-#include "p3md/database.h"
-#include "p3md/par.h"
+#include "agv/cli.h"
+#include "agv/compress.h"
+#include "agv/database.h"
+#include "agv/par.h"
 
 #include "clang/Frontend/ASTUnit.h"
 #include "clang/Frontend/CompilerInstance.h"
@@ -13,6 +14,7 @@
 #include "llvm/IR/Module.h"
 
 #include "aspartame/map.hpp"
+#include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
 #include "tree_sitter_cpp/api.h"
 
@@ -28,9 +30,9 @@ class Context {
 
   static EntryType mkEntry(llvm::LLVMContext &llvmContext,          //
                            std::vector<std::vector<char>> &storage, //
-                           const p3md::Database &db,                //
+                           const agv::Database &db,                //
                            const std::string &baseDir,              //
-                           const p3md::Database::Entry &tu) {
+                           const agv::Database::Entry &tu) {
     auto modules =
         tu.bitcodes |
         collect([&](auto &entry)
@@ -60,7 +62,7 @@ class Context {
 
     auto pchFile = baseDir + "/" + tu.pchName;
 
-    auto pchData = p3md::utils::zStdDecompress(pchFile);
+    auto pchData = agv::utils::zStdDecompress(pchFile);
     if (!pchData) {
       std::cerr << "Cannot read PCH data:" << pchFile << std::endl;
       return {nullptr, modules};
@@ -92,15 +94,15 @@ class Context {
 
 public:
   std::map<std::string, EntryType> units;
-  explicit Context(const p3md::Database &db, const std::string &baseDir)
+  explicit Context(const agv::Database &db, const std::string &baseDir)
       : context(), units(db.entries ^ map_values([&](auto &tu) {
                            return mkEntry(context, astBackingBuffer, db, baseDir, tu);
                          })) {}
 };
 
 // === Tree ===
-p3md::Tree::Tree(const p3md::SemanticTree<std::string> &root) : root(root) {}
-size_t p3md::Tree::nodes() const {
+agv::Tree::Tree(const agv::SemanticTree<std::string> &root) : root(root) {}
+size_t agv::Tree::nodes() const {
   return lazyNodes([&] {
     size_t n = 0;
     root.walk([&](auto &, auto) {
@@ -110,7 +112,7 @@ size_t p3md::Tree::nodes() const {
     return n;
   });
 }
-size_t p3md::Tree::maxDepth() const {
+size_t agv::Tree::maxDepth() const {
   return lazyMaxDepth([&] {
     size_t maxDepth = 0;
     root.walk([&](auto &, size_t depth) {
@@ -120,7 +122,7 @@ size_t p3md::Tree::maxDepth() const {
     return maxDepth;
   });
 }
-size_t p3md::Tree::maxWidth() const {
+size_t agv::Tree::maxWidth() const {
   return lazyMaxWidth([&] {
     std::vector<int> levelSize;
     root.walk([&](auto &, size_t depth) {
@@ -131,72 +133,77 @@ size_t p3md::Tree::maxWidth() const {
     return levelSize.empty() ? 0 : *std::max_element(levelSize.begin(), levelSize.end());
   });
 }
-p3md::Tree p3md::Tree::combine(const std::string &rootName, const std::vector<Tree> &trees) {
+agv::Tree agv::Tree::combine(const std::string &rootName, const std::vector<Tree> &trees) {
   return Tree{
-      p3md::SemanticTree<std::string>(rootName, trees ^ map([](auto &t) { return t.root; }))};
+      agv::SemanticTree<std::string>(rootName, trees ^ map([](auto &t) { return t.root; }))};
 }
-std::string p3md::Tree::prettyPrint() const {
+std::string agv::Tree::prettyPrint() const {
   std::stringstream ss;
   root.print([](auto &x) { return x; }, ss);
   return ss.str();
 }
-p3md::Tree p3md::Tree::leaf(const std::string &rootName) {
-  return p3md::Tree{p3md::SemanticTree<std::string>(rootName, {})};
+agv::Tree agv::Tree::leaf(const std::string &rootName) {
+  return agv::Tree{agv::SemanticTree<std::string>(rootName, {})};
 }
 
 // === Source ===
-p3md::Source::Source(p3md::TsTree tree) : tree(std::move(tree)) {}
-const std::string &p3md::Source::content() const { return tree.source; }
-size_t p3md::Source::sloc() const {
+agv::Source::Source(agv::TsTree tree) : tree(std::move(tree)) {}
+const std::string &agv::Source::content() const { return tree.source; }
+size_t agv::Source::sloc() const {
   return lazySloc([&] { return tree.sloc(); });
 }
-size_t p3md::Source::lloc() const {
+size_t agv::Source::lloc() const {
   return lazyLloc([&] { return tree.lloc(); });
 }
-const p3md::Tree &p3md::Source::tsTree() const {
+const agv::Tree &agv::Source::tsTree() const {
   return lazyTsTree([&] {
-    return Tree{tree.template traverse<p3md::SemanticTree<std::string>>(
-        [](const auto &v) { return p3md::SemanticTree{v, {}}; },
+    return Tree{tree.template traverse<agv::SemanticTree<std::string>>(
+        [](const auto &v) { return agv::SemanticTree{v, {}}; },
         [](auto &n, const auto &x) { n.children.emplace_back(x); })};
   });
 }
 
 // === Unit ===
-p3md::Unit::Unit(std::string path, const p3md::SemanticTree<std::string> &sTree,
-                 const p3md::SemanticTree<std::string> &sTreeInlined,
-                 const p3md::SemanticTree<std::string> &irTree, TsTree source)
+agv::Unit::Unit(std::string path, const agv::SemanticTree<std::string> &sTree,
+                 const agv::SemanticTree<std::string> &sTreeInlined,
+                 const agv::SemanticTree<std::string> &irTree, TsTree source)
     : path_(std::move(path)), name_(llvm::sys::path::filename(path_).str()), //
       sTreeRoot(sTree), sTreeInlinedRoot(sTreeInlined), irTreeRoot(irTree),
       sourceRoot(std::move(source)) {}
-const std::string &p3md::Unit::path() const { return path_; }
-const std::string &p3md::Unit::name() const { return name_; }
-const p3md::Tree &p3md::Unit::sTree() const { return sTreeRoot; }
-const p3md::Tree &p3md::Unit::sTreeInlined() const { return sTreeInlinedRoot; }
-const p3md::Tree &p3md::Unit::irTree() const { return irTreeRoot; }
-p3md::Source p3md::Unit::source(bool normalise) const {
+const std::string &agv::Unit::path() const { return path_; }
+const std::string &agv::Unit::name() const { return name_; }
+const agv::Tree &agv::Unit::sTree() const { return sTreeRoot; }
+const agv::Tree &agv::Unit::sTreeInlined() const { return sTreeInlinedRoot; }
+const agv::Tree &agv::Unit::irTree() const { return irTreeRoot; }
+agv::Source agv::Unit::source(bool normalise) const {
   return normalise
              ? lazySourceNormalised([&]() { return Source(sourceRoot.deleteNodes("comment")); })
              : lazySource([&]() { return Source(sourceRoot); });
 }
 
 // === Database ===
-p3md::Database p3md::Database::fromJson(const std::string &json) {
-  p3md::Database database;
+agv::Database agv::Database::fromJsonString(const std::string &json) {
+  agv::Database database;
   nlohmann::json dbJson = nlohmann::json::parse(json);
   nlohmann::from_json(dbJson, database);
   return database;
 }
-p3md::Database p3md::Database::fromJsonFile(const std::string &file) {
-  auto buffer = llvm::MemoryBuffer::getFile(file, /*IsText*/ true);
-  if (auto e = buffer.getError()) {
-    throw std::logic_error(e.message());
-  } else return p3md::Database::fromJson((*buffer)->getBuffer().str());
+agv::Database agv::Database::fromJsonStream(std::ifstream &stream) {
+  agv::Database database;
+  nlohmann::json dbJson = nlohmann::json::parse(stream);
+  nlohmann::from_json(dbJson, database);
+  return database;
 }
-p3md::Codebase p3md::Database::load(std::ostream &out,                     //
-                                    bool normalise,                        //
-                                    const std::string &path,               //
-                                    const std::vector<std::string> &roots, //
-                                    const std::function<bool(std::string)> &predicate) const {
+agv::Database agv::Database::fromJsonFile(const std::string &file) {
+  std::ifstream s(file);
+  s.exceptions(std::ios::failbit | std::ios::badbit);
+  return agv::Database::fromJsonStream(s);
+}
+agv::Codebase agv::Database::load(std::ostream &out,                     //
+                     bool normalise,                        //
+                     const std::string &path,               //
+                     const std::vector<std::string> &roots, //
+                     const std::function<bool(const std::string &)> &predicate) const {
 
   Context ctx(*this, path);
 
@@ -206,30 +213,30 @@ p3md::Codebase p3md::Database::load(std::ostream &out,                     //
       static_cast<int>(selected | map([](auto &k) { return k.size(); }) |
                        fold_left(size_t{}, [](auto l, auto r) { return std::max(l, r); }));
 
-  std::vector<std::unique_ptr<Unit>> units(selected.size());
-  p3md::par_for(selected, [&](auto &key, auto idx) {
+  std::vector<std::shared_ptr<Unit>> units(selected.size());
+  agv::par_for(selected, [&](auto &key, auto idx) {
     auto &[ast, modules] = ctx.units[key];
 
-    p3md::SemanticTree<std::string> irTreeRoot{"root", {}};
+    agv::SemanticTree<std::string> irTreeRoot{"root", {}};
     for (auto &[name, module] : modules) {
-      p3md::SemanticTree<std::string> irTree{name, {}};
-      p3md::LLVMIRTreeVisitor(&irTree, *module, true);
+      agv::SemanticTree<std::string> irTree{name, {}};
+      agv::LLVMIRTreeVisitor(&irTree, *module, true);
       irTreeRoot.children.emplace_back(irTree);
     }
 
-    p3md::SemanticTree<std::string> sTree{"root", {}};
-    p3md::SemanticTree<std::string> sTreeInlined{"root", {}};
+    agv::SemanticTree<std::string> sTree{"root", {}};
+    agv::SemanticTree<std::string> sTreeInlined{"root", {}};
     auto &sm = ast->getSourceManager();
     if (auto data = sm.getBufferDataOrNone(sm.getMainFileID()); data) {
       for (clang::Decl *decl :
-           p3md::topLevelDeclsInMainFile(*ast) ^ sort_by([&](clang::Decl *decl) {
+           agv::topLevelDeclsInMainFile(*ast) ^ sort_by([&](clang::Decl *decl) {
              return std::pair{sm.getDecomposedExpansionLoc(decl->getBeginLoc()).second,
                               sm.getDecomposedExpansionLoc(decl->getEndLoc()).second};
            })) {
 
-        auto createTree = [&](const p3md::ClangASTSemanticTreeVisitor::Option &option) {
-          p3md::SemanticTree<std::string> topLevel{"toplevel", {}};
-          p3md::ClangASTSemanticTreeVisitor(&topLevel, ast->getASTContext(), option)
+        auto createTree = [&](const agv::ClangASTSemanticTreeVisitor::Option &option) {
+          agv::SemanticTree<std::string> topLevel{"toplevel", {}};
+          agv::ClangASTSemanticTreeVisitor(&topLevel, ast->getASTContext(), option)
               .TraverseDecl(decl);
           return topLevel;
         };
@@ -247,42 +254,58 @@ p3md::Codebase p3md::Database::load(std::ostream &out,                     //
         }));
       }
 
-      auto tsTree = p3md::TsTree(data->str(), tree_sitter_cpp()).deleteNodes("comment");
+      auto tsTree = agv::TsTree(data->str(), tree_sitter_cpp()).deleteNodes("comment");
       units[idx] = std::make_unique<Unit>(ast->getMainFileName().str(), sTree, sTreeInlined,
                                           irTreeRoot, tsTree);
     } else {
-      std::cout << "Failed to load AST for " << key << ", stree data will be empty!" << std::endl;
+      std::cerr << "Failed to load AST for " << key << ", stree data will be empty!" << std::endl;
     }
     out << "# Loaded " << std::left << std::setw(maxFileLen) << key << "\r";
   });
   out << std::endl;
-  return p3md::Codebase(path, units ^ map([](auto &x) { return *std::move(x); }));
+  return agv::Codebase(path, units);
 }
 
-namespace p3md {
-std::ostream &operator<<(std::ostream &os, const p3md::Database::Entry &entry) {
-  return os << "p3md::Database::Entry{"                                                          //
+namespace agv {
+std::ostream &operator<<(std::ostream &os, const Database::Entry &entry) {
+  return os << "agv::Database::Entry{"                                                          //
             << ".pchName=" << entry.pchName << ", "                                              //
             << ".compileCommands=" << (entry.compileCommands | mk_string("{", ",", "}")) << ", " //
             << ".dependencies=(" << entry.dependencies.size() << ")" << ", "                     //
             << ".bitcodes=" << (entry.bitcodes | mk_string("{", ",", "}"))                       //
             << "}";
 }
-std::ostream &operator<<(std::ostream &os, const p3md::Database::Bitcode &bitcode) {
-  return os << "p3md::Database::Bitcode{"       //
+std::ostream &operator<<(std::ostream &os, const Database::Bitcode &bitcode) {
+  return os << "agv::Database::Bitcode{"       //
             << ".name=" << bitcode.name << ", " //
             << ".kind=" << bitcode.kind << ", " //
             << ".triple=" << bitcode.triple     //
             << "}";
 }
-std::ostream &operator<<(std::ostream &os, const p3md::Database &database) {
-  return os << "p3md::Database{"                                                               //
-            << ".clangMajorVersion=" << database.clangMajorVersion << ", "                     //
-            << ".clangMinorVersion=" << database.clangMinorVersion << ", "                     //
-            << ".clangPatchVersion=" << database.clangPatchVersion << ", "                     //
-            << ".entries=" << (database.entries | values() | mk_string("{", ",", "}")) << ", " //
-            << ".dependencies=(" << database.dependencies.size() << ")"                        //
-            << "}";
+std::ostream &operator<<(std::ostream &os, const Database &database) {
+  os << "agv::Database{"; //
+  for (auto &[k, v] : database.attributes)
+    os << ".`" << k << "`=" << v << ", ";
+  os << ".entries=" << (database.entries | values() | mk_string("{", ",", "}")) << ", " //
+     << ".dependencies=(" << database.dependencies.size() << ")"                        //
+     << "}";
+  return os;
 }
 
-} // namespace p3md
+std::ostream &operator<<(std::ostream &os, const Codebase &codebase) {
+  return os << "agv::Codebase{"                                      //
+            << ".path=" << codebase.path                              //
+            << ".units={" << (codebase.units ^ mk_string(",")) << "}" //
+            << "}";
+}
+std::ostream &operator<<(std::ostream &os, const Unit &unit) {
+  return os << "agv::Unit{"                                                   //
+            << ".path=" << unit.path_ << ", "                                  //
+            << ".name=" << unit.name_ << ", "                                  //
+            << ".sTreeRoot=(" << unit.sTreeRoot.nodes() << "), "               //
+            << ".sTreeInlinedRoot=(" << unit.sTreeInlinedRoot.nodes() << "), " //
+            << ".irTreeRoot=(" << unit.irTreeRoot.nodes() << "), "
+            << ".sourceRoot=" << unit.sourceRoot.root().tree //
+            << "}";
+}
+} // namespace agv

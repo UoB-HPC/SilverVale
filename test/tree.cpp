@@ -4,13 +4,14 @@
 #include "clang/Tooling/Tooling.h"
 
 #include "tree_sitter_cpp/api.h"
+#include "tree_sitter_fortran//api.h"
 
 #include "aspartame/optional.hpp"
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
 
-#include "p3md/p3md.h"
-#include "p3md/tree.h"
+#include "agv/cli.h"
+#include "agv/tree.h"
 
 using namespace clang;
 using namespace clang::tooling;
@@ -30,19 +31,19 @@ std::unique_ptr<ASTUnit> makeASTUnit(const std::string &content) {
   return std::move(xs[0]);
 }
 
-std::vector<p3md::SemanticTree<std::string>>
-makeNodes(const p3md::ClangASTSemanticTreeVisitor::Option &option, const std::string &content) {
+std::vector<agv::SemanticTree<std::string>>
+makeNodes(const agv::ClangASTSemanticTreeVisitor::Option &option, const std::string &content) {
   auto unit = makeASTUnit(content);
-  return p3md::topLevelDeclsInMainFile(*unit) ^ map([&](auto decl) {
-           p3md::SemanticTree<std::string> root{"root", {}};
-           p3md::ClangASTSemanticTreeVisitor V(&root, unit->getASTContext(), option);
+  return agv::topLevelDeclsInMainFile(*unit) ^ map([&](auto decl) {
+           agv::SemanticTree<std::string> root{"root", {}};
+           agv::ClangASTSemanticTreeVisitor V(&root, unit->getASTContext(), option);
            V.TraverseDecl(decl);
            //           decl->dump();
            return root;
          });
 }
 
-TEST_CASE("ts-normalise-comments") {
+TEST_CASE("ts-normalise-comments-cpp") {
 
   auto source = R"(
 //*Foo*/
@@ -54,12 +55,43 @@ return 0 /**/ + 1;// b
 // a // b
 )";
 
-  CHECK(p3md::TsTree(source, tree_sitter_cpp()).deleteNodes("comment").source == R"(
+  CHECK(agv::TsTree(source, tree_sitter_cpp()).deleteNodes("comment").source == R"(
 
 int main(){
 
 return 0  + 1;
 }
+
+
+)");
+}
+
+TEST_CASE("ts-normalise-comments-fortran") {
+
+  auto source = R"(
+!*Foo*
+program main
+implicit none
+! a
+integer :: result
+result = 0!/**/ + 1
+print *, result! b
+end program main
+!!
+! a ! b
+
+)";
+
+  CHECK(agv::TsTree(source, tree_sitter_fortran()).deleteNodes("comment").source == R"(
+
+program main
+implicit none
+
+integer :: result
+result = 0
+print *, result
+end program main
+
 
 
 )");
@@ -222,7 +254,7 @@ return 42;
 
 )";
 
-  CHECK(p3md::TsTree(src, tree_sitter_cpp()).deleteNodes("comment").source == expected);
+  CHECK(agv::TsTree(src, tree_sitter_cpp()).deleteNodes("comment").source == expected);
 }
 
 TEST_CASE("normalise ws") {
@@ -256,5 +288,5 @@ return 42;
 auto f = [&](auto y){return 2;};
 )";
 
-  CHECK(p3md::TsTree(src, tree_sitter_cpp()).normaliseWhitespaces(1).source == expected);
+  CHECK(agv::TsTree(src, tree_sitter_cpp()).normaliseWhitespaces(1).source == expected);
 }

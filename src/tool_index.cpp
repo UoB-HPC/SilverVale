@@ -4,12 +4,12 @@
 #include <system_error>
 #include <thread>
 
-#include "p3md/build.h"
-#include "p3md/compress.h"
-#include "p3md/database.h"
-#include "p3md/glob.h"
-#include "p3md/par.h"
-#include "p3md/term.h"
+#include "agv/cli.h"
+#include "agv/compress.h"
+#include "agv/database.h"
+#include "agv/glob.h"
+#include "agv/par.h"
+#include "agv/tool_index.h"
 
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendActions.h"
@@ -26,16 +26,17 @@
 #include "aspartame/view.hpp"
 
 using namespace aspartame;
-using namespace clang;
 using namespace clang::tooling;
+using namespace clang;
+using namespace llvm;
 
-ArgumentsAdjuster p3md::build::Options::resolveAdjuster() const {
+ArgumentsAdjuster agv::index::Options::resolveAdjuster() const {
   return combineAdjusters(getInsertArgumentAdjuster(argsBefore, ArgumentInsertPosition::BEGIN),
                           getInsertArgumentAdjuster(argsAfter, ArgumentInsertPosition::END));
 }
 
 std::unique_ptr<CompilationDatabase>
-p3md::build::Options::resolveDatabase(const ArgumentsAdjuster &adjuster) const {
+agv::index::Options::resolveDatabase(const ArgumentsAdjuster &adjuster) const {
   auto root = buildDir;
   while (!root.empty()) {
     std::string ignored;
@@ -93,7 +94,7 @@ struct Task {
   struct Result {
     std::string sourceName;
     std::optional<std::string> pchName;
-    std::vector<p3md::Database::Bitcode> bitcodes;
+    std::vector<agv::Database::Bitcode> bitcodes;
     std::string diagnostic;
     std::map<std::string, std::string> dependencies;
   };
@@ -117,7 +118,7 @@ static std::vector<Task::Result> buildPCHParallel(const std::string &root,
          if (noCompress) {
            task.stream = std::make_shared<llvm::raw_fd_stream>(task.pchName, task.error);
          } else {
-           task.stream = std::make_shared<p3md::utils::zstd_ostream>(task.pchName, task.error, 6);
+           task.stream = std::make_shared<agv::utils::zstd_ostream>(task.pchName, task.error, 6);
          }
          return task;
        }) |
@@ -178,7 +179,8 @@ static std::vector<Task::Result> buildPCHParallel(const std::string &root,
     }
   });
 
-  p3md::par_for(success, [&, total = commands.size()](auto &task, auto idx) {
+  auto logger = agv::ProgressLogger(commands.size(), maxFileLength);
+  agv::par_for(success, [&](auto &task, auto idx) {
     auto compileCommand = [&]() {
       return (db.getCompileCommands(task.cmd.Filename) ^
               mk_string("\n", [](auto &cc) { return cc.CommandLine ^ mk_string(" "); }));
@@ -197,13 +199,10 @@ static std::vector<Task::Result> buildPCHParallel(const std::string &root,
     auto result = Tool.buildASTs(out);
     diagPrinter.finish();
     if (result != 0) message << "# Clang-Tool exited with non-zero code: " << result << "\n";
-    (P3MD_COUT << "[" << completed++ << "/" << total << "] " << std::left
-               << std::setw(maxFileLength) << task.cmd.Filename << "\r")
-        .flush();
+    logger.log(task.cmd.Filename, false);
     if (out.size() != 1)
       message << "# More than one AST unit produced; "
               << "input command is ill-formed and only the first unit will be preserved\n";
-
     if (out[0]->serialize(*task.stream)) // XXX true is fail
       message << "# Serialisation failed\n";
     results[task.idx].sourceName = task.cmd.Filename;
@@ -217,34 +216,112 @@ static std::vector<Task::Result> buildPCHParallel(const std::string &root,
       }
     });
     if (!messageStorage.empty()) {
-      if (verbose) (P3MD_COUT << messageStorage).flush(); // skip dump command
-      else (P3MD_COUT << compileCommand() << "\n" << messageStorage).flush();
+      if (verbose) (AGV_COUT << messageStorage).flush(); // skip dump command
+      else (AGV_COUT << compileCommand() << "\n" << messageStorage).flush();
     } else {
-      if (verbose) { P3MD_COUT << compileCommand() << std::endl; }
+      if (verbose) { AGV_COUT << compileCommand() << std::endl; }
     }
   });
 
   success.clear();
 
-  P3MD_COUT << std::endl;
+  AGV_COUT << std::endl;
   success.clear(); // drop the streams so the file can close
   for (auto &t : failed)
-    results.emplace_back(t.cmd.Filename, std::nullopt, std::vector<p3md::Database::Bitcode>{},
+    results.emplace_back(t.cmd.Filename, std::nullopt, std::vector<agv::Database::Bitcode>{},
                          t.error.message());
   return results;
 }
 
-int p3md::build::run(const p3md::build::Options &options) {
+static llvm::Expected<agv::index::Options> parseOpts(int argc, const char **argv) {
 
-  P3MD_COUT //
+  static cl::OptionCategory category("Build options");
+
+  static cl::opt<std::string> buildDir(
+      "build", cl::desc("The build directory containing compile_command.json."), //
+      cl::cat(category));
+
+  static cl::list<std::string> sourceGlobs( //
+      cl::Positional, cl::ZeroOrMore,
+      cl::desc("<glob patterns for file to include in the database, defaults to *>"),
+      cl::list_init<std::string>({"*"}), cl::cat(category));
+
+  static cl::opt<std::string> outDir(
+      "out",
+      cl::desc("The output directory for storing database files, "
+               "defaults to the last 2 segments of the build directory joined with full stop."), //
+      cl::init(""), cl::cat(category));
+
+  static cl::list<std::string> argsAfter( //
+      "args-before", cl::desc("Extra arguments to prepend to the compiler command line."),
+      cl::cat(category));
+
+  static cl::list<std::string> argsBefore( //
+      "args-after", cl::desc("Extra arguments to append to the compiler command line."),
+      cl::cat(category));
+
+  static cl::opt<std::string> clangResourceDir(
+      "resource-dir",
+      cl::desc("Force the compiler to use a specific Clang resource directory (e.g path to "
+               "`/usr/lib/clang/<VERSION>/include`); "
+               "Use this if system headers such has <stddef.h> is not found."), //
+      cl::init(""), cl::cat(category));
+
+  static cl::opt<bool> clearOutDir( //
+      "clear", cl::desc("Clear database output directory even if non-empty."), cl::cat(category));
+
+  static cl::opt<bool> noCompress( //
+      "no-compress", cl::desc("Compress individual entries in the database."), cl::cat(category));
+
+  static cl::opt<bool> verbose( //
+      "v",
+      cl::desc("Print compile command line used for each translation unit; "
+               "use -args-after=-v if you want to inspect detailed clang invocations."),
+      cl::cat(category));
+
+  static cl::opt<int> maxThreads( //
+      "j",
+      cl::desc(
+          "Number of parallel AST frontend jobs in parallel, defaults to total number of threads."),
+      cl::init(std::thread::hardware_concurrency()), cl::cat(category));
+
+  if (auto e = agv::parseCategory(category, argc, argv); e) return std::move(*e);
+
+  agv::index::Options options;
+  options.buildDir = buildDir.getValue();
+  options.sourceGlobs = sourceGlobs;
+  options.argsBefore = argsBefore;
+  options.argsAfter = argsAfter;
+  options.clangResourceDir = clangResourceDir.getValue();
+
+  options.clearOutDir = clearOutDir.getValue();
+  options.maxThreads = maxThreads.getValue();
+  options.verbose = verbose.getValue();
+  options.noCompress = noCompress.getValue();
+
+  if (outDir.empty()) {
+    auto lastSegment = llvm::sys::path::filename(options.buildDir);
+    auto oneBeforeLastSegment =
+        llvm::sys::path::filename(llvm::sys::path::parent_path(options.buildDir));
+    options.outDir = (oneBeforeLastSegment + "." + lastSegment).str();
+  } else options.outDir = outDir.getValue();
+  return options;
+}
+
+int agv::index::main(int argc, const char **argv) {
+  return agv::parseAndRun(argc, argv, &parseOpts, &run);
+}
+
+int agv::index::run(const agv::index::Options &options) {
+
+  AGV_COUT //
       << "Build:\n"
       << " - Build:        " << options.buildDir << " (compile_commands.json, ...)\n"
       << " - Output:       " << options.outDir << "\n"
       << " - Clear output: " << (options.clearOutDir ? "true" : "false") << "\n"
       << " - Max threads:  " << options.maxThreads << "\n";
 
-  auto global_limit = p3md::par_setup(options.maxThreads);
-
+  auto global_limit = par_setup(options.maxThreads);
   auto adjuster = options.resolveAdjuster();
 
   if (options.clangResourceDir) {
@@ -266,7 +343,16 @@ int p3md::build::run(const p3md::build::Options &options) {
   std::shared_ptr<CompilationDatabase> db = options.resolveDatabase(adjuster);
   if (!db) {
     std::cerr << "Unable to open compilation database at build dir `" << options.buildDir
-              << "`, please check if compile_commands.json exists in that directory." << std::endl;
+              << "`, please check if compile_commands.json exists in that directory.\n"
+              << "If you are using CMake, add `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` and also set "
+                 "the environment variable `CXXFLAGS=-save-temps=obj` (replace CXXFLAGS with "
+                 "CUDAFLAGS for CUDA) for LLVM IR trees.\n"
+                 "For example: \n"
+                 "> CXXFLAGS=-save-temps=obj cmake -Bbuild -S <source_dir> "
+                 "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_CXX_LINK_EXECUTABLE='echo \"\"'\n"
+                 "Here we also disable linking entirely by setting the link command to simply echo "
+                 "an empty string."
+              << std::endl;
     return EXIT_FAILURE;
   }
   auto regexes = options.sourceGlobs ^ map([](auto &glob) { return globToRegex(glob); });
@@ -277,10 +363,10 @@ int p3md::build::run(const p3md::build::Options &options) {
       }) ^
       sort_by([](auto &cmd) { return cmd.Filename; });
 
-  P3MD_COUT << "Adjustments: " << (adjuster({"${ARGS}"}, "${FILE}") | mk_string(" ")) << "\n";
-  P3MD_COUT << "Sources (" << commands.size() << "/" << db->getAllFiles().size() << "):\n";
+  AGV_COUT << "Adjustments: " << (adjuster({"${ARGS}"}, "${FILE}") | mk_string(" ")) << "\n";
+  AGV_COUT << "Sources (" << commands.size() << "/" << db->getAllFiles().size() << "):\n";
   for (auto &cmd : commands) {
-    P3MD_COUT << " - " << cmd.Filename << "\n";
+    AGV_COUT << " - " << cmd.Filename << "\n";
   }
 
   if (auto result = clearAndCreateDir(options.clearOutDir, options.outDir);
@@ -288,18 +374,24 @@ int p3md::build::run(const p3md::build::Options &options) {
     return result;
   }
 
-  std::error_code error;
-  auto dbFile =
-      llvm::raw_fd_ostream(options.outDir + "/db.json", error, llvm::sys::fs::CD_CreateAlways);
-  if (error) {
-    std::cerr << "Cannot create db.json:" << error.message() << std::endl;
-    return error.value();
+  llvm::SmallVector<char> absOutDir(options.outDir.begin(), options.outDir.end());
+  if (auto err = llvm::sys::fs::make_absolute(absOutDir); err) {
+    std::cerr << "Cannot resolve absolute path for output dir " << options.outDir << ": "
+              << err.message() << std::endl;
   }
 
+  auto dbFile = options.outDir + "/db.json";
+  std::ofstream dbStream(dbFile, std::ios::trunc);
+  if (!dbStream) {
+    std::cerr << "Cannot open " << dbFile << " for writing!" << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  // XXX Do ALL IO related to creating FBs before PCH! Otherwise ClangTool prevents new FD creation
   auto results = buildPCHParallel(options.buildDir, *db, commands, options.outDir, options.verbose,
                                   options.noCompress);
 
-  std::map<std::string, p3md::Database::Dependency> dependencies;
+  std::map<std::string, Database::Dependency> dependencies;
   for (auto &result : results) {
     for (auto &[_, file] : result.dependencies) {
       auto buffer = llvm::MemoryBuffer::getFile(file, /*isText*/ true);
@@ -313,25 +405,25 @@ int p3md::build::run(const p3md::build::Options &options) {
         return e.value();
       }
       dependencies.emplace(
-          file, p3md::Database::Dependency{llvm::sys::toTimeT(status.getLastModificationTime()),
-                                           (*buffer)->getBuffer().str()});
+          file, Database::Dependency{llvm::sys::toTimeT(status.getLastModificationTime()),
+                                     (*buffer)->getBuffer().str()});
     }
   }
 
   auto dbEntries =
       results | collect([&](auto &result) {
         return result.pchName ^ map([&](auto name) {
-                 return std::pair{result.sourceName,
-                                  p3md::Database::Entry{
-                                      .compileCommands = db->getCompileCommands(result.sourceName) ^
-                                                         map([](auto &cc) {
-                                                           return cc.CommandLine ^ mk_string(" ");
-                                                         }),
-                                      .pchName = name,
-                                      .bitcodes = result.bitcodes,
-                                      .dependencies = result.dependencies
+                 return std::pair{
+                     result.sourceName,
+                     Database::Entry{.compileCommands = db->getCompileCommands(result.sourceName) ^
+                                                        map([](auto &cc) {
+                                                          return cc.CommandLine ^ mk_string(" ");
+                                                        }),
+                                     .pchName = name,
+                                     .bitcodes = result.bitcodes,
+                                     .dependencies = result.dependencies
 
-                                  }};
+                     }};
                });
       }) |
       and_then([](auto xs) { return std::map{xs.begin(), xs.end()}; });
@@ -339,15 +431,17 @@ int p3md::build::run(const p3md::build::Options &options) {
   auto totalSourceBytes = dependencies | values() | map([](auto &x) { return x.content.size(); }) |
                           fold_left(0, std::plus<>());
 
-  P3MD_COUT << "Database contains " << dependencies.size() << " dependent sources (total="
+  AGV_COUT << "Database contains " << dependencies.size() << " dependent sources (total="
             << std::round(static_cast<double>(totalSourceBytes) / 1000 / 1000) << " MB)"
             << std::endl;
 
-  nlohmann::json databaseJson = p3md::Database( //
-      CLANG_VERSION_MAJOR, CLANG_VERSION_MINOR, CLANG_VERSION_PATCHLEVEL, dbEntries, dependencies);
+  nlohmann::json databaseJson = Database(                               //
+      {{"clangMajorVersion", std::to_string(CLANG_VERSION_MAJOR)},      //
+       {"clangMinorVersion", std::to_string(CLANG_VERSION_MINOR)},      //
+       {"clangPatchVersion", std::to_string(CLANG_VERSION_PATCHLEVEL)}} //
+      ,
+      std::string(absOutDir.begin(), absOutDir.end()), dbEntries, dependencies);
 
-  dbFile << databaseJson.dump(1);
-  dbFile.close();
-
+  dbStream << databaseJson;
   return EXIT_SUCCESS;
 }
