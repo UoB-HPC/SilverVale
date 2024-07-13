@@ -14,6 +14,7 @@
 #include "llvm/IR/Module.h"
 
 #include "aspartame/map.hpp"
+#include "aspartame/set.hpp"
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
 #include "tree_sitter_cpp/api.h"
@@ -30,7 +31,7 @@ class Context {
 
   static EntryType mkEntry(llvm::LLVMContext &llvmContext,          //
                            std::vector<std::vector<char>> &storage, //
-                           const agv::Database &db,                //
+                           const agv::Database &db,                 //
                            const std::string &baseDir,              //
                            const agv::Database::Entry &tu) {
     auto modules =
@@ -155,6 +156,15 @@ size_t agv::Source::sloc() const {
 size_t agv::Source::lloc() const {
   return lazyLloc([&] { return tree.lloc(); });
 }
+
+std::set<uint32_t> agv::Source::slocLines() const {
+  return lazySlocLines([&] { return tree.slocLines(); });
+}
+std::set<agv::Range> agv::Source::llocRanges() const {
+  return lazyLlocRanges([&] {
+    return tree.llocRanges() ^ map([](auto &start, auto &end) { return agv::Range{start, end}; });
+  });
+}
 const agv::Tree &agv::Source::tsTree() const {
   return lazyTsTree([&] {
     return Tree{tree.template traverse<agv::SemanticTree<std::string>>(
@@ -165,8 +175,8 @@ const agv::Tree &agv::Source::tsTree() const {
 
 // === Unit ===
 agv::Unit::Unit(std::string path, const agv::SemanticTree<std::string> &sTree,
-                 const agv::SemanticTree<std::string> &sTreeInlined,
-                 const agv::SemanticTree<std::string> &irTree, TsTree source)
+                const agv::SemanticTree<std::string> &sTreeInlined,
+                const agv::SemanticTree<std::string> &irTree, TsTree source)
     : path_(std::move(path)), name_(llvm::sys::path::filename(path_).str()), //
       sTreeRoot(sTree), sTreeInlinedRoot(sTreeInlined), irTreeRoot(irTree),
       sourceRoot(std::move(source)) {}
@@ -200,10 +210,10 @@ agv::Database agv::Database::fromJsonFile(const std::string &file) {
   return agv::Database::fromJsonStream(s);
 }
 agv::Codebase agv::Database::load(std::ostream &out,                     //
-                     bool normalise,                        //
-                     const std::string &path,               //
-                     const std::vector<std::string> &roots, //
-                     const std::function<bool(const std::string &)> &predicate) const {
+                                  bool normalise,                        //
+                                  const std::string &path,               //
+                                  const std::vector<std::string> &roots, //
+                                  const std::function<bool(const std::string &)> &predicate) const {
 
   Context ctx(*this, path);
 
@@ -267,8 +277,14 @@ agv::Codebase agv::Database::load(std::ostream &out,                     //
 }
 
 namespace agv {
+std::ostream &operator<<(std::ostream &os, const Range &range) {
+  return os << "agv::Range{"                        //
+            << ".start=" << range.startByte << ", " //
+            << ".end=" << range.endByte             //
+            << "}";
+}
 std::ostream &operator<<(std::ostream &os, const Database::Entry &entry) {
-  return os << "agv::Database::Entry{"                                                          //
+  return os << "agv::Database::Entry{"                                                           //
             << ".pchName=" << entry.pchName << ", "                                              //
             << ".compileCommands=" << (entry.compileCommands | mk_string("{", ",", "}")) << ", " //
             << ".dependencies=(" << entry.dependencies.size() << ")" << ", "                     //
@@ -276,7 +292,7 @@ std::ostream &operator<<(std::ostream &os, const Database::Entry &entry) {
             << "}";
 }
 std::ostream &operator<<(std::ostream &os, const Database::Bitcode &bitcode) {
-  return os << "agv::Database::Bitcode{"       //
+  return os << "agv::Database::Bitcode{"        //
             << ".name=" << bitcode.name << ", " //
             << ".kind=" << bitcode.kind << ", " //
             << ".triple=" << bitcode.triple     //
@@ -293,13 +309,13 @@ std::ostream &operator<<(std::ostream &os, const Database &database) {
 }
 
 std::ostream &operator<<(std::ostream &os, const Codebase &codebase) {
-  return os << "agv::Codebase{"                                      //
+  return os << "agv::Codebase{"                                       //
             << ".path=" << codebase.path                              //
             << ".units={" << (codebase.units ^ mk_string(",")) << "}" //
             << "}";
 }
 std::ostream &operator<<(std::ostream &os, const Unit &unit) {
-  return os << "agv::Unit{"                                                   //
+  return os << "agv::Unit{"                                                    //
             << ".path=" << unit.path_ << ", "                                  //
             << ".name=" << unit.name_ << ", "                                  //
             << ".sTreeRoot=(" << unit.sTreeRoot.nodes() << "), "               //

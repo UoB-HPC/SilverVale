@@ -116,7 +116,7 @@ add_tree_sitter_lang(tree-sitter c TAG v0.20.7)
 add_tree_sitter_lang(tree-sitter cpp TAG v0.20.5)
 add_tree_sitter_lang(tree-sitter julia TAG v0.22.0)
 add_tree_sitter_lang(tree-sitter rust TAG v0.21.2)
-add_tree_sitter_lang(stadelmanma fortran HASH f73d473)
+add_tree_sitter_lang(stadelmanma fortran HASH dde9829)
 
 
 # =====================

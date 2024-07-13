@@ -52,8 +52,35 @@ public:
                                       const sol::nested<std::vector<Tree>> &)));
 };
 
+struct Range {
+  uint32_t startByte, endByte;
+  [[nodiscard]] std::string extract(const std::string &s) const {
+    if (startByte > endByte || startByte >= s.size()) { return ""; }
+    return s.substr(startByte, std::min(endByte, static_cast<uint32_t>(s.size())) - startByte);
+  }
+
+  bool operator<(const Range &that) const {
+    return startByte == that.startByte ? endByte < that.endByte : startByte < that.startByte;
+  }
+  bool operator==(const Range &that) const {
+    return startByte == that.endByte && endByte == that.endByte;
+  }
+
+private:
+  DEF_SOL_UT_ACCESSOR(startByte)
+  DEF_SOL_UT_ACCESSOR(endByte)
+public:
+  DEF_TEAL_SOL_UT(Range,                           //
+                  SOL_UT_FN_ACC(Range, startByte), //
+                  SOL_UT_FN_ACC(Range, endByte),   //
+                  SOL_UT_FN(Range, extract));
+  friend std::ostream &operator<<(std::ostream &os, const Range &range);
+};
+
 class Source {
   Memoized<size_t> lazySloc, lazyLloc;
+  Memoized<std::set<uint32_t>> lazySlocLines;
+  Memoized<std::set<Range>> lazyLlocRanges;
   Memoized<Tree> lazyTsTree;
 
 public:
@@ -62,6 +89,8 @@ public:
   [[nodiscard]] const std::string &content() const;
   [[nodiscard]] size_t sloc() const;
   [[nodiscard]] size_t lloc() const;
+  [[nodiscard]] std::set<uint32_t> slocLines() const;
+  [[nodiscard]] std::set<Range> llocRanges() const;
   [[nodiscard]] const Tree &tsTree() const;
   DEF_TEAL_SOL_UT(Source,                     //
                   SOL_UT_FN(Source, content), //

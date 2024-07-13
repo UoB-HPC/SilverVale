@@ -7,10 +7,10 @@
 #include "tree_sitter_fortran//api.h"
 
 #include "aspartame/optional.hpp"
+#include "aspartame/set.hpp"
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
 
-#include "agv/cli.h"
 #include "agv/tree.h"
 
 using namespace clang;
@@ -43,7 +43,7 @@ makeNodes(const agv::ClangASTSemanticTreeVisitor::Option &option, const std::str
          });
 }
 
-TEST_CASE("ts-normalise-comments-cpp") {
+TEST_CASE("cpp-source-loc") {
 
   auto source = R"(
 //*Foo*/
@@ -55,7 +55,8 @@ return 0 /**/ + 1;// b
 // a // b
 )";
 
-  CHECK(agv::TsTree(source, tree_sitter_cpp()).deleteNodes("comment").source == R"(
+  const auto &tree = agv::TsTree(source, tree_sitter_cpp()).deleteNodes("comment");
+  CHECK(tree.source == R"(
 
 int main(){
 
@@ -64,9 +65,18 @@ return 0  + 1;
 
 
 )");
+  SECTION("SLOC") {
+    CHECK(tree.sloc() == 3);
+    CHECK(tree.slocLines() == std::set<uint32_t>{2, 4, 5});
+  }
+  SECTION("LLOC") {
+    CHECK(tree.lloc() == 1);
+    CHECK((tree.llocRanges() ^ map([&](auto s, auto e) { return tree.source.substr(s, e - s); })) ==
+          std::set<std::string>{"return 0  + 1;"});
+  }
 }
 
-TEST_CASE("ts-normalise-comments-fortran") {
+TEST_CASE("fortran-source-loc") {
 
   auto source = R"(
 !*Foo*
@@ -82,7 +92,8 @@ end program main
 
 )";
 
-  CHECK(agv::TsTree(source, tree_sitter_fortran()).deleteNodes("comment").source == R"(
+  const auto &tree = agv::TsTree(source, tree_sitter_fortran()).deleteNodes("comment");
+  CHECK(tree.source == R"(
 
 program main
 implicit none
@@ -95,9 +106,69 @@ end program main
 
 
 )");
+
+  SECTION("SLOC") {
+    CHECK(tree.sloc() == 6);
+    CHECK(tree.slocLines() == std::set<uint32_t>{2, 3, 5, 6, 7, 8});
+  }
+  SECTION("LLOC") {
+    CHECK(tree.lloc() == 6);
+    CHECK((tree.llocRanges()                          //
+           ^ to_vector()                              //
+           ^ sort_by([](auto &s, auto) { return s; }) //
+           ^ map([&](auto s, auto e) { return tree.source.substr(s, e - s); })) ==
+          std::vector<std::string>{
+              "program main",
+              "implicit none",
+              "integer :: result",
+              "result = 0",
+              "print *, result",
+              "end program main",
+          });
+  }
 }
 
-TEST_CASE("inline") {
+TEST_CASE("cpp-delete-comments") {
+
+  std::string src = R"(
+/*
+ * Foo
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+
+/*foo*/// x
+
+int a = 3;// foo
+//
+void a() /*b*/ {
+// c
+return 42;// w
+}// d
+
+)";
+
+  CHECK(agv::TsTree(src, tree_sitter_cpp()).deleteNodes("comment").source == R"(
+
+
+#include <stdio.h>
+#include <stdlib.h>
+
+
+
+int a = 3;
+
+void a()  {
+
+return 42;
+}
+
+)");
+}
+
+
+TEST_CASE("cpp-inline") {
   auto trees =
       makeNodes(
           {.inlineCalls = true, .normaliseVarName = false, .normaliseFnName = false, .roots = {""}},
@@ -138,7 +209,7 @@ int b() {
   CHECK(trees[0] == trees[1]);
 }
 
-TEST_CASE("inlines invariant") {
+TEST_CASE("cpp-inlines-invariant") {
   auto trees =
       makeNodes(
           {.inlineCalls = true, .normaliseVarName = true, .normaliseFnName = false, .roots = {""}},
@@ -179,7 +250,7 @@ int b() {
   CHECK(trees[0] == trees[1]);
 }
 
-TEST_CASE("two layers") {
+TEST_CASE("cpp-two-layers") {
   auto trees =
       makeNodes(
           {.inlineCalls = true, .normaliseVarName = true, .normaliseFnName = false, .roots = {""}},
@@ -216,77 +287,69 @@ int b() {
   CHECK(trees[0] == trees[1]);
 }
 
-TEST_CASE("delete comments") {
-
-  std::string src = R"(
-/*
- * Foo
- */
-
-#include <stdio.h>
-#include <stdlib.h>
-
-/*foo*/// x
-
-int a = 3;// foo
-//
-void a() /*b*/ {
-// c
-return 42;// w
-}// d
-
-)";
-
-  std::string expected = R"(
 
 
-#include <stdio.h>
-#include <stdlib.h>
-
-
-
-int a = 3;
-
-void a()  {
-
-return 42;
-}
-
-)";
-
-  CHECK(agv::TsTree(src, tree_sitter_cpp()).deleteNodes("comment").source == expected);
-}
-
-TEST_CASE("normalise ws") {
+TEST_CASE("cpp-normalise") {
 
   std::string src = R"(
 
 
 #include <stdio.h>
+
+
 #include <stdlib.h>
 
 
+
+int a  = 3;
+
+int  a_a   (      )        {     //a
+
+  return  42;
+}
+
+auto f  = [   & ]  ( auto   y )  {    return    2    ;   }   ; //
+
+)";
+
+  SECTION("ws") {
+
+    CHECK(agv::TsTree(src, tree_sitter_cpp()).normaliseWhitespaces().source == R"(
+
+
+#include <stdio.h>
+
+#include <stdlib.h>
 
 int a = 3;
-
-void a ( )        {
-
+int a_a ( ) { //a
 return 42;
 }
+auto f = [ & ] ( auto y ) { return 2 ; } ; //
 
-auto f  = [   & ] ( auto   y )  {    return    2    ;   }   ;
+)");
+  }
 
-)";
-
-  std::string expected = R"(
-#include <stdio.h>
+  SECTION("nl") {
+    CHECK(agv::TsTree(src, tree_sitter_cpp()).normaliseNewLines().source == R"(#include <stdio.h>
 #include <stdlib.h>
-int a=3;
-void a(){
+int a  = 3;
+int  a_a   (      )        {     //a
+  return  42;
+}
+auto f  = [   & ]  ( auto   y )  {    return    2    ;   }   ; //)");
+  }
+
+  SECTION("ws+nl") {
+    SECTION("nl") {
+      CHECK(agv::TsTree(src, tree_sitter_cpp()).normaliseNewLines().normaliseWhitespaces().source ==
+            R"(#include <stdio.h>
+#include <stdlib.h>
+int a = 3;
+int a_a ( ) { //a
 return 42;
 }
-auto f = [&](auto y){return 2;};
-)";
-
-  CHECK(agv::TsTree(src, tree_sitter_cpp()).normaliseWhitespaces(1).source == expected);
+auto f = [ & ] ( auto y ) { return 2 ; } ; //)");
+    }
+  }
 }

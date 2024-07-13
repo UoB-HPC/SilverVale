@@ -1,6 +1,7 @@
 #pragma once
 
 #include <iosfwd>
+#include <set>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -17,9 +18,9 @@ namespace agv {
 namespace {
 template <typename Ret, typename Arg, typename... Rest> Arg arg0_helper(Ret (*)(Arg, Rest...));
 template <typename Ret, typename F, typename Arg, typename... Rest>
-Arg arg0_helper(Ret (F:: *)(Arg, Rest...));
+Arg arg0_helper(Ret (F::*)(Arg, Rest...));
 template <typename Ret, typename F, typename Arg, typename... Rest>
-Arg arg0_helper(Ret (F:: *)(Arg, Rest...) const);
+Arg arg0_helper(Ret (F::*)(Arg, Rest...) const);
 template <typename F> decltype(arg0_helper(&F::operator())) arg0_helper(F);
 template <typename T> using arg0_t = decltype(arg0_helper(std::declval<T>()));
 template <typename T, typename Node, typename... Fs> std::optional<T> visitDyn(Node n, Fs... fs) {
@@ -46,18 +47,20 @@ template <typename Node, typename... Fs> void visitDyn0(Node n, Fs... fs) {
 std::vector<clang::Decl *> topLevelDeclsInMainFile(clang::ASTUnit &unit);
 
 template <typename N>
-void printTree(int depth, std::vector<bool> branch, const N &node, std::ostream &out,
-               const std::function<std::string(N)> &name,
-               const std::function<const std::vector<N>(N)> &children) {
+void printTree(const N &node,                                                  //
+               std::ostream &out,                                              //
+               const std::function<std::string(const N &)> &name,              //
+               const std::function<const std::vector<N>(const N &)> &children, //
+               int depth = 0, std::vector<bool> branch = {}) {
   for (int i = 0; i < depth - 1; ++i)
     out << (branch[i] ? "│  " : "   ");
   if (depth > 0) out << (branch[depth - 1] ? "├─ " : "╰─ ");
   out << name(node) << "\n";
   branch.push_back(true);
-  const auto &xs = children(node);
+  const auto xs = children(node);
   for (size_t i = 0; i < xs.size(); ++i) {
     branch[depth] = (i + 1) < xs.size();
-    printTree<N>(depth + 1, branch, xs[i], out, name, children);
+    printTree<N>(xs[i], out, name, children, depth + 1, branch);
   }
 }
 
@@ -108,7 +111,7 @@ template <typename T> struct SemanticTree {
 
   template <typename Show> void print(Show show, std::ostream &out) const {
     printTree<SemanticTree>(
-        0, {}, *this, out, [&](const SemanticTree<T> &n) { return show(n.value); },
+        *this, out, [&](const SemanticTree<T> &n) { return show(n.value); },
         [&](const SemanticTree<T> &n) { return n.children; });
   }
 
@@ -210,7 +213,18 @@ public:
 
 struct TsTree {
 
-public:
+  struct Range {
+    uint32_t startByte, endByte;
+    [[nodiscard]] std::string extract(const std::string &s) const {
+      if (startByte > endByte || startByte >= s.size()) { return ""; }
+      return s.substr(startByte, std::min(endByte, static_cast<uint32_t>(s.size())) - startByte);
+    }
+
+    bool operator<(const Range &that) const {
+      return startByte == that.startByte ? endByte < that.endByte : startByte < that.startByte;
+    }
+  };
+
   std::string source;
   std::shared_ptr<TSParser> parser;
   std::shared_ptr<TSTree> tree;
@@ -219,8 +233,14 @@ public:
   [[nodiscard]] TSNode root() const;
   [[nodiscard]] TsTree deleteNodes(const std::string &type,
                                    const std::optional<TSNode> &node = {}) const;
-  [[nodiscard]] TsTree normaliseWhitespaces(size_t maxWhitespaces = 1,
-                                            const std::optional<TSNode> &node = {}) const;
+
+  [[nodiscard]] TsTree normaliseNewLines(const std::optional<TSNode> &node = {}) const;
+  [[nodiscard]] TsTree normaliseWhitespaces(uint32_t maxWS = 1, const std::optional<TSNode> &node = {}) const;
+
+
+  [[nodiscard]] std::set<uint32_t> slocLines(const std::optional<TSNode> &node = {}) const;
+  [[nodiscard]] std::set<std::pair<uint32_t, uint32_t>>
+  llocRanges(const std::optional<TSNode> &node = {}) const;
 
   [[nodiscard]] size_t sloc(const std::optional<TSNode> &node = {}) const;
   [[nodiscard]] size_t lloc(const std::optional<TSNode> &node = {}) const;
@@ -230,7 +250,7 @@ public:
     if (!node) walk<F>(f, root());
     else if (f(*node)) {
       for (uint32_t i = 0; i < ts_node_child_count(*node); ++i) {
-        walk(f, ts_node_child(*node, i));
+        if (auto child = ts_node_child(*node, i); ts_node_is_named(child)) { walk(f, child); }
       }
     }
   }
@@ -242,8 +262,9 @@ public:
     else {
       U n = alloc(std::string(ts_node_type(*node)));
       for (uint32_t i = 0; i < ts_node_child_count(*node); ++i) {
-        insert(n, std::move(traverse<U, Alloc, Insert>(alloc, insert, depth + 1,
-                                                       ts_node_child(*node, i))));
+        if (auto child = ts_node_child(*node, i); ts_node_is_named(child)) {
+          insert(n, std::move(traverse<U, Alloc, Insert>(alloc, insert, depth + 1, child)));
+        }
       }
       return n;
     }
@@ -253,20 +274,16 @@ public:
   void print(Show show, std::ostream &out, const std::optional<TSNode> &node = {}) const {
     using namespace aspartame;
     printTree<TSNode>(
-        0, {}, node, out, [&](const TSNode &n) { return show(ts_node_type(n)); },
-        [&](const TSNode &n) -> std::vector<TSNode> {
+        node.value_or(root()), out, //
+        [&](const TSNode &n) { return show(n); },
+        [&](const TSNode &n) {
           return iota<uint32_t>(0, ts_node_child_count(n))              //
                  | map([&](uint32_t i) { return ts_node_child(n, i); }) //
+                 | filter([&](auto &n) { return ts_node_is_named(n); }) //
                  | to_vector();
         });
   }
 
-private:
-  static void deleteNodes(const TSNode &node, const std::string &type, size_t &offset,
-                          std::string &out);
-
-  static void normaliseWhitespaces(const TSNode &node, size_t &offset, size_t maxWhitespaces,
-                                   std::string &out);
 };
 
 } // namespace agv
