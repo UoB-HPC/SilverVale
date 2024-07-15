@@ -14,3 +14,4 @@ if (USE_OMP)
     target_link_libraries(microstream PUBLIC OpenMP::OpenMP_CXX)
     target_compile_definitions(microstream PUBLIC USE_OMP)
 endif ()
+# OMP, OMP_TARGET, HIP, CUDA

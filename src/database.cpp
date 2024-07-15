@@ -230,7 +230,7 @@ agv::Codebase agv::Database::load(std::ostream &out,                     //
     agv::SemanticTree<std::string> irTreeRoot{"root", {}};
     for (auto &[name, module] : modules) {
       agv::SemanticTree<std::string> irTree{name, {}};
-      agv::LLVMIRTreeVisitor(&irTree, *module, true);
+      agv::LLVMIRTreeVisitor(&irTree, *module, normalise);
       irTreeRoot.children.emplace_back(irTree);
     }
 

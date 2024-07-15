@@ -32,6 +32,12 @@ FetchContent_Declare(zstd
         SOURCE_SUBDIR build/cmake)
 FetchContent_MakeAvailable(zstd)
 
+FetchContent_Declare(
+        fmt
+        URL https://github.com/fmtlib/fmt/releases/download/11.0.1/fmt-11.0.1.zip
+        URL_HASH SHA256=62ca45531814109b5d6cef0cf2fd17db92c32a30dd23012976e768c685534814)
+FetchContent_MakeAvailable(fmt)
+
 FetchContent_Declare(Aspartame
         #        SOURCE_DIR /home/tom/Aspartame
         GIT_REPOSITORY https://github.com/tom91136/Aspartame.git
@@ -197,6 +203,7 @@ target_link_libraries(AGV
         simplecpp_obj
         sol2
         lua
+        fmt::fmt
 
         PUBLIC
         tree-sitter
@@ -227,7 +234,8 @@ target_precompile_headers(AGV PRIVATE
         [["oneapi/tbb.h"]]
 
         [["json.hpp"]]
-#        [["lua.hpp"]]
+        [["lua.hpp"]]
+        [["fmt/core.h"]]
         [["sol.hpp"]]
         [["zstd.h"]]
 
@@ -255,12 +263,16 @@ target_precompile_headers(AGV PRIVATE
 )
 
 add_executable(driver src/driver.cpp)
-add_executable(tests test/tree.cpp test/index.cpp)
-
-target_link_libraries(driver PRIVATE Aspartame::Aspartame)
-target_link_libraries(tests PRIVATE Aspartame::Aspartame Catch2::Catch2WithMain)
-
+add_executable(tests test/tree.cpp test/index.cpp test/structure.cpp)
+target_link_libraries(tests PRIVATE Catch2::Catch2WithMain)
 set_target_properties(driver PROPERTIES OUTPUT_NAME "agv")
+foreach (target driver tests)
+    target_link_libraries(${target} PRIVATE AGV Aspartame::Aspartame sol2 fmt::fmt)
+    target_include_directories(${target} PRIVATE include ${json_SOURCE_DIR} ${fmt_SOURCE_DIR}/include)
+    target_compile_options(${target} PRIVATE ${AGV_COMPILE_FLAGS})
+    target_link_options(${target} PRIVATE ${AGV_LINK_FLAGS})
+endforeach ()
+
 
 execute_process(
         COMMAND clang -print-resource-dir
@@ -277,32 +289,33 @@ else ()
     set(CLANG_RESOURCE_DIR "(call to clang -print-resource-dir failed)")
 endif ()
 
-set(FIXTURE_MICROSTREAM_DIR ${CMAKE_BINARY_DIR}/microstream_build)
+
+function(setup_fixture name)
+    string(TOUPPER ${name} name_upper)
+    set(build_dir "${CMAKE_BINARY_DIR}/${name}_build")
+    set(FIXTURE_${name_upper}_DIR "${build_dir}" PARENT_SCOPE)
+    add_custom_command(
+            TARGET tests
+            PRE_BUILD
+            COMMAND ${CMAKE_COMMAND} -E env CC=clang CXX=clang++ ${CMAKE_COMMAND}
+            -S "${CMAKE_SOURCE_DIR}/test/fixture/${name}"
+            -B "${build_dir}"
+            -DUSE_OMP=ON
+            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+            -DCMAKE_VERBOSE_MAKEFILE=ON
+            -DCMAKE_CXX_LINK_EXECUTABLE='echo "" '
+            COMMAND ${CMAKE_COMMAND} --build "${build_dir}"
+            BYPRODUCTS "${build_dir}/CMakeCache.txt"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+            COMMENT "Configure ${name} fixture"
+    )
+endfunction()
+
+setup_fixture(dummy)
+setup_fixture(microstream)
+
 set(FIXTURE_TMP_DIR ${CMAKE_BINARY_DIR})
 configure_file(test/fixture/fixture.h.in ${CMAKE_CURRENT_BINARY_DIR}/fixture.h @ONLY)
-
-
-add_custom_command(TARGET tests
-        PRE_BUILD
-        COMMAND ${CMAKE_COMMAND} -E env CC=clang CXX=clang++ CXXFLAGS="-save-temps=obj" ${CMAKE_COMMAND}
-        -S "${CMAKE_SOURCE_DIR}/test/fixture/microstream"
-        -B "${FIXTURE_MICROSTREAM_DIR}"
-        -DUSE_OMP=ON
-        -DCMAKE_BUILD_TYPE=Release
-        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-        -DCMAKE_VERBOSE_MAKEFILE=ON
-        -DCMAKE_CXX_LINK_EXECUTABLE='echo "" '
-        COMMAND ${CMAKE_COMMAND} --build "${FIXTURE_MICROSTREAM_DIR}"
-        BYPRODUCTS "${FIXTURE_MICROSTREAM_DIR}/CMakeCache.txt"
-        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-        COMMENT "Configure microstream fixture"
-)
 target_include_directories(tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 
-
-foreach (target driver tests)
-    target_link_libraries(${target} PRIVATE AGV)
-    target_include_directories(${target} PRIVATE include ${json_SOURCE_DIR})
-    target_compile_options(${target} PRIVATE ${AGV_COMPILE_FLAGS})
-    target_link_options(${target} PRIVATE ${AGV_LINK_FLAGS})
-endforeach ()

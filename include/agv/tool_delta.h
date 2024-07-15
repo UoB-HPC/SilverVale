@@ -38,6 +38,7 @@ inline std::string_view to_string(const Kind &kind) {
     case Kind::STreeInlineRel: return "streeR+i";
     case Kind::IRTreeRel: return "irtreeR";
   }
+  return "(unknown kind)";
 }
 
 struct DatabaseSpec {

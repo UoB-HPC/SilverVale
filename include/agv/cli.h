@@ -8,9 +8,11 @@
 #ifdef __cpp_lib_syncbuf
   #include <syncstream>
   #define AGV_COUT std::osyncstream(std::cout)
+  #define AGV_CERR std::osyncstream(std::cerr)
 #else
   #include <iostream>
   #define AGV_COUT std::cout
+  #define AGV_CERR std::cerr
 #endif
 
 namespace agv {
