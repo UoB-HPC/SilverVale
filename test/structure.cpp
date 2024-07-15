@@ -20,11 +20,11 @@ TEST_CASE("structure") {
   auto out = std::string(FIXTURE_TMP_DIR) + "/dummy_db";
 
   int code = agv::index::run(agv::index::Options{
-      .buildDir = FIXTURE_DUMMY_DIR,
+      .buildDir = FIXTURE_DUMMY__DIR,
       .sourceGlobs = {"*"},
       .argsBefore = {},
       .argsAfter = {},
-      .clangResourceDir = CLANG_RESOURCE_DIR,
+      .clangResourceDir = FIXTURE_CLANG_RESOURCE_DIR,
       .outDir = out,
       .clearOutDir = true,
       .verbose = true,

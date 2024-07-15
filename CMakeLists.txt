@@ -283,24 +283,25 @@ execute_process(
 
 if (CLANG_COMMAND_RESULT EQUAL 0)
     message(STATUS "Found Clang resource directory: ${CLANG_RESOURCE_DIR}")
-    set(CLANG_RESOURCE_DIR "${CLANG_RESOURCE_DIR}/include")
+    set(FIXTURE_CLANG_RESOURCE_DIR "${CLANG_RESOURCE_DIR}/include")
 else ()
     message(WARNING "Failed to get clang resource directory (${CLANG_COMMAND_RESULT}), index tests may not pass.")
-    set(CLANG_RESOURCE_DIR "(call to clang -print-resource-dir failed)")
+    set(FIXTURE_CLANG_RESOURCE_DIR "(call to clang -print-resource-dir failed)")
 endif ()
 
 
-function(setup_fixture name)
-    string(TOUPPER ${name} name_upper)
-    set(build_dir "${CMAKE_BINARY_DIR}/${name}_build")
-    set(FIXTURE_${name_upper}_DIR "${build_dir}" PARENT_SCOPE)
+function(setup_fixture name suffix)
+    set(fixture_name "${name}_${suffix}")
+    string(TOUPPER ${fixture_name} fixture_name_upper)
+    set(build_dir "${CMAKE_BINARY_DIR}/${fixture_name}_build")
+    set(FIXTURE_${fixture_name_upper}_DIR "${build_dir}" PARENT_SCOPE)
     add_custom_command(
             TARGET tests
             PRE_BUILD
             COMMAND ${CMAKE_COMMAND} -E env CC=clang CXX=clang++ ${CMAKE_COMMAND}
             -S "${CMAKE_SOURCE_DIR}/test/fixture/${name}"
             -B "${build_dir}"
-            -DUSE_OMP=ON
+            ${ARGN}
             -DCMAKE_BUILD_TYPE=Release
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
             -DCMAKE_VERBOSE_MAKEFILE=ON
@@ -308,14 +309,28 @@ function(setup_fixture name)
             COMMAND ${CMAKE_COMMAND} --build "${build_dir}"
             BYPRODUCTS "${build_dir}/CMakeCache.txt"
             WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-            COMMENT "Configure ${name} fixture"
+            COMMENT "Configure fixture ${name} as ${fixture_name}"
     )
 endfunction()
 
-setup_fixture(dummy)
-setup_fixture(microstream)
+setup_fixture(dummy "")
+setup_fixture(microstream serial -DUSE_SERIAL=ON)
+setup_fixture(microstream omp -DUSE_OMP=ON)
+setup_fixture(microstream omp_target -DUSE_OMP_TARGET=sm_60)
+setup_fixture(microstream cuda -DUSE_CUDA=sm_60 -DCMAKE_CUDA_COMPILER=clang++)
+setup_fixture(microstream hip -DUSE_HIP=gfx1036)
+set(FIXTURE_TMP_DIR ${CMAKE_CURRENT_BINARY_DIR})
 
-set(FIXTURE_TMP_DIR ${CMAKE_BINARY_DIR})
-configure_file(test/fixture/fixture.h.in ${CMAKE_CURRENT_BINARY_DIR}/fixture.h @ONLY)
+
+
+set(config_template "#pragma once\n")
+get_cmake_property(all_variables VARIABLES)
+foreach (var ${all_variables})
+    if (var MATCHES "^FIXTURE_")
+        string(APPEND config_template "#cmakedefine ${var} \"@${var}@\"\n")
+    endif ()
+endforeach ()
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/fixture.h.in" "${config_template}")
+configure_file("${CMAKE_CURRENT_BINARY_DIR}/fixture.h.in" ${CMAKE_CURRENT_BINARY_DIR}/fixture.h @ONLY)
 target_include_directories(tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 

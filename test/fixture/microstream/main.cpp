@@ -8,83 +8,18 @@
 #include <numeric>
 #include <vector>
 
+#ifdef USE_HIP
+  #include <hip/hip_runtime.h>
+#endif
+
 #define startA (0.1)
 #define startB (0.2)
 #define startC (0.0)
 #define startScalar (0.4)
 #define ALIGNMENT (2 * 1024 * 1024) // 2MB
 
-template <typename T>
-auto runAll(                                                 //
-    T *__restrict__ a, T *__restrict__ b, T *__restrict__ c, //
-    T *h_a, T *h_b, T *h_c,                                  //
-    T initA, T initB, T initC,                               //
-    T scalar, T &sum,                                        //
-    int size, int times) {
-
-  auto init = [&]() {
-#ifdef USE_OMP
-  #pragma omp parallel for
-#endif
-    for (int i = 0; i < size; i++) {
-      a[i] = initA;
-      b[i] = initB;
-      c[i] = initC;
-    }
-  };
-
-  auto read = [&]() {
-#ifdef USE_OMP
-  #pragma omp parallel for
-#endif
-    for (int i = 0; i < size; i++) {
-      h_a[i] = a[i];
-      h_b[i] = b[i];
-      h_c[i] = c[i];
-    }
-  };
-
-  auto copy = [&]() {
-#ifdef USE_OMP
-  #pragma omp parallel for
-#endif
-    for (int i = 0; i < size; i++)
-      c[i] = a[i];
-  };
-
-  auto mul = [&]() {
-#ifdef USE_OMP
-  #pragma omp parallel for
-#endif
-    for (int i = 0; i < size; i++)
-      b[i] = scalar * c[i];
-  };
-
-  auto add = [&]() {
-#ifdef USE_OMP
-  #pragma omp parallel for
-#endif
-    for (int i = 0; i < size; i++)
-      c[i] = a[i] + b[i];
-  };
-
-  auto triad = [&]() {
-#ifdef USE_OMP
-  #pragma omp parallel for
-#endif
-    for (int i = 0; i < size; i++)
-      a[i] = b[i] + scalar * c[i];
-  };
-
-  auto dot = [&]() {
-    sum = 0.0;
-#ifdef USE_OMP
-  #pragma omp parallel for reduction(+ : sum)
-#endif
-    for (int i = 0; i < size; i++)
-      sum += a[i] * b[i];
-  };
-
+template <typename I, typename R, typename C, typename M, typename A, typename T, typename D>
+auto execute(size_t times, I init, R read, C copy, M mul, A add, T triad, D dot) {
   std::array<std::vector<double>, 5> timings{};
   auto time = [&](auto idx, auto f) {
     using namespace std::chrono;
@@ -105,6 +40,230 @@ auto runAll(                                                 //
   read();
   return timings;
 }
+
+#if defined(USE_CUDA) || defined(USE_HIP)
+
+  #if defined(USE_CUDA)
+    #define deviceMalloc cudaMalloc
+    #define deviceMemcpy cudaMemcpy
+    #define deviceSynchronize cudaDeviceSynchronize
+    #define getDeviceProperties cudaGetDeviceProperties
+    #define getErrorString cudaGetErrorString
+    #define errorType cudaError_t
+    #define deviceProps cudaDeviceProp
+    #define memcpyD2H cudaMemcpyDeviceToHost
+    #define successValue cudaSuccess
+  #elif defined(USE_HIP)
+    #define deviceMalloc hipMalloc
+    #define deviceMemcpy hipMemcpy
+    #define deviceSynchronize hipDeviceSynchronize
+    #define getDeviceProperties hipGetDeviceProperties
+    #define getErrorString hipGetErrorString
+    #define errorType hipError_t
+    #define deviceProps hipDeviceProp_t
+    #define memcpyD2H hipMemcpyDeviceToHost
+    #define successValue hipSuccess
+  #endif
+
+  #define CHECK(EXPR)                                                                              \
+    do {                                                                                           \
+      if (auto e = (EXPR); e != successValue) {                                                    \
+        std::fprintf(stderr, "%s:%d: %s (%d)\n  %s\n", __FILE__, __LINE__, getErrorString(e), e,   \
+                     #EXPR);                                                                       \
+        std::exit(e);                                                                              \
+      }                                                                                            \
+    } while (false)
+
+template <typename F> __global__ void for_each(size_t size, F f) {
+  for (int i = blockDim.x * blockIdx.x + threadIdx.x; i < size; i += gridDim.x * blockDim.x) {
+    f(i);
+  }
+}
+
+template <size_t TBSIZE, class T, typename F, typename G>
+__global__ void map_reduce(int size, const T *a, const T *b, T *out, F f, G g) {
+  __shared__ T partial[TBSIZE];
+  int gid = blockDim.x * blockIdx.x + threadIdx.x;
+  const auto tid = threadIdx.x;
+  partial[tid] = {};
+  for (; gid < size; gid += blockDim.x * gridDim.x)
+    partial[tid] += f(a[gid], b[gid]);
+
+  for (int offset = blockDim.x / 2; offset > 0; offset /= 2) {
+    __syncthreads();
+    if (tid < offset) partial[tid] = g(partial[tid], partial[tid + offset]);
+  }
+  if (tid == 0) out[blockIdx.x] = partial[tid];
+}
+
+template <typename T>
+auto runAll(                                           //
+    T *__restrict__, T *__restrict__, T *__restrict__, //
+    T *h_a, T *h_b, T *h_c,                            //
+    T initA, T initB, T initC,                         //
+    T scalar, T &sum,                                  //
+    int size, int times) {
+
+  constexpr int TBSIZE = 1024;
+  size_t blocks = (size + TBSIZE - 1) / TBSIZE;
+
+  deviceProps props;
+  CHECK(getDeviceProperties(&props, 0));
+  int dotNumBlocks = props.multiProcessorCount * 4;
+
+  T *d_a{}, *d_b{}, *d_c{}, *d_sum{};
+  CHECK(deviceMalloc(&d_a, size * sizeof(T)));
+  CHECK(deviceMalloc(&d_b, size * sizeof(T)));
+  CHECK(deviceMalloc(&d_c, size * sizeof(T)));
+  CHECK(deviceMalloc(&d_sum, dotNumBlocks * sizeof(T)));
+  auto h_sums = (T *)std::aligned_alloc(ALIGNMENT, dotNumBlocks * sizeof(T));
+
+  auto init = [&]() {
+    for_each<<<blocks, TBSIZE, 0>>>(size, [=](auto i) {
+      d_a[i] = initA;
+      d_b[i] = initB;
+      d_c[i] = initC;
+    });
+    CHECK(deviceSynchronize());
+  };
+
+  auto read = [&]() {
+    CHECK(deviceMemcpy(h_a, d_a, size * sizeof(T), memcpyD2H));
+    CHECK(deviceMemcpy(h_b, d_b, size * sizeof(T), memcpyD2H));
+    CHECK(deviceMemcpy(h_c, d_c, size * sizeof(T), memcpyD2H));
+  };
+
+  auto copy = [&]() {
+    for_each<<<blocks, TBSIZE, 0>>>(size, [=](auto i) { d_c[i] = d_a[i]; });
+    CHECK(deviceSynchronize());
+  };
+
+  auto mul = [&]() {
+    for_each<<<blocks, TBSIZE, 0>>>(size, [=](auto i) { d_b[i] = scalar * d_c[i]; });
+    CHECK(deviceSynchronize());
+  };
+
+  auto add = [&]() {
+    for_each<<<blocks, TBSIZE, 0>>>(size, [=](auto i) { d_c[i] = d_a[i] + d_b[i]; });
+    CHECK(deviceSynchronize());
+  };
+
+  auto triad = [&]() {
+    for_each<<<blocks, TBSIZE, 0>>>(size, [=](auto i) { d_a[i] = d_b[i] + scalar * d_c[i]; });
+    CHECK(deviceSynchronize());
+  };
+
+  auto dot = [&]() {
+    map_reduce<TBSIZE>
+        <<<dotNumBlocks, TBSIZE, 0>>>(size, d_a, d_b, d_sum, std::multiplies<>(), std::plus<>());
+    CHECK(deviceMemcpy(h_sums, d_sum, dotNumBlocks * sizeof(T), memcpyD2H));
+    sum = {};
+    for (int i = 0; i < dotNumBlocks; i++)
+      sum += h_sums[i];
+    CHECK(deviceSynchronize());
+  };
+
+  return execute(times, init, read, copy, mul, add, triad, dot);
+}
+
+#endif
+
+#if defined(USE_SERIAL) || defined(USE_OMP) || defined(USE_OMP_TARGET)
+template <typename T>
+auto runAll(                                                 //
+    T *__restrict__ a, T *__restrict__ b, T *__restrict__ c, //
+    T *h_a, T *h_b, T *h_c,                                  //
+    T initA, T initB, T initC,                               //
+    T scalar, T &sum,                                        //
+    int size, int times) {
+
+  #ifdef USE_OMP_TARGET
+
+    #pragma omp target enter data map(alloc : a[0 : size], b[0 : size], c[0 : size])
+  {}
+  #endif
+
+  auto init = [&]() {
+  #if defined(USE_OMP_TARGET)
+    #pragma omp target teams distribute parallel for simd
+  #elif defined(USE_OMP)
+    #pragma omp parallel for
+  #endif
+    for (int i = 0; i < size; i++) {
+      a[i] = initA;
+      b[i] = initB;
+      c[i] = initC;
+    }
+  };
+
+  auto read = [&]() {
+  #if defined(USE_OMP_TARGET)
+    #pragma omp target update from(a[0 : size], b[0 : size], c[0 : size])
+    {}
+  #elif defined(USE_OMP)
+    #pragma omp parallel for
+  #endif
+    for (int i = 0; i < size; i++) {
+      h_a[i] = a[i];
+      h_b[i] = b[i];
+      h_c[i] = c[i];
+    }
+  };
+
+  auto copy = [&]() {
+  #if defined(USE_OMP_TARGET)
+    #pragma omp target teams distribute parallel for simd
+  #elif defined(USE_OMP)
+    #pragma omp parallel for
+  #endif
+    for (int i = 0; i < size; i++)
+      c[i] = a[i];
+  };
+
+  auto mul = [&]() {
+  #if defined(USE_OMP_TARGET)
+    #pragma omp target teams distribute parallel for simd
+  #elif defined(USE_OMP)
+    #pragma omp parallel for
+  #endif
+    for (int i = 0; i < size; i++)
+      b[i] = scalar * c[i];
+  };
+
+  auto add = [&]() {
+  #if defined(USE_OMP_TARGET)
+    #pragma omp target teams distribute parallel for simd
+  #elif defined(USE_OMP)
+    #pragma omp parallel for
+  #endif
+    for (int i = 0; i < size; i++)
+      c[i] = a[i] + b[i];
+  };
+
+  auto triad = [&]() {
+  #if defined(USE_OMP_TARGET)
+    #pragma omp target teams distribute parallel for simd
+  #elif defined(USE_OMP)
+    #pragma omp parallel for
+  #endif
+    for (int i = 0; i < size; i++)
+      a[i] = b[i] + scalar * c[i];
+  };
+
+  auto dot = [&]() {
+    sum = 0.0;
+  #if defined(USE_OMP_TARGET)
+    #pragma omp target teams distribute parallel for simd map(tofrom : sum) reduction(+ : sum)
+  #elif defined(USE_OMP)
+    #pragma omp parallel for reduction(+ : sum)
+  #endif
+    for (int i = 0; i < size; i++)
+      sum += a[i] * b[i];
+  };
+
+  return execute(times, init, read, copy, mul, add, triad, dot);
+}
+#endif
 
 template <typename T> auto run(int size, int times) {
 

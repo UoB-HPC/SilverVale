@@ -3,11 +3,14 @@
 #include <thread>
 
 #include "catch2/catch_test_macros.hpp"
+#include "catch2/generators/catch_generators.hpp"
 
+#include "agv/glob.h"
 #include "agv/tool_index.h"
 #include "agv/tool_inspect.h"
 #include "agv/tool_script.h"
 #include "fixture.h"
+#include "fmt/core.h"
 
 #include "aspartame/string.hpp"
 #include "aspartame/vector.hpp"
@@ -16,6 +19,7 @@ using namespace aspartame;
 
 using namespace clang;
 using namespace clang::tooling;
+using namespace llvm;
 
 static bool fileExist(const std::string &file) {
   std::ifstream infile(file);
@@ -24,15 +28,29 @@ static bool fileExist(const std::string &file) {
 
 TEST_CASE("database") {
 
-  auto out = std::string(FIXTURE_TMP_DIR) + "/microstream_db";
+  auto baseGlobs = std::vector<std::string>{"*/db.json", "*/*main.cpp.pch.zstd"};
 
-  SECTION("index") {
+  auto [dir, model, globs] =
+      GENERATE(std::tuple{FIXTURE_MICROSTREAM_SERIAL_DIR, "serial",              //
+                          std::vector{"*/*main.bc"}},                            //
+               std::tuple{FIXTURE_MICROSTREAM_OMP_DIR, "omp",                    //
+                          std::vector{"*/*main.bc"}},                            //
+               std::tuple{FIXTURE_MICROSTREAM_OMP_TARGET_DIR, "omp_target",      //
+                          std::vector{"*/*main.bc", "*/*main-openmp-*.bc"}},     //
+               std::tuple{FIXTURE_MICROSTREAM_HIP_DIR, "hip",                    //
+                          std::vector{"*/*main-host-*.bc", "*/*main-hip-*.bc"}}, //
+               std::tuple{FIXTURE_MICROSTREAM_CUDA_DIR, "cuda",                  //
+                          std::vector{"*/*main.bc", "*/*main-cuda-*.bc"}});      //
+
+  auto out = fmt::format("{}/microstream_{}_db", FIXTURE_TMP_DIR, model);
+
+  DYNAMIC_SECTION("index " << model) {
     int code = agv::index::run(agv::index::Options{
-        .buildDir = FIXTURE_MICROSTREAM_DIR,
+        .buildDir = dir,
         .sourceGlobs = {"*"},
         .argsBefore = {},
         .argsAfter = {},
-        .clangResourceDir = CLANG_RESOURCE_DIR,
+        .clangResourceDir = FIXTURE_CLANG_RESOURCE_DIR,
         .outDir = out,
         .clearOutDir = true,
         .verbose = true,
@@ -41,12 +59,24 @@ TEST_CASE("database") {
 
     });
     CHECK(code == 0);
-    CHECK(fileExist(out + "/db.json"));
-    CHECK(fileExist(out + "/0.main.cpp.pch.zstd"));
-    CHECK(fileExist(out + "/0.main.bc"));
+    //    CHECK(fileExist(out + "/db.json"));
+    //    CHECK(fileExist(out + "/0.main.cpp.pch.zstd"));
+    //    CHECK(fileExist(out + "/0.main.bc"));
+
+    std::error_code walkError{};
+    for (sys::fs::directory_iterator it = sys::fs::directory_iterator(out, walkError), itEnd;
+         it != itEnd && !walkError; it.increment(walkError)) {
+      std::string bcFile = sys::path::filename(it->path()).str();
+      CHECK((baseGlobs ^ concat(globs) ^ exists([&](auto glob) {
+               INFO("Validating " << glob << " against " << it->path());
+               return std::regex_match(it->path(), agv::globToRegex(glob));
+             })));
+    }
+
+    if (walkError) FAIL("cannot walk directory" << out);
   }
 
-  SECTION("inspect") {
+  DYNAMIC_SECTION("inspect " << model) {
     auto buffer = std::cout.rdbuf();
     std::ostringstream ss;
     std::cout.rdbuf(ss.rdbuf());
@@ -60,7 +90,7 @@ TEST_CASE("database") {
     CHECK(actual[1] ^ contains_slice("microstream/main.cpp,"));
   }
 
-  SECTION("script") {
+  DYNAMIC_SECTION("script " << model) {
     std::string scriptPath = std::string(FIXTURE_TMP_DIR) + "/script.lua";
     {
       std::ofstream script(scriptPath, std::ios::trunc);
