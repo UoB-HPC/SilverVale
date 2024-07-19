@@ -11,7 +11,8 @@
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
 
-#include "agv/tree.h"
+#include "agv/semantic_ts.h"
+#include "agv/semantic_llvm.h"
 
 using namespace clang;
 using namespace clang::tooling;

@@ -208,26 +208,51 @@ sol::usertype<C> bindSolUT(sol::state &s, const char *name, Args... args) {
 
 } // namespace agv::lua
 
+#ifdef SOL_UT_FN0
+  #undef SOL_UT_FN0
+#endif
+#ifdef SOL_UT_FN
+  #undef SOL_UT_FN
+#endif
+#ifdef SOL_UT_FN_ACC
+  #undef SOL_UT_FN_ACC
+#endif
+#ifdef SOL_UT_RO
+  #undef SOL_UT_RO
+#endif
+#ifdef DEF_SOL_UT_ACCESSOR
+  #undef DEF_SOL_UT_ACCESSOR
+#endif
+#ifdef DEF_TEAL
+  #undef DEF_TEAL
+#endif
+#ifdef DEF_SOL_UT
+  #undef DEF_SOL_UT
+#endif
+#ifdef DEF_TEAL_SOL_UT
+  #undef DEF_TEAL_SOL_UT
+#endif
+
 #define SOL_UT_FN0(Class, name, tpe)                                                               \
   std::tuple { #name, (tpe) & Class::name, (tpe) & Class::name }
 #define SOL_UT_FN(Class, name)                                                                     \
   std::tuple { #name, &Class::name, &Class::name }
-#define SOL_UT_FN_ACC(Class, name)                                                                     \
+#define SOL_UT_FN_ACC(Class, name)                                                                 \
   std::tuple { #name, &Class::name##_, &Class::name##_ }
 #define SOL_UT_RO(Class, name)                                                                     \
   std::tuple { #name, &Class::name, sol::readonly(&Class::name) }
 
-#define DEF_SOL_UT_ACCESSOR(field) \
-  sol::as_table_t<decltype(field)> field##_() const{ return field; }
+#define DEF_SOL_UT_ACCESSOR(field)                                                                 \
+  sol::as_table_t<decltype(field)> field##_() const { return field; }
 
 #define DEF_TEAL(Class, ...)                                                                       \
-  static void bindTeal(agv::lua::TealTypeState &state) {                                          \
-    ::agv::lua::bindTeal<Class>(state, #Class, __VA_ARGS__);                                      \
+  static void bindTeal(agv::lua::TealTypeState &state) {                                           \
+    ::agv::lua::bindTeal<Class>(state, #Class, __VA_ARGS__);                                       \
   }
 
 #define DEF_SOL_UT(Class, ...)                                                                     \
   static sol::usertype<Class> bindSolUT(sol::state &lua) {                                         \
-    return ::agv::lua::bindSolUT<Class>(lua, #Class, __VA_ARGS__);                                \
+    return ::agv::lua::bindSolUT<Class>(lua, #Class, __VA_ARGS__);                                 \
   }
 
 #define DEF_TEAL_SOL_UT(Class, ...)                                                                \

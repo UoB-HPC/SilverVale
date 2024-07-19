@@ -3,8 +3,10 @@
 
 #include "agv/cli.h"
 #include "agv/compress.h"
-#include "agv/database.h"
+#include "agv/model.h"
 #include "agv/par.h"
+#include "agv/semantic_llvm.h"
+#include "agv/semantic_ts.h"
 
 #include "clang/Frontend/ASTUnit.h"
 #include "clang/Frontend/CompilerInstance.h"
@@ -13,11 +15,12 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 
+#include "tree_sitter_cpp/api.h"
+
 #include "aspartame/map.hpp"
 #include "aspartame/set.hpp"
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
-#include "tree_sitter_cpp/api.h"
 
 using namespace aspartame;
 using namespace clang;
@@ -140,7 +143,7 @@ agv::Tree agv::Tree::combine(const std::string &rootName, const std::vector<Tree
 }
 std::string agv::Tree::prettyPrint() const {
   std::stringstream ss;
-  root.print([](auto &x) { return x; }, ss);
+  root.print(ss);
   return ss.str();
 }
 agv::Tree agv::Tree::leaf(const std::string &rootName) {
@@ -209,13 +212,14 @@ agv::Database agv::Database::fromJsonFile(const std::string &file) {
   s.exceptions(std::ios::failbit | std::ios::badbit);
   return agv::Database::fromJsonStream(s);
 }
-agv::Codebase agv::Database::load(std::ostream &out,                     //
+agv::Codebase agv::Codebase::load(const Database &db,                    //
+                                  std::ostream &out,                     //
                                   bool normalise,                        //
                                   const std::string &path,               //
                                   const std::vector<std::string> &roots, //
-                                  const std::function<bool(const std::string &)> &predicate) const {
+                                  const std::function<bool(const std::string &)> &predicate) {
 
-  Context ctx(*this, path);
+  Context ctx(db, path);
 
   auto selected = ctx.units | keys() | filter(predicate) | to_vector();
 
@@ -282,30 +286,6 @@ std::ostream &operator<<(std::ostream &os, const Range &range) {
             << ".start=" << range.startByte << ", " //
             << ".end=" << range.endByte             //
             << "}";
-}
-std::ostream &operator<<(std::ostream &os, const Database::Entry &entry) {
-  return os << "agv::Database::Entry{"                                                           //
-            << ".pchName=" << entry.pchName << ", "                                              //
-            << ".compileCommands=" << (entry.compileCommands | mk_string("{", ",", "}")) << ", " //
-            << ".dependencies=(" << entry.dependencies.size() << ")" << ", "                     //
-            << ".bitcodes=" << (entry.bitcodes | mk_string("{", ",", "}"))                       //
-            << "}";
-}
-std::ostream &operator<<(std::ostream &os, const Database::Bitcode &bitcode) {
-  return os << "agv::Database::Bitcode{"        //
-            << ".name=" << bitcode.name << ", " //
-            << ".kind=" << bitcode.kind << ", " //
-            << ".triple=" << bitcode.triple     //
-            << "}";
-}
-std::ostream &operator<<(std::ostream &os, const Database &database) {
-  os << "agv::Database{"; //
-  for (auto &[k, v] : database.attributes)
-    os << ".`" << k << "`=" << v << ", ";
-  os << ".entries=" << (database.entries | values() | mk_string("{", ",", "}")) << ", " //
-     << ".dependencies=(" << database.dependencies.size() << ")"                        //
-     << "}";
-  return os;
 }
 
 std::ostream &operator<<(std::ostream &os, const Codebase &codebase) {

@@ -1,10 +1,10 @@
 #include <iostream>
 
+#include "agv/cli.h"
+#include "agv/model.h"
+#include "agv/tool_inspect.h"
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
-#include "agv/cli.h"
-#include "agv/database.h"
-#include "agv/tool_inspect.h"
 #include "llvm/Support/MemoryBuffer.h"
 
 using namespace aspartame;

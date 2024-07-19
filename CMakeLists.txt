@@ -6,6 +6,7 @@ set(CMAKE_C_STANDARD 11)
 
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 include(FetchContent)
 
@@ -157,7 +158,6 @@ target_compile_definitions(lua PUBLIC LUA_USE_LINUX LUA_COMPAT_5_3)
 
 # =====================
 
-
 list(APPEND AGV_COMPILE_DEBUG_FLAGS -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
 list(APPEND AGV_COMPILE_RELEASE_FLAGS -O3 -march=native)
 list(APPEND AGV_LINK_DEBUG_FLAGS -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
@@ -169,7 +169,6 @@ list(APPEND AGV_COMPILE_FLAGS
         -Wextra
         -Werror=return-type
         -Werror=switch
-        #        -Wthread-safety
         -Wcast-align
         -Wno-type-limits
 
@@ -181,14 +180,15 @@ list(APPEND AGV_COMPILE_FLAGS
 list(APPEND AGV_LINK_FLAGS "$<$<CONFIG:Debug>:${AGV_LINK_DEBUG_FLAGS}>")
 
 add_library(AGV
-        src/tree.cpp
+        src/semantic_llvm.cpp
+        src/semantic_ts.cpp
         src/tool_script.cpp
         src/tool_delta.cpp
         src/tool_index.cpp
         src/tool_inspect.cpp
         src/diff.cpp
         src/cli.cpp
-        src/database.cpp
+        src/model.cpp
         src/compress.cpp
         src/glob.cpp)
 target_include_directories(AGV PRIVATE include ${json_SOURCE_DIR} ${simplecpp_SOURCE_DIR})
@@ -334,3 +334,4 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/fixture.h.in" "${config_template}")
 configure_file("${CMAKE_CURRENT_BINARY_DIR}/fixture.h.in" ${CMAKE_CURRENT_BINARY_DIR}/fixture.h @ONLY)
 target_include_directories(tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 
+add_subdirectory(uproot_gcc)

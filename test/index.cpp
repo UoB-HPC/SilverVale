@@ -104,7 +104,7 @@ local n = 0
 for _ in pairs(db:entries()) do n = n + 1 end
 print(n)
 
-local cb = db:load(true, arg[1], {}, function(s) return true end)
+local cb = Codebase.load(db, true, arg[1], {}, function(s) return true end)
 print(cb:units()[1]:name())
 print(Diff.apted(cb:units()[1]:sTree(), cb:units()[1]:sTree()))
 )";

@@ -2,8 +2,8 @@
 
 #include <string>
 
-#include "database.h"
 #include "lua.h"
+#include "model.h"
 
 namespace agv {
 struct Diff {

@@ -6,8 +6,8 @@
 
 #include "agv/cli.h"
 #include "agv/compress.h"
-#include "agv/database.h"
 #include "agv/glob.h"
+#include "agv/model.h"
 #include "agv/par.h"
 #include "agv/tool_index.h"
 
@@ -272,7 +272,7 @@ struct Task {
   std::error_code error;
   std::shared_ptr<raw_ostream> stream;
   struct Result {
-    std::string sourceName;
+    CompileCommand cmd;
     std::optional<std::string> pchName;
     std::vector<agv::Database::Bitcode> bitcodes;
     std::map<std::string, std::string> dependencies;
@@ -333,7 +333,7 @@ static Task::Result runCompileJobs(bool verbose, Task &task, const std::string &
   });
 
   Task::Result result{
-      .sourceName = task.cmd.Filename,
+      .cmd = task.cmd,
       .pchName = sys::path::filename(task.pchFile).str(),
       .bitcodes = {},
       .dependencies = {},
@@ -446,7 +446,7 @@ static std::vector<Task::Result> runIndexTasks(const std::vector<CompileCommand>
   success.clear(); // drop the streams so the file can close
 
   for (auto &t : failed)
-    results.emplace_back(Task::Result{.sourceName = t.cmd.Filename,
+    results.emplace_back(Task::Result{.cmd = t.cmd,
                                       .pchName = {},
                                       .bitcodes = {},
                                       .dependencies = {},
@@ -630,11 +630,8 @@ int agv::index::run(const agv::index::Options &options) {
       results | collect([&](auto &result) {
         return result.pchName ^ map([&](auto name) {
                  return std::pair{
-                     result.sourceName,
-                     Database::Entry{.compileCommands = db->getCompileCommands(result.sourceName) ^
-                                                        map([](auto &cc) {
-                                                          return cc.CommandLine ^ mk_string(" ");
-                                                        }),
+                     result.cmd.Filename,
+                     Database::Entry{.compileCommand = result.cmd.CommandLine ^ mk_string(" "),
                                      .pchName = name,
                                      .bitcodes = result.bitcodes,
                                      .dependencies = result.dependencies

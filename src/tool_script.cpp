@@ -3,9 +3,9 @@
 #include <utility>
 
 #include "agv/cli.h"
-#include "agv/database.h"
 #include "agv/diff.h"
 #include "agv/lua.h"
+#include "agv/model.h"
 #include "agv/par.h"
 #include "agv/tool_script.h"
 

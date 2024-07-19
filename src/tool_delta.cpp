@@ -4,9 +4,9 @@
 #include <utility>
 
 #include "agv/cli.h"
-#include "agv/database.h"
 #include "agv/diff.h"
 #include "agv/glob.h"
+#include "agv/model.h"
 #include "agv/par.h"
 #include "agv/tool_delta.h"
 
@@ -247,7 +247,7 @@ int delta::run(const delta::Options &options) {
     auto dbFile = spec.path + "/db.json";
     const auto db = Database::fromJsonFile(dbFile);
     const auto excludes = options.excludes ^ map([](auto &f) { return globToRegex(f.glob); });
-    const auto cb = db.load(std::cout, true, spec.path, {}, [&](auto &path) {
+    const auto cb = Codebase::load(db, std::cout, true, spec.path, {}, [&](auto &path) {
       return excludes ^ forall([&](auto &r) { return !std::regex_match(path, r); });
     });
     const auto merges =

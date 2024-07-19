@@ -1,17 +1,11 @@
 #pragma once
-
 #include <iosfwd>
-#include <set>
+#include <stack>
 #include <string>
 #include <type_traits>
 #include <vector>
 
-#include "aspartame/view.hpp"
 #include "json.hpp"
-#include "tree_sitter/api.h"
-#include "clang/AST/RecursiveASTVisitor.h"
-#include "clang/Frontend/ASTUnit.h"
-#include "llvm/IR/Module.h"
 
 namespace agv {
 
@@ -22,29 +16,10 @@ Arg arg0_helper(Ret (F::*)(Arg, Rest...));
 template <typename Ret, typename F, typename Arg, typename... Rest>
 Arg arg0_helper(Ret (F::*)(Arg, Rest...) const);
 template <typename F> decltype(arg0_helper(&F::operator())) arg0_helper(F);
-template <typename T> using arg0_t = decltype(arg0_helper(std::declval<T>()));
-template <typename T, typename Node, typename... Fs> std::optional<T> visitDyn(Node n, Fs... fs) {
-  std::optional<T> result{};
-  [[maybe_unused]] auto _ = {[&]() {
-    if (!result) {
-      if (auto x = llvm::dyn_cast<std::remove_pointer_t<arg0_t<Fs>>>(n)) { result = T(fs(x)); }
-    }
-    return 0;
-  }()...};
-  return result;
-}
-template <typename Node, typename... Fs> void visitDyn0(Node n, Fs... fs) {
-  [[maybe_unused]] auto _ = ([&]() -> bool {
-    if (auto x = llvm::dyn_cast<std::remove_pointer_t<arg0_t<Fs>>>(n)) {
-      fs(x);
-      return true;
-    }
-    return false;
-  }() || ...);
-}
+
 } // namespace
 
-std::vector<clang::Decl *> topLevelDeclsInMainFile(clang::ASTUnit &unit);
+template <typename T> using arg0_t = decltype(arg0_helper(std::declval<T>()));
 
 template <typename N>
 void printTree(const N &node,                                                  //
@@ -109,10 +84,14 @@ template <typename T> struct SemanticTree {
 
   NLOHMANN_DEFINE_TYPE_INTRUSIVE(SemanticTree<T>, value, children);
 
-  template <typename Show> void print(Show show, std::ostream &out) const {
+  template <typename Show> void print(std::ostream &out, Show show) const {
     printTree<SemanticTree>(
         *this, out, [&](const SemanticTree<T> &n) { return show(n.value); },
         [&](const SemanticTree<T> &n) { return n.children; });
+  }
+
+  void print(std::ostream &out) const {
+    print(out, [](auto x) { return x; });
   }
 
   [[nodiscard]] bool operator!=(const SemanticTree<T> &rhs) const { return !rhs.operator==(*this); }
@@ -131,10 +110,18 @@ template <typename T> struct SemanticTree {
   }
 
   template <typename U, typename Alloc, typename Insert>
-  U traverse(Alloc alloc, Insert insert, int depth = 0) const {
+  U traverse(Alloc alloc, Insert insert) const {
     U n = alloc(value);
     for (const auto &child : children) {
-      insert(n, std::move(child.template traverse<U, Alloc, Insert>(alloc, insert, depth + 1)));
+      insert(n, std::move(child.template traverse<U, Alloc, Insert>(alloc, insert)));
+    }
+    return n;
+  }
+
+  template <typename U, typename F> SemanticTree<U> map(F f) const {
+    SemanticTree<U> n(f(value), std::vector<SemanticTree<U>>(children.size()));
+    for (size_t i = 0; i < children.size(); ++i) {
+      n.children[i] = children[i].template map<U>(f);
     }
     return n;
   }
@@ -177,113 +164,6 @@ protected:
   }
 
   explicit SemanticTreeVisitor(SemanticTree<T> *root) : node(root) {}
-};
-
-class LLVMIRTreeVisitor : private SemanticTreeVisitor<std::string, void> {
-  bool normaliseName;
-  [[nodiscard]] std::string named(const std::string &kind, const std::string &name) const;
-  void walk(const llvm::Value *fn);
-
-public:
-  LLVMIRTreeVisitor(SemanticTree<std::string> *root, const llvm::Module &module,
-                    bool normaliseName);
-};
-
-class ClangASTSemanticTreeVisitor : private SemanticTreeVisitor<std::string, bool>,
-                                    public clang::RecursiveASTVisitor<ClangASTSemanticTreeVisitor> {
-
-public:
-  struct Option {
-    bool inlineCalls;
-    bool normaliseVarName;
-    bool normaliseFnName;
-    std::vector<std::string> roots;
-  };
-
-private:
-  clang::ASTContext &Context;
-  Option option;
-
-public:
-  ClangASTSemanticTreeVisitor(SemanticTree<std::string> *root, clang::ASTContext &Context,
-                              Option option);
-  bool TraverseDecl(clang::Decl *decl);
-  bool TraverseStmt(clang::Stmt *stmt);
-};
-
-struct TsTree {
-
-  struct Range {
-    uint32_t startByte, endByte;
-    [[nodiscard]] std::string extract(const std::string &s) const {
-      if (startByte > endByte || startByte >= s.size()) { return ""; }
-      return s.substr(startByte, std::min(endByte, static_cast<uint32_t>(s.size())) - startByte);
-    }
-
-    bool operator<(const Range &that) const {
-      return startByte == that.startByte ? endByte < that.endByte : startByte < that.startByte;
-    }
-  };
-
-  std::string source;
-  std::shared_ptr<TSParser> parser;
-  std::shared_ptr<TSTree> tree;
-  TsTree();
-  TsTree(const std::string &source, const TSLanguage *lang);
-  [[nodiscard]] TSNode root() const;
-  [[nodiscard]] TsTree deleteNodes(const std::string &type,
-                                   const std::optional<TSNode> &node = {}) const;
-
-  [[nodiscard]] TsTree normaliseNewLines(const std::optional<TSNode> &node = {}) const;
-  [[nodiscard]] TsTree normaliseWhitespaces(uint32_t maxWS = 1, const std::optional<TSNode> &node = {}) const;
-
-
-  [[nodiscard]] std::set<uint32_t> slocLines(const std::optional<TSNode> &node = {}) const;
-  [[nodiscard]] std::set<std::pair<uint32_t, uint32_t>>
-  llocRanges(const std::optional<TSNode> &node = {}) const;
-
-  [[nodiscard]] size_t sloc(const std::optional<TSNode> &node = {}) const;
-  [[nodiscard]] size_t lloc(const std::optional<TSNode> &node = {}) const;
-
-  template <typename F> void walk(F f, const std::optional<TSNode> &node = {}) const {
-    static_assert(std::is_same_v<std::invoke_result_t<F, const TSNode &>, bool>);
-    if (!node) walk<F>(f, root());
-    else if (f(*node)) {
-      for (uint32_t i = 0; i < ts_node_child_count(*node); ++i) {
-        if (auto child = ts_node_child(*node, i); ts_node_is_named(child)) { walk(f, child); }
-      }
-    }
-  }
-
-  template <typename U, typename Alloc, typename Insert>
-  U traverse(Alloc alloc, Insert insert, int depth = 0,
-             const std::optional<TSNode> &node = {}) const {
-    if (!node) return traverse<U, Alloc, Insert>(alloc, insert, depth, root());
-    else {
-      U n = alloc(std::string(ts_node_type(*node)));
-      for (uint32_t i = 0; i < ts_node_child_count(*node); ++i) {
-        if (auto child = ts_node_child(*node, i); ts_node_is_named(child)) {
-          insert(n, std::move(traverse<U, Alloc, Insert>(alloc, insert, depth + 1, child)));
-        }
-      }
-      return n;
-    }
-  }
-
-  template <typename Show>
-  void print(Show show, std::ostream &out, const std::optional<TSNode> &node = {}) const {
-    using namespace aspartame;
-    printTree<TSNode>(
-        node.value_or(root()), out, //
-        [&](const TSNode &n) { return show(n); },
-        [&](const TSNode &n) {
-          return iota<uint32_t>(0, ts_node_child_count(n))              //
-                 | map([&](uint32_t i) { return ts_node_child(n, i); }) //
-                 | filter([&](auto &n) { return ts_node_is_named(n); }) //
-                 | to_vector();
-        });
-  }
-
 };
 
 } // namespace agv

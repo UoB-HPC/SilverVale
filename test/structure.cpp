@@ -4,17 +4,16 @@
 
 #include "catch2/catch_test_macros.hpp"
 
+#include "agv/model.h"
 #include "agv/tool_index.h"
 #include "agv/tool_inspect.h"
 #include "agv/tool_script.h"
-#include "agv/database.h"
 #include "fixture.h"
 
 #include "aspartame/string.hpp"
 #include "aspartame/vector.hpp"
 
 using namespace aspartame;
-
 
 TEST_CASE("structure") {
   auto out = std::string(FIXTURE_TMP_DIR) + "/dummy_db";
@@ -34,18 +33,12 @@ TEST_CASE("structure") {
   });
   REQUIRE(code == 0);
 
-
-  auto db = agv::Database::fromJsonFile(out+"/db.json");
-  auto cb = db.load(std::cout, false, out, {}, [](auto &) {return true;});
+  auto db = agv::Database::fromJsonFile(out + "/db.json");
+  auto cb = agv::Codebase::load(db, std::cout, false, out, {}, [](auto &) { return true; });
 
   REQUIRE(cb.units.size() == 1);
 
   auto main = cb.units[0];
 
-  std::cout <<
-  main->irTree().prettyPrint() <<std::endl;
-
-
-
-
+  std::cout << main->irTree().prettyPrint() << std::endl;
 }
