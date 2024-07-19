@@ -34,9 +34,9 @@ class Context {
 
   static EntryType mkEntry(llvm::LLVMContext &llvmContext,          //
                            std::vector<std::vector<char>> &storage, //
-                           const agv::Database &db,                 //
+                           const agv::ClangDatabase &db,                 //
                            const std::string &baseDir,              //
-                           const agv::Database::Entry &tu) {
+                           const agv::ClangDatabase::Entry &tu) {
     auto modules =
         tu.bitcodes |
         collect([&](auto &entry)
@@ -85,20 +85,26 @@ class Context {
       }
     }
 
+
+
     auto opt = std::make_shared<clang::HeaderSearchOptions>();
     auto ast = ASTUnit::LoadFromASTFile(pchFile,                          //
                                         clang::RawPCHContainerReader(),   //
                                         ASTUnit::WhatToLoad::LoadASTOnly, //
                                         diagnostics,                      //
                                         clang::FileSystemOptions(""),     //
-                                        opt, false, true, CaptureDiagsKind::None, true, true, vfs);
+                                        opt, false,
+#if  LLVM_VERSION_MAJOR < 18
+                                        true,
+#endif
+                                        CaptureDiagsKind::None, true, true, vfs);
 
     return {std::move(ast), modules};
   }
 
 public:
   std::map<std::string, EntryType> units;
-  explicit Context(const agv::Database &db, const std::string &baseDir)
+  explicit Context(const agv::ClangDatabase &db, const std::string &baseDir)
       : context(), units(db.entries ^ map_values([&](auto &tu) {
                            return mkEntry(context, astBackingBuffer, db, baseDir, tu);
                          })) {}
@@ -195,24 +201,31 @@ agv::Source agv::Unit::source(bool normalise) const {
 }
 
 // === Database ===
-agv::Database agv::Database::fromJsonString(const std::string &json) {
-  agv::Database database;
+agv::ClangDatabase agv::Databases::clangDBFromJsonString(const std::string &json) {
+  agv::ClangDatabase database;
   nlohmann::json dbJson = nlohmann::json::parse(json);
   nlohmann::from_json(dbJson, database);
   return database;
 }
-agv::Database agv::Database::fromJsonStream(std::ifstream &stream) {
-  agv::Database database;
+agv::ClangDatabase agv::Databases::clangDBFromJsonStream(std::ifstream &stream) {
+  agv::ClangDatabase database;
   nlohmann::json dbJson = nlohmann::json::parse(stream);
   nlohmann::from_json(dbJson, database);
   return database;
 }
-agv::Database agv::Database::fromJsonFile(const std::string &file) {
+agv::ClangDatabase agv::Databases::clangDBFromJsonFile(const std::string &file) {
   std::ifstream s(file);
   s.exceptions(std::ios::failbit | std::ios::badbit);
-  return agv::Database::fromJsonStream(s);
+  return agv::Databases::clangDBFromJsonStream(s);
 }
-agv::Codebase agv::Codebase::load(const Database &db,                    //
+
+agv::FlatDatabase agv::Databases::flatDBFromDir(const std::string &dir) {
+  return {};
+
+}
+
+
+agv::Codebase agv::Codebase::load(const ClangDatabase &db,                    //
                                   std::ostream &out,                     //
                                   bool normalise,                        //
                                   const std::string &path,               //

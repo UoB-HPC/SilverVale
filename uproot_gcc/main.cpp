@@ -579,10 +579,11 @@ std::string createEArgs(const std::string &pluginName, const std::vector<std::st
         entry.preprocessed = preprocessed.str();
         std::cout << "# [uproot] Collected preprocessed source " << std::endl;
 
+        auto after = std::getenv("UPROOT_AFTER_PASS");
         const auto pass = new GimpleUprootPass(g, entry, dest);
         register_pass_info info{
             .pass = pass,
-            .reference_pass_name = "optimized",
+            .reference_pass_name = after ? after : "optimized",
             .ref_pass_instance_number = 1,
             .pos_op = PASS_POS_INSERT_AFTER,
         };

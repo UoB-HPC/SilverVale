@@ -26,21 +26,34 @@ static bool fileExist(const std::string &file) {
   return infile.good();
 }
 
-TEST_CASE("database") {
+TEST_CASE("clang-database") {
 
   auto baseGlobs = std::vector<std::string>{"*/db.json", "*/*main.cpp.pch.zstd"};
 
   auto [dir, model, globs] =
-      GENERATE(std::tuple{FIXTURE_MICROSTREAM_SERIAL_DIR, "serial",              //
-                          std::vector{"*/*main.bc"}},                            //
-               std::tuple{FIXTURE_MICROSTREAM_OMP_DIR, "omp",                    //
-                          std::vector{"*/*main.bc"}},                            //
-               std::tuple{FIXTURE_MICROSTREAM_OMP_TARGET_DIR, "omp_target",      //
-                          std::vector{"*/*main.bc", "*/*main-openmp-*.bc"}},     //
-               std::tuple{FIXTURE_MICROSTREAM_HIP_DIR, "hip",                    //
-                          std::vector{"*/*main-host-*.bc", "*/*main-hip-*.bc"}}, //
-               std::tuple{FIXTURE_MICROSTREAM_CUDA_DIR, "cuda",                  //
-                          std::vector{"*/*main.bc", "*/*main-cuda-*.bc"}});      //
+      GENERATE(std::tuple{FIXTURE_MICROSTREAM_CLANG_SERIAL_DIR, "serial", //
+                          std::vector{"*/*main.bc"}}                      //
+#ifdef FIXTURE_MICROSTREAM_CLANG_OMP_DIR
+               ,
+               std::tuple{FIXTURE_MICROSTREAM_CLANG_OMP_DIR, "omp", //
+                          std::vector{"*/*main.bc"}}                //
+#endif
+#ifdef FIXTURE_MICROSTREAM_CLANG_OMP_TARGET_DIR
+               ,
+               std::tuple{FIXTURE_MICROSTREAM_CLANG_OMP_TARGET_DIR, "omp_target", //
+                          std::vector{"*/*main.bc", "*/*main-openmp-*.bc"}}       //
+#endif
+#ifdef FIXTURE_MICROSTREAM_CLANG_HIP_DIR
+               ,
+               std::tuple{FIXTURE_MICROSTREAM_CLANG_HIP_DIR, "hip",             //
+                          std::vector{"*/*main-host-*.bc", "*/*main-hip-*.bc"}} //
+#endif
+#ifdef FIXTURE_MICROSTREAM_CLANG_CUDA_DIR
+               ,
+               std::tuple{FIXTURE_MICROSTREAM_CLANG_CUDA_DIR, "cuda", //
+                          std::vector{"*/*main.bc", "*/*main-cuda-*.bc"}}
+#endif
+      ); //
 
   auto out = fmt::format("{}/microstream_{}_db", FIXTURE_TMP_DIR, model);
 
@@ -98,7 +111,7 @@ TEST_CASE("database") {
       script << R"(
 print(#arg)
 print(arg[1])
-local db = Database.fromJsonFile(arg[1] .. "/db.json")
+local db = Databases.clangDBFromJsonFile(arg[1] .. "/db.json")
 
 local n = 0
 for _ in pairs(db:entries()) do n = n + 1 end

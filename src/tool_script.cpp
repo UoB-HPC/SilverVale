@@ -61,27 +61,30 @@ static Expected<agv::script::Options> parseOpts(int argc, const char **argv) {
   if (auto e = agv::parseCategory(category, argc, argv); e) return std::move(*e);
 
   return agv::script::Options{.roots = roots | to_vector(),
-                               .defs = defs.getValue(),
-                               .noBuffer = noBuffer.getValue(),
-                               .maxThreads = maxThreads,
-                               .args = args | to_vector()};
+                              .defs = defs.getValue(),
+                              .noBuffer = noBuffer.getValue(),
+                              .maxThreads = maxThreads,
+                              .args = args | to_vector()};
 }
 
 int agv::script::main(int argc, const char **argv) {
   return agv::parseAndRun(argc, argv, &parseOpts, &run);
 }
 
-constexpr agv::lua::TypeList<  //
-    agv::Database,             //
-    agv::Database::Entry,      //
-    agv::Database::Bitcode,    //
-    agv::Database::Dependency, //
-    agv::Tree,                 //
-    agv::Source,               //
-    agv::Unit,                 //
-    agv::Codebase,             //
-    agv::Diff,                 //
-    agv::Glob                  //
+constexpr agv::lua::TypeList<       //
+    agv::FlatDatabase,              //
+    agv::FlatDatabase::Entry,       //
+    agv::ClangDatabase,             //
+    agv::ClangDatabase::Entry,      //
+    agv::ClangDatabase::Bitcode,    //
+    agv::ClangDatabase::Dependency, //
+    agv::Tree,                      //
+    agv::Source,                    //
+    agv::Unit,                      //
+    agv::Codebase,                  //
+    agv::Databases,                 //
+    agv::Diff,                      //
+    agv::Glob                       //
     >
     Types;
 

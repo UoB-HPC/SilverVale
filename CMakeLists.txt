@@ -267,7 +267,7 @@ add_executable(tests test/tree.cpp test/index.cpp test/structure.cpp)
 target_link_libraries(tests PRIVATE Catch2::Catch2WithMain)
 set_target_properties(driver PROPERTIES OUTPUT_NAME "agv")
 foreach (target driver tests)
-    target_link_libraries(${target} PRIVATE AGV Aspartame::Aspartame sol2 fmt::fmt)
+    target_link_libraries(${target} PRIVATE AGV Aspartame::Aspartame sol2 lua fmt::fmt)
     target_include_directories(${target} PRIVATE include ${json_SOURCE_DIR} ${fmt_SOURCE_DIR}/include)
     target_compile_options(${target} PRIVATE ${AGV_COMPILE_FLAGS})
     target_link_options(${target} PRIVATE ${AGV_LINK_FLAGS})
@@ -290,15 +290,16 @@ else ()
 endif ()
 
 
-function(setup_fixture name suffix)
-    set(fixture_name "${name}_${suffix}")
+function(setup_fixture name cc cxx suffix)
+    set(fixture_name "${name}_${cc}_${suffix}")
     string(TOUPPER ${fixture_name} fixture_name_upper)
+    message(STATUS "Adding fixture ${fixture_name}")
     set(build_dir "${CMAKE_BINARY_DIR}/${fixture_name}_build")
     set(FIXTURE_${fixture_name_upper}_DIR "${build_dir}" PARENT_SCOPE)
     add_custom_command(
             TARGET tests
             PRE_BUILD
-            COMMAND ${CMAKE_COMMAND} -E env CC=clang CXX=clang++ ${CMAKE_COMMAND}
+            COMMAND ${CMAKE_COMMAND} -E env CC=${cc} CXX=${cxx} ${CMAKE_COMMAND}
             -S "${CMAKE_SOURCE_DIR}/test/fixture/${name}"
             -B "${build_dir}"
             ${ARGN}
@@ -313,14 +314,20 @@ function(setup_fixture name suffix)
     )
 endfunction()
 
-setup_fixture(dummy "")
-setup_fixture(microstream serial -DUSE_SERIAL=ON)
-setup_fixture(microstream omp -DUSE_OMP=ON)
-setup_fixture(microstream omp_target -DUSE_OMP_TARGET=sm_60)
-setup_fixture(microstream cuda -DUSE_CUDA=sm_60 -DCMAKE_CUDA_COMPILER=clang++)
-setup_fixture(microstream hip -DUSE_HIP=gfx1036)
-set(FIXTURE_TMP_DIR ${CMAKE_CURRENT_BINARY_DIR})
 
+setup_fixture(dummy clang clang++ "")
+setup_fixture(dummy gcc g++ "")
+
+setup_fixture(microstream clang clang++ serial -DUSE_SERIAL=ON)
+setup_fixture(microstream gcc g++ serial -DUSE_SERIAL=ON)
+
+setup_fixture(microstream clang clang++ omp -DUSE_OMP=ON)
+setup_fixture(microstream gcc g++ omp -DUSE_OMP=ON)
+
+setup_fixture(microstream clang clang++ omp_target -DUSE_OMP_TARGET=sm_60)
+setup_fixture(microstream clang clang++ cuda -DUSE_CUDA=sm_60 -DCMAKE_CUDA_COMPILER=clang++)
+setup_fixture(microstream clang clang++ hip -DUSE_HIP=gfx1036)
+set(FIXTURE_TMP_DIR ${CMAKE_CURRENT_BINARY_DIR})
 
 
 set(config_template "#pragma once\n")

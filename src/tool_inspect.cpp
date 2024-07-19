@@ -40,7 +40,7 @@ int agv::inspect::run(const Options &options) {
     std::cerr << "Cannot read file " << dbDile << ": " << e.message() << std::endl;
     return e.value();
   }
-  auto database = Database::fromJsonString((*buffer)->getBuffer().str());
+  auto database = Databases::clangDBFromJsonString((*buffer)->getBuffer().str());
   switch (options.kind) {
     case Kind::Entry:
       std::cout << "entry,deps\n";

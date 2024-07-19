@@ -245,7 +245,7 @@ int delta::run(const delta::Options &options) {
   std::vector<Model> models(options.databases.size());
   par_for(options.databases, [&](auto &spec, auto idx) {
     auto dbFile = spec.path + "/db.json";
-    const auto db = Database::fromJsonFile(dbFile);
+    const auto db = Databases::clangDBFromJsonFile(dbFile);
     const auto excludes = options.excludes ^ map([](auto &f) { return globToRegex(f.glob); });
     const auto cb = Codebase::load(db, std::cout, true, spec.path, {}, [&](auto &path) {
       return excludes ^ forall([&](auto &r) { return !std::regex_match(path, r); });

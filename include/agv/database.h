@@ -10,15 +10,21 @@
 
 namespace agv {
 
-struct Database {
+struct ClangDatabase {
 
   struct Dependency {
     std::time_t modified{};
     std::string content{};
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(Dependency, modified, content);
-    DEF_TEAL_SOL_UT(Dependency,                      //
-                    SOL_UT_RO(Dependency, modified), //
-                    SOL_UT_RO(Dependency, content));
+
+  private:
+    DEF_SOL_UT_ACCESSOR(modified);
+    DEF_SOL_UT_ACCESSOR(content);
+
+  public:
+    DEF_TEAL_SOL_UT(Dependency,                          //
+                    SOL_UT_FN_ACC(Dependency, modified), //
+                    SOL_UT_FN_ACC(Dependency, content));
   };
 
   struct Bitcode {
@@ -26,11 +32,18 @@ struct Database {
     std::string kind{};
     std::string triple{};
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(Bitcode, name, kind, triple);
-    DEF_TEAL_SOL_UT(Bitcode,                  //
-                    SOL_UT_RO(Bitcode, name), //
-                    SOL_UT_RO(Bitcode, kind), //
-                    SOL_UT_RO(Bitcode, triple));
-    friend std::ostream &operator<<(std::ostream &os, const Database::Bitcode &bitcode) {
+
+  private:
+    DEF_SOL_UT_ACCESSOR(name);
+    DEF_SOL_UT_ACCESSOR(kind);
+    DEF_SOL_UT_ACCESSOR(triple);
+
+  public:
+    DEF_TEAL_SOL_UT(Bitcode,                      //
+                    SOL_UT_FN_ACC(Bitcode, name), //
+                    SOL_UT_FN_ACC(Bitcode, kind), //
+                    SOL_UT_FN_ACC(Bitcode, triple));
+    friend std::ostream &operator<<(std::ostream &os, const ClangDatabase::Bitcode &bitcode) {
       return os << "agv::Database::Bitcode{"        //
                 << ".name=" << bitcode.name << ", " //
                 << ".kind=" << bitcode.kind << ", " //
@@ -47,10 +60,11 @@ struct Database {
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(Entry, compileCommand, pchName, bitcodes, dependencies);
 
   private:
-    DEF_SOL_UT_ACCESSOR(compileCommand)
-    DEF_SOL_UT_ACCESSOR(pchName)
-    DEF_SOL_UT_ACCESSOR(bitcodes)
-    DEF_SOL_UT_ACCESSOR(dependencies)
+    DEF_SOL_UT_ACCESSOR(compileCommand);
+    DEF_SOL_UT_ACCESSOR(pchName);
+    DEF_SOL_UT_ACCESSOR(bitcodes);
+    DEF_SOL_UT_ACCESSOR(dependencies);
+
   public:
     DEF_TEAL_SOL_UT(Entry,                                //
                     SOL_UT_FN_ACC(Entry, compileCommand), //
@@ -58,7 +72,7 @@ struct Database {
                     SOL_UT_FN_ACC(Entry, bitcodes),       //
                     SOL_UT_FN_ACC(Entry, dependencies));
 
-    friend std::ostream &operator<<(std::ostream &os, const Database::Entry &entry) {
+    friend std::ostream &operator<<(std::ostream &os, const ClangDatabase::Entry &entry) {
       os << "agv::Database::Entry{"                                        //
          << ".pchName=" << entry.pchName << ", "                           //
          << ".compileCommands=" << entry.compileCommand << ", "            //
@@ -75,31 +89,24 @@ struct Database {
   std::map<std::string, Entry> entries{};
   std::map<std::string, Dependency> dependencies{};
 
-  // FIXME move to Codebase and add FlatDB versions
-  [[nodiscard]] static Database fromJsonString(const std::string &json);
-  [[nodiscard]] static Database fromJsonStream(std::ifstream &stream);
-  [[nodiscard]] static Database fromJsonFile(const std::string &file);
-
-  NLOHMANN_DEFINE_TYPE_INTRUSIVE(Database,   //
-                                 attributes, //
+  NLOHMANN_DEFINE_TYPE_INTRUSIVE(ClangDatabase, //
+                                 attributes,    //
                                  root, entries, dependencies);
 
 private:
-  DEF_SOL_UT_ACCESSOR(attributes)
-  DEF_SOL_UT_ACCESSOR(root)
-  DEF_SOL_UT_ACCESSOR(entries)
-  DEF_SOL_UT_ACCESSOR(dependencies)
+  DEF_SOL_UT_ACCESSOR(attributes);
+  DEF_SOL_UT_ACCESSOR(root);
+  DEF_SOL_UT_ACCESSOR(entries);
+  DEF_SOL_UT_ACCESSOR(dependencies);
 
 public:
-  DEF_TEAL_SOL_UT(Database,                              //
-                  SOL_UT_FN_ACC(Database, attributes),   //
-                  SOL_UT_FN_ACC(Database, root),         //
-                  SOL_UT_FN_ACC(Database, entries),      //
-                  SOL_UT_FN_ACC(Database, dependencies), //
-                  SOL_UT_FN(Database, fromJsonString),   //
-                  SOL_UT_FN(Database, fromJsonFile));
+  DEF_TEAL_SOL_UT(ClangDatabase,                            //
+                  SOL_UT_FN_ACC(ClangDatabase, attributes), //
+                  SOL_UT_FN_ACC(ClangDatabase, root),       //
+                  SOL_UT_FN_ACC(ClangDatabase, entries),    //
+                  SOL_UT_FN_ACC(ClangDatabase, dependencies));
 
-  friend std::ostream &operator<<(std::ostream &os, const Database &database) {
+  friend std::ostream &operator<<(std::ostream &os, const ClangDatabase &database) {
     os << "agv::Database{"; //
     for (auto &[k, v] : database.attributes)
       os << ".attributes[" << k << "]=" << v << ", ";
@@ -171,6 +178,16 @@ struct FlatDatabase {
       return os;
     }
   };
+
+  std::map<std::string, Entry> entries{};
+
+  NLOHMANN_DEFINE_TYPE_INTRUSIVE(FlatDatabase, entries);
+
+private:
+  DEF_SOL_UT_ACCESSOR(entries);
+
+public:
+  DEF_TEAL_SOL_UT(FlatDatabase, SOL_UT_FN_ACC(FlatDatabase, entries));
 };
 
 } // namespace agv

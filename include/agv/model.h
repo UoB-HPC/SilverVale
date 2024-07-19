@@ -143,26 +143,40 @@ public:
                   SOL_UT_FN_ACC(Codebase, path),                                               //
                   SOL_UT_FN_ACC(Codebase, units),                                              //
                   SOL_UT_FN0(Codebase, load,                                                   //
-                             Codebase (*)(const Database &,                                    //
+                             Codebase (*)(const ClangDatabase &,                               //
                                           bool,                                                //
                                           const std::string &,                                 //
                                           const sol::nested<std::vector<std::string>> &,       //
                                           const std::function<bool(const std::string &)> &))); //
   friend std::ostream &operator<<(std::ostream &os, const Codebase &codebase);
 
-  [[nodiscard]] static Codebase load(const Database &db,                    //
+  [[nodiscard]] static Codebase load(const ClangDatabase &db,               //
                                      std::ostream &out,                     //
                                      bool normalise,                        //
                                      const std::string &path,               //
                                      const std::vector<std::string> &roots, //
                                      const std::function<bool(const std::string &)> &predicate);
-  [[nodiscard]] static Codebase load(const Database &db,                                 //
+  [[nodiscard]] static Codebase load(const ClangDatabase &db,                            //
                                      bool normalise,                                     //
                                      const std::string &path,                            //
                                      const sol::nested<std::vector<std::string>> &roots, //
                                      const std::function<bool(const std::string &)> &predicate) {
     return load(db, std::cout, normalise, path, roots.value(), predicate);
   }
+};
+
+struct Databases {
+  // FIXME move to Codebase and add FlatDB versions
+  [[nodiscard]] static ClangDatabase clangDBFromJsonString(const std::string &json);
+  [[nodiscard]] static ClangDatabase clangDBFromJsonStream(std::ifstream &stream);
+  [[nodiscard]] static ClangDatabase clangDBFromJsonFile(const std::string &file);
+
+  [[nodiscard]] static FlatDatabase flatDBFromDir(const std::string &dir);
+
+  DEF_TEAL_SOL_UT(Databases,                                   //
+                  SOL_UT_FN(Databases, clangDBFromJsonString), //
+                  SOL_UT_FN(Databases, clangDBFromJsonFile),   //
+                  SOL_UT_FN(Databases, flatDBFromDir))         //
 };
 
 class Glob {

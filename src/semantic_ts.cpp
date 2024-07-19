@@ -1,12 +1,9 @@
 #include <iostream>
 
-// #include "aspartame/optional.hpp"
-// #include "aspartame/set.hpp"
-// #include "aspartame/string.hpp"
-// #include "aspartame/vector.hpp"
-// #include "aspartame/view.hpp"
-
 #include "agv/semantic_ts.h"
+
+#include "aspartame/string.hpp"
+#include "aspartame/vector.hpp"
 
 using namespace aspartame;
 

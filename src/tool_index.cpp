@@ -25,6 +25,7 @@
 #include "aspartame/variant.hpp"
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
+#include "aspartame/string.hpp"
 
 using namespace std::string_literals;
 using namespace aspartame;
@@ -145,11 +146,11 @@ struct ClangOffloadBundle {
 //   HIP generates a clang-offload-bundle file
 //   OpenMP target generates a normal BC with a 0x10ff10ad prefixed @llvm.embedded.object
 //   see https://clang.llvm.org/docs/ClangOffloadPackager.html
-static std::vector<agv::Database::Bitcode> collectBitcodeFiles(bool verbose, size_t idx,
+static std::vector<agv::ClangDatabase::Bitcode> collectBitcodeFiles(bool verbose, size_t idx,
                                                                const std::string name,
                                                                const std::string &wd,
                                                                const std::string &dest) {
-  std::vector<agv::Database::Bitcode> codes;
+  std::vector<agv::ClangDatabase::Bitcode> codes;
   auto saveBC = [&, pattern = std::regex("^" + name + "-([a-zA-Z]+)-([a-zA-Z0-9-_]+)\\.bc$")](
                     const std::string &src, const std::string &dest) {
     if (auto e = sys::fs::copy_file(src, dest); e)
@@ -274,7 +275,7 @@ struct Task {
   struct Result {
     CompileCommand cmd;
     std::optional<std::string> pchName;
-    std::vector<agv::Database::Bitcode> bitcodes;
+    std::vector<agv::ClangDatabase::Bitcode> bitcodes;
     std::map<std::string, std::string> dependencies;
     std::vector<std::string> diagnostics;
   };
@@ -607,7 +608,7 @@ int agv::index::run(const agv::index::Options &options) {
 
   auto results = runIndexTasks(commands, absOutDir, options.verbose, options.noCompress);
 
-  std::map<std::string, Database::Dependency> dependencies;
+  std::map<std::string, ClangDatabase::Dependency> dependencies;
   for (auto &result : results) {
     for (auto &[_, file] : result.dependencies) {
       auto buffer = MemoryBuffer::getFile(file, /*isText*/ true);
@@ -621,7 +622,7 @@ int agv::index::run(const agv::index::Options &options) {
         return e.value();
       }
       dependencies.emplace(file,
-                           Database::Dependency{sys::toTimeT(status.getLastModificationTime()),
+                           ClangDatabase::Dependency{sys::toTimeT(status.getLastModificationTime()),
                                                 (*buffer)->getBuffer().str()});
     }
   }
@@ -631,7 +632,7 @@ int agv::index::run(const agv::index::Options &options) {
         return result.pchName ^ map([&](auto name) {
                  return std::pair{
                      result.cmd.Filename,
-                     Database::Entry{.compileCommand = result.cmd.CommandLine ^ mk_string(" "),
+                     ClangDatabase::Entry{.compileCommand = result.cmd.CommandLine ^ mk_string(" "),
                                      .pchName = name,
                                      .bitcodes = result.bitcodes,
                                      .dependencies = result.dependencies
@@ -648,7 +649,7 @@ int agv::index::run(const agv::index::Options &options) {
            << std::round(static_cast<double>(totalSourceBytes) / 1000 / 1000) << " MB)"
            << std::endl;
 
-  nlohmann::json databaseJson = Database(                               //
+  nlohmann::json databaseJson = ClangDatabase(                               //
       {{"clangMajorVersion", std::to_string(CLANG_VERSION_MAJOR)},      //
        {"clangMinorVersion", std::to_string(CLANG_VERSION_MINOR)},      //
        {"clangPatchVersion", std::to_string(CLANG_VERSION_PATCHLEVEL)}} //

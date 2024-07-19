@@ -25,8 +25,8 @@ std::optional<Error> agv::parseCategory(cl::OptionCategory &category, int &argc,
 agv::ProgressLogger::ProgressLogger(size_t total, int maxLogLength)
     : total(total), maxLogLength(maxLogLength) {}
 void agv::ProgressLogger::log(const std::string &line, bool progress) {
-  auto s = AGV_COUT << "# [" << (progress ? completed++ : completed.load()) << "/" << total << "] "
-                    << std::left << std::setw(maxLogLength + 10) << line;
+  auto &&s = AGV_COUT << "# [" << (progress ? completed++ : completed.load()) << "/" << total
+                      << "] " << std::left << std::setw(maxLogLength + 10) << line;
   if (progress) (s << "\r").flush();
   else s << std::endl;
 }

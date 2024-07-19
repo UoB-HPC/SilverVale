@@ -3,10 +3,10 @@
 #include "clang/Basic/SourceManager.h"
 #include "clang/Frontend/ASTUnit.h"
 
-// #include "aspartame/optional.hpp"
-// #include "aspartame/string.hpp"
-// #include "aspartame/vector.hpp"
-// #include "aspartame/view.hpp"
+ #include "aspartame/optional.hpp"
+ #include "aspartame/string.hpp"
+ #include "aspartame/vector.hpp"
+ #include "aspartame/view.hpp"
 
 #include "agv/semantic_llvm.h"
 
