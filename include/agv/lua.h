@@ -6,7 +6,7 @@
 #include <tuple>
 #include <type_traits>
 
-#include "sol.hpp"
+#include "sol/sol.hpp"
 
 namespace agv::lua {
 

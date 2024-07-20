@@ -6,7 +6,7 @@
 #include <string>
 
 #include "agv/lua_shim.h"
-#include "json.hpp"
+#include "nlohmann/json.hpp"
 
 namespace agv {
 

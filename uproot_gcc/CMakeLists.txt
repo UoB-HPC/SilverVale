@@ -47,10 +47,10 @@ list(APPEND UPROOT_GCC_COMPILE_FLAGS
 )
 list(APPEND UPROOT_GCC_LINK_FLAGS "$<$<CONFIG:Debug>:${UPROOT_GCC_LINK_DEBUG_FLAGS}>")
 
-target_include_directories(uproot_gcc PUBLIC ${GCC_PLUGIN_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/include ${json_SOURCE_DIR})
+target_include_directories(uproot_gcc PUBLIC ${GCC_PLUGIN_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/include)
 target_compile_options(uproot_gcc PRIVATE ${UPROOT_GCC_COMPILE_FLAGS} -fno-rtti "$<$<CONFIG:Debug>:-shared-libasan>")
 target_link_options(uproot_gcc PRIVATE ${UPROOT_GCC_LINK_FLAGS} "$<$<CONFIG:Debug>:-shared-libasan>")
-target_link_libraries(uproot_gcc PRIVATE Aspartame::Aspartame fmt::fmt)
+target_link_libraries(uproot_gcc PRIVATE Aspartame::Aspartame fmt::fmt nlohmann_json::nlohmann_json)
 
 
 

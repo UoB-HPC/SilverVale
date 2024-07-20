@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "glob.h"
-#include "json.hpp"
+#include "nlohmann/json.hpp"
 #include "lua.h"
 
 #include "database.h"
