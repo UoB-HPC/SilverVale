@@ -31,11 +31,11 @@ CPMAddPackage("gh:catchorg/Catch2@3.6.0")
 CPMAddPackage("gh:ThePhD/sol2@3.3.0")
 CPMAddPackage("gh:DatabaseGroup/tree-similarity#0.1.1")
 CPMAddPackage(Aspartame
-        GIT_REPOSITORY https://github.com/tom91136/Aspartame.git
+        GITHUB_REPOSITORY tom91136/Aspartame
         GIT_TAG 31a0e22298b0c89455f8edfbe48675c6858c2420)
 CPMAddPackage(
         NAME zstd
-        GIT_REPOSITORY https://github.com/facebook/zstd.git
+        GITHUB_REPOSITORY facebook/zstd
         VERSION 1.5.6
         SOURCE_SUBDIR build/cmake
         OPTIONS
@@ -43,7 +43,7 @@ CPMAddPackage(
         "ZSTD_BUILD_SHARED OFF")
 CPMAddPackage(
         NAME lua
-        GIT_REPOSITORY https://github.com/lua/lua.git
+        GITHUB_REPOSITORY lua/lua
         VERSION 5.4.7
         DOWNLOAD_ONLY YES)
 if (lua_ADDED)
@@ -55,7 +55,7 @@ if (lua_ADDED)
 endif ()
 CPMAddPackage(
         NAME dtl
-        GIT_REPOSITORY https://github.com/cubicdaiya/dtl.git
+        GITHUB_REPOSITORY cubicdaiya/dtl
         VERSION 1.20
         DOWNLOAD_ONLY YES)
 if (dtl_ADDED)
@@ -64,7 +64,7 @@ if (dtl_ADDED)
 endif ()
 CPMAddPackage(
         NAME tree-sitter
-        GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter.git
+        GITHUB_REPOSITORY tree-sitter/tree-sitter
         VERSION 0.22.2
         DOWNLOAD_ONLY YES)
 if (tree-sitter_ADDED)
@@ -179,48 +179,47 @@ target_link_libraries(AGV
 
 target_compile_options(AGV PRIVATE ${AGV_COMPILE_FLAGS})
 target_link_options(AGV PRIVATE ${AGV_LINK_FLAGS})
-#target_precompile_headers(AGV PRIVATE
-#        [["clang/Tooling/Tooling.h"]]
-#        [["clang/Frontend/ASTUnit.h"]]
-#        [["clang/AST/RecursiveASTVisitor.h"]]
-#        [["clang/Frontend/FrontendActions.h"]]
-#        [["clang/Tooling/CommonOptionsParser.h"]]
-#
-#        [["llvm/IR/Module.h"]]
-#        [["llvm/IR/LLVMContext.h"]]
-#        [["llvm/Support/raw_ostream.h"]]
-#        [["llvm/Bitcode/BitcodeReader.h"]]
-#
-#        [["oneapi/tbb.h"]]
-#
-#        [["json.hpp"]]
-#        [["lua.hpp"]]
-#        [["fmt/core.h"]]
-#        [["sol.hpp"]]
-#        [["zstd.h"]]
-#
-#        [["aspartame/map.hpp"]]
-#        [["aspartame/optional.hpp"]]
-#        [["aspartame/string.hpp"]]
-#        [["aspartame/vector.hpp"]]
-#        [["aspartame/view.hpp"]]
-#
-#        <map>
-#        <tuple>
-#        <ctime>
-#        <cstdint>
-#        <memory>
-#        <regex>
-#        <string>
-#        <vector>
-#        <utility>
-#        <optional>
-#        <iostream>
-#        <type_traits>
-#        <functional>
-#        <unordered_map>
-#
-#)
+target_precompile_headers(AGV PRIVATE
+        [["clang/Tooling/Tooling.h"]]
+        [["clang/Frontend/ASTUnit.h"]]
+        [["clang/AST/RecursiveASTVisitor.h"]]
+        [["clang/Frontend/FrontendActions.h"]]
+        [["clang/Tooling/CommonOptionsParser.h"]]
+
+        [["llvm/IR/Module.h"]]
+        [["llvm/IR/LLVMContext.h"]]
+        [["llvm/Support/raw_ostream.h"]]
+        [["llvm/Bitcode/BitcodeReader.h"]]
+
+        [["oneapi/tbb.h"]]
+
+        [["nlohmann/json.hpp"]]
+        [["fmt/core.h"]]
+        [["sol/sol.hpp"]]
+        [["zstd.h"]]
+
+        [["aspartame/map.hpp"]]
+        [["aspartame/optional.hpp"]]
+        [["aspartame/string.hpp"]]
+        [["aspartame/vector.hpp"]]
+        [["aspartame/view.hpp"]]
+
+        <map>
+        <tuple>
+        <ctime>
+        <cstdint>
+        <memory>
+        <regex>
+        <string>
+        <vector>
+        <utility>
+        <optional>
+        <iostream>
+        <type_traits>
+        <functional>
+        <unordered_map>
+
+)
 
 add_executable(driver src/driver.cpp)
 add_executable(tests test/tree.cpp test/index.cpp test/structure.cpp)
