@@ -13,7 +13,6 @@ struct Options {
   std::vector<std::string> sourceGlobs;
   std::vector<std::string> argsBefore;
   std::vector<std::string> argsAfter;
-  std::optional<std::string> clangResourceDir;
   std::string outDir;
   bool clearOutDir;
   bool verbose;

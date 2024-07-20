@@ -273,23 +273,6 @@ foreach (target driver tests)
     target_link_options(${target} PRIVATE ${AGV_LINK_FLAGS})
 endforeach ()
 
-
-execute_process(
-        COMMAND clang -print-resource-dir
-        OUTPUT_VARIABLE CLANG_RESOURCE_DIR
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        RESULT_VARIABLE CLANG_COMMAND_RESULT
-)
-
-if (CLANG_COMMAND_RESULT EQUAL 0)
-    message(STATUS "Found Clang resource directory: ${CLANG_RESOURCE_DIR}")
-    set(FIXTURE_CLANG_RESOURCE_DIR "${CLANG_RESOURCE_DIR}/include")
-else ()
-    message(WARNING "Failed to get clang resource directory (${CLANG_COMMAND_RESULT}), index tests may not pass.")
-    set(FIXTURE_CLANG_RESOURCE_DIR "(call to clang -print-resource-dir failed)")
-endif ()
-
-
 function(setup_fixture name cc cxx suffix)
     set(fixture_name "${name}_${cc}_${suffix}")
     string(TOUPPER ${fixture_name} fixture_name_upper)

@@ -22,10 +22,10 @@
 #include "llvm/Support/Program.h"
 
 #include "aspartame/optional.hpp"
+#include "aspartame/string.hpp"
 #include "aspartame/variant.hpp"
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
-#include "aspartame/string.hpp"
 
 using namespace std::string_literals;
 using namespace aspartame;
@@ -147,9 +147,9 @@ struct ClangOffloadBundle {
 //   OpenMP target generates a normal BC with a 0x10ff10ad prefixed @llvm.embedded.object
 //   see https://clang.llvm.org/docs/ClangOffloadPackager.html
 static std::vector<agv::ClangDatabase::Bitcode> collectBitcodeFiles(bool verbose, size_t idx,
-                                                               const std::string name,
-                                                               const std::string &wd,
-                                                               const std::string &dest) {
+                                                                    const std::string name,
+                                                                    const std::string &wd,
+                                                                    const std::string &dest) {
   std::vector<agv::ClangDatabase::Bitcode> codes;
   auto saveBC = [&, pattern = std::regex("^" + name + "-([a-zA-Z]+)-([a-zA-Z0-9-_]+)\\.bc$")](
                     const std::string &src, const std::string &dest) {
@@ -482,13 +482,6 @@ static Expected<agv::index::Options> parseOpts(int argc, const char **argv) {
       "args-after", cl::desc("Extra arguments to append to the compiler command line."),
       cl::cat(category));
 
-  static cl::opt<std::string> clangResourceDir(
-      "resource-dir",
-      cl::desc("Force the compiler to use a specific Clang resource directory (e.g path to "
-               "`/usr/lib/clang/<VERSION>/include`); "
-               "Use this if system headers such has <stddef.h> is not found."), //
-      cl::init(""), cl::cat(category));
-
   static cl::opt<bool> clearOutDir( //
       "clear", cl::desc("Clear database output directory even if non-empty."), cl::cat(category));
 
@@ -496,15 +489,11 @@ static Expected<agv::index::Options> parseOpts(int argc, const char **argv) {
       "no-compress", cl::desc("Compress individual entries in the database."), cl::cat(category));
 
   static cl::opt<bool> verbose( //
-      "v",
-      cl::desc("Print compile command line used for each translation unit; "
-               "use -args-after=-v if you want to inspect detailed clang invocations."),
+      "v", cl::desc("Print compile command line used for each translation unit."),
       cl::cat(category));
 
   static cl::opt<int> maxThreads( //
-      "j",
-      cl::desc(
-          "Number of parallel AST frontend jobs in parallel, defaults to total number of threads."),
+      "j", cl::desc("Number of jobs in parallel, defaults to total number of threads."),
       cl::init(std::thread::hardware_concurrency()), cl::cat(category));
 
   if (auto e = agv::parseCategory(category, argc, argv); e) return std::move(*e);
@@ -514,7 +503,6 @@ static Expected<agv::index::Options> parseOpts(int argc, const char **argv) {
   options.sourceGlobs = sourceGlobs;
   options.argsBefore = argsBefore;
   options.argsAfter = argsAfter;
-  options.clangResourceDir = clangResourceDir.getValue();
 
   options.clearOutDir = clearOutDir.getValue();
   options.maxThreads = maxThreads.getValue();
@@ -544,22 +532,6 @@ int agv::index::run(const agv::index::Options &options) {
 
   auto global_limit = par_setup(options.maxThreads);
   auto adjuster = options.resolveAdjuster();
-
-  if (options.clangResourceDir) {
-    adjuster = combineAdjusters( //
-        adjuster, getInsertArgumentAdjuster(
-                      CommandLineArguments{
-                          "-Xclang",
-                          "-resource-dir",
-                          "-Xclang",
-                          *options.clangResourceDir,
-                          "-Xclang",
-                          "-internal-isystem",
-                          "-Xclang",
-                          *options.clangResourceDir,
-                      },
-                      ArgumentInsertPosition::END));
-  }
 
   std::shared_ptr<CompilationDatabase> db = options.resolveDatabase(adjuster);
   if (!db) {
@@ -623,7 +595,7 @@ int agv::index::run(const agv::index::Options &options) {
       }
       dependencies.emplace(file,
                            ClangDatabase::Dependency{sys::toTimeT(status.getLastModificationTime()),
-                                                (*buffer)->getBuffer().str()});
+                                                     (*buffer)->getBuffer().str()});
     }
   }
 
@@ -633,9 +605,9 @@ int agv::index::run(const agv::index::Options &options) {
                  return std::pair{
                      result.cmd.Filename,
                      ClangDatabase::Entry{.compileCommand = result.cmd.CommandLine ^ mk_string(" "),
-                                     .pchName = name,
-                                     .bitcodes = result.bitcodes,
-                                     .dependencies = result.dependencies
+                                          .pchName = name,
+                                          .bitcodes = result.bitcodes,
+                                          .dependencies = result.dependencies
 
                      }};
                });
@@ -649,7 +621,7 @@ int agv::index::run(const agv::index::Options &options) {
            << std::round(static_cast<double>(totalSourceBytes) / 1000 / 1000) << " MB)"
            << std::endl;
 
-  nlohmann::json databaseJson = ClangDatabase(                               //
+  nlohmann::json databaseJson = ClangDatabase(                          //
       {{"clangMajorVersion", std::to_string(CLANG_VERSION_MAJOR)},      //
        {"clangMinorVersion", std::to_string(CLANG_VERSION_MINOR)},      //
        {"clangPatchVersion", std::to_string(CLANG_VERSION_PATCHLEVEL)}} //

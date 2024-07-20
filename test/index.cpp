@@ -63,7 +63,6 @@ TEST_CASE("clang-database") {
         .sourceGlobs = {"*"},
         .argsBefore = {},
         .argsAfter = {},
-        .clangResourceDir = FIXTURE_CLANG_RESOURCE_DIR,
         .outDir = out,
         .clearOutDir = true,
         .verbose = true,

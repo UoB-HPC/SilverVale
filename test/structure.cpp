@@ -25,7 +25,6 @@ TEST_CASE("structure") {
       .sourceGlobs = {"*"},
       .argsBefore = {},
       .argsAfter = {},
-      .clangResourceDir = FIXTURE_CLANG_RESOURCE_DIR,
       .outDir = out,
       .clearOutDir = true,
       .verbose = true,
