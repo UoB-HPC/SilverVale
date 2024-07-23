@@ -2,12 +2,12 @@
 #include <fstream>
 #include <iostream>
 
-#include "agv/cli.h"
-#include "agv/compress.h"
-#include "agv/exec.h"
-#include "agv/index_common.h"
-#include "agv/index_gcc.h"
-#include "agv/par.h"
+#include "sv/cli.h"
+#include "sv/compress.h"
+#include "sv/exec.h"
+#include "sv/index_common.h"
+#include "sv/index_gcc.h"
+#include "sv/par.h"
 
 #include "fmt/core.h"
 #include "xxh3.h"
@@ -24,13 +24,13 @@ using namespace std::string_literals;
 using namespace aspartame;
 using namespace llvm;
 
-bool agv::detectGccAndIndex(bool verbose,
-                            const agv::CompilationDatabase::Entry &cmd, //
-                            const std::filesystem::path &wd,            //
-                            const std::filesystem::path &dest,          //
-                            const std::unordered_map<std::string, std::string> &programLUT) {
+bool sv::detectGccAndIndex(bool verbose,
+                           const sv::CompilationDatabase::Entry &cmd, //
+                           const std::filesystem::path &wd,           //
+                           const std::filesystem::path &dest,         //
+                           const std::unordered_map<std::string, std::string> &programLUT) {
 
-  auto programAndVersion = agv::resolveProgramAndDetect(
+  auto programAndVersion = sv::resolveProgramAndDetect(
       cmd.command[0],
       [](auto &x) {
         return x ^ starts_with("gcc (GCC)") || //
@@ -71,22 +71,22 @@ bool agv::detectGccAndIndex(bool verbose,
                                fmt::format("-fplugin={}", execParent / "libuproot_gcc.so")} |
       concat(cmd.command | drop(1)) | to_vector();
   const auto iiArgs = std::vector<std::string>{program, "-E", "-o" + iiName, "-MD"} |
-                      concat(agv::stripDashOArgs(cmd.command)) | to_vector();
+                      concat(sv::stripDashOArgs(cmd.command)) | to_vector();
 
   for (const auto &[env, v] : envs)
     setenv(env, v.c_str(), true);
   setenv("CCACHE_DISABLE", "1", true);
-  agv::par_for(std::vector{treeArgs, iiArgs}, [&](auto args, auto idx) {
+  sv::par_for(std::vector{treeArgs, iiArgs}, [&](auto args, auto idx) {
     auto line = args ^ mk_string(" ");
     if (verbose) AGV_COUT << line << std::endl;
-    if (auto code = agv::exec(line, std::cout); code) {
+    if (auto code = sv::exec(line, std::cout); code) {
       if (*code != 0) AGV_WARNF("non-zero return for `{}`", line);
     } else AGV_WARNF("popen failed for `{}`: ", line);
   });
   for (const auto &[env, _] : envs)
     unsetenv(env);
 
-  agv::FlatEntry //
+  sv::FlatEntry //
       result{.language = "cpp",
              .file = std::filesystem::path(cmd.file).filename(),
              .command = cmd.command ^ mk_string(" "),
@@ -95,7 +95,7 @@ bool agv::detectGccAndIndex(bool verbose,
              .unnamedSTreeFile = unnamedSTreeFile,
              .namedIRTreeFile = namedIRTreeFile,
              .unnamedIRTreeFile = unnamedIRTreeFile,
-             .dependencies = agv::readDepFile(wd / dFile, cmd.file),
+             .dependencies = sv::readDepFile(wd / dFile, cmd.file),
              .attributes = {{"version", version}}};
 
   std::ofstream out(dest / fmt::format("{}.{}.sv.json", prefix, name), std::ios::out);

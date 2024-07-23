@@ -4,7 +4,7 @@
 #include <variant>
 #include <vector>
 
-namespace agv::delta {
+namespace sv::delta {
 
 enum class Kind : uint8_t {
   SLOCRawAbs,
@@ -74,4 +74,4 @@ struct Options {
 [[nodiscard]] int main(int argc, const char **argv);
 [[nodiscard]] int run(const Options &options);
 
-} // namespace agv::delta
+} // namespace sv::delta

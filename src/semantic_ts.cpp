@@ -1,6 +1,6 @@
 #include <iostream>
 
-#include "agv/semantic_ts.h"
+#include "sv/semantic_ts.h"
 
 #include "aspartame/string.hpp"
 #include "aspartame/vector.hpp"
@@ -8,7 +8,7 @@
 using namespace aspartame;
 
 std::pair<std::vector<std::string>, std::unordered_map<std::string, std::string>>
-agv::parseCPPLineMarkers(const std::string &iiContent) {
+sv::parseCPPLineMarkers(const std::string &iiContent) {
   // see https://gcc.gnu.org/onlinedocs/cpp/Preprocessor-Output.html
   const static std::string prefix = "# ";
   std::unordered_map<std::string, std::string> files;
@@ -52,8 +52,8 @@ agv::parseCPPLineMarkers(const std::string &iiContent) {
   return {encountered, files};
 }
 
-agv::TsTree::TsTree() = default;
-agv::TsTree::TsTree(const std::string &source, const TSLanguage *lang)
+sv::TsTree::TsTree() = default;
+sv::TsTree::TsTree(const std::string &source, const TSLanguage *lang)
     : source(source),
       parser(std::shared_ptr<TSParser>(ts_parser_new(), [](auto x) { ts_parser_delete(x); })) {
   ts_parser_set_language(parser.get(), lang);
@@ -62,7 +62,7 @@ agv::TsTree::TsTree(const std::string &source, const TSLanguage *lang)
       [](auto x) { ts_tree_delete(x); });
 }
 
-TSNode agv::TsTree::root() const { return ts_tree_root_node(tree.get()); }
+TSNode sv::TsTree::root() const { return ts_tree_root_node(tree.get()); }
 
 static void deleteNodes(const TSNode &node, const std::string &type, size_t &offset,
                         std::string &out);
@@ -80,15 +80,15 @@ static void deleteNodes( // NOLINT(*-no-recursion)
   }
 }
 
-agv::TsTree agv::TsTree::deleteNodes(const std::string &type,
-                                     const std::optional<TSNode> &node) const {
+sv::TsTree sv::TsTree::deleteNodes(const std::string &type,
+                                   const std::optional<TSNode> &node) const {
   size_t offset = 0;
   std::string out = source;
   ::deleteNodes(node.value_or(root()), type, offset, out);
   return {out, ts_parser_language(parser.get())};
 }
 
-agv::TsTree agv::TsTree::normaliseNewLines(const std::optional<TSNode> &node) const {
+sv::TsTree sv::TsTree::normaliseNewLines(const std::optional<TSNode> &node) const {
   auto linesToKeep = slocLines(node.value_or(root()));
   auto slocNormalise =
       (source ^ lines())                                                    //
@@ -122,8 +122,8 @@ void markWSRanges( // NOLINT(*-no-recursion)
   }
 }
 
-agv::TsTree agv::TsTree::normaliseWhitespaces(uint32_t maxWS,
-                                              const std::optional<TSNode> &node) const {
+sv::TsTree sv::TsTree::normaliseWhitespaces(uint32_t maxWS,
+                                            const std::optional<TSNode> &node) const {
   std::string out = source;
   std::vector<std::pair<uint32_t, uint32_t>> ranges;
   markWSRanges(node.value_or(root()), out, maxWS, ranges);
@@ -142,7 +142,7 @@ agv::TsTree agv::TsTree::normaliseWhitespaces(uint32_t maxWS,
   return {out, ts_parser_language(parser.get())};
 }
 
-std::set<uint32_t> agv::TsTree::slocLines(const std::optional<TSNode> &node) const {
+std::set<uint32_t> sv::TsTree::slocLines(const std::optional<TSNode> &node) const {
   std::set<uint32_t> slocLines;
   walk(
       [&](TSNode x) {
@@ -175,7 +175,7 @@ std::set<uint32_t> agv::TsTree::slocLines(const std::optional<TSNode> &node) con
 }
 
 std::set<std::pair<uint32_t, uint32_t>>
-agv::TsTree::llocRanges(const std::optional<TSNode> &node) const {
+sv::TsTree::llocRanges(const std::optional<TSNode> &node) const {
   std::set<std::pair<uint32_t, uint32_t>> llocRanges;
   walk(
       [&](auto x) {
@@ -201,9 +201,9 @@ agv::TsTree::llocRanges(const std::optional<TSNode> &node) const {
   return llocRanges;
 }
 
-size_t agv::TsTree::sloc(const std::optional<TSNode> &node) const { //
+size_t sv::TsTree::sloc(const std::optional<TSNode> &node) const { //
   return slocLines(node).size();
 }
-size_t agv::TsTree::lloc(const std::optional<TSNode> &node) const { //
+size_t sv::TsTree::lloc(const std::optional<TSNode> &node) const { //
   return llocRanges(node).size();
 }

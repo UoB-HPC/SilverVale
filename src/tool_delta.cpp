@@ -3,12 +3,12 @@
 #include <thread>
 #include <utility>
 
-#include "agv/cli.h"
-#include "agv/diff.h"
-#include "agv/glob.h"
-#include "agv/model.h"
-#include "agv/par.h"
-#include "agv/tool_delta.h"
+#include "sv/cli.h"
+#include "sv/diff.h"
+#include "sv/glob.h"
+#include "sv/model.h"
+#include "sv/par.h"
+#include "sv/tool_delta.h"
 
 #include "aspartame/optional.hpp"
 #include "aspartame/string.hpp"
@@ -18,7 +18,7 @@
 
 using namespace aspartame;
 using namespace llvm;
-using namespace agv;
+using namespace sv;
 
 size_t longestCommonPrefixLen(const std::vector<std::string> &strings) {
   if (strings.size() < 2) return 0;

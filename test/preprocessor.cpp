@@ -2,8 +2,8 @@
 #include <iostream>
 #include <unordered_map>
 
-#include "agv/index_common.h"
-#include "agv/semantic_ts.h"
+#include "sv/index_common.h"
+#include "sv/semantic_ts.h"
 #include "catch2/catch_test_macros.hpp"
 #include "fixture.h"
 
@@ -17,7 +17,7 @@ TEST_CASE("parse-CPP-linemarkers") {
 
   std::ifstream read(FIXTURE_PROCESSOR_FILE);
 
-  auto [order, contents] = agv::parseCPPLineMarkers(agv::readFile(FIXTURE_PROCESSOR_FILE));
+  auto [order, contents] = sv::parseCPPLineMarkers(sv::readFile(FIXTURE_PROCESSOR_FILE));
 
   CHECK((order ^ map([](auto &p) { return std::filesystem::path(p).filename().string(); })) ==
         std::vector<std::string>{

@@ -5,9 +5,9 @@
 #include <string>
 #include <unordered_map>
 
-#include "agv/database.h"
+#include "sv/database.h"
 
-namespace agv {
+namespace sv {
 
 [[nodiscard]] std::optional<std::pair<std::filesystem::path, std::string>>
 resolveProgramAndDetect(const std::filesystem::path &program,
@@ -18,7 +18,7 @@ resolveProgramAndDetect(const std::filesystem::path &program,
 
 [[nodiscard]] std::vector<std::string> stripDashOArgs(const std::vector<std::string> &args);
 
-[[nodiscard]] std::map<std::string, agv::Dependency>
+[[nodiscard]] std::map<std::string, sv::Dependency>
 readDepFile(const std::filesystem::path &depFile, const std::string &source);
 
-} // namespace agv
+} // namespace sv

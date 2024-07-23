@@ -8,7 +8,7 @@
 
 #include "sol/sol.hpp"
 
-namespace agv::lua {
+namespace sv::lua {
 
 namespace {
 
@@ -170,8 +170,8 @@ void bindTeal(TealTypeState &out, const char *name, Args... args) {
 
 template <typename... Ts> struct TypeList {};
 
-template <typename... Ts> [[nodiscard]] agv::lua::TealTypeState bindTeal(TypeList<Ts...>) {
-  agv::lua::TealTypeState state;
+template <typename... Ts> [[nodiscard]] sv::lua::TealTypeState bindTeal(TypeList<Ts...>) {
+  sv::lua::TealTypeState state;
   (Ts::bindTeal(state), ...);
   return state;
 }
@@ -206,7 +206,7 @@ sol::usertype<C> bindSolUT(sol::state &s, const char *name, Args... args) {
   return tpe;
 }
 
-} // namespace agv::lua
+} // namespace sv::lua
 
 #ifdef SOL_UT_FN0
   #undef SOL_UT_FN0
@@ -246,13 +246,13 @@ sol::usertype<C> bindSolUT(sol::state &s, const char *name, Args... args) {
   sol::as_table_t<decltype(field)> field##_() const { return field; }
 
 #define DEF_TEAL(Class, ...)                                                                       \
-  static void bindTeal(agv::lua::TealTypeState &state) {                                           \
-    ::agv::lua::bindTeal<Class>(state, #Class, __VA_ARGS__);                                       \
+  static void bindTeal(sv::lua::TealTypeState &state) {                                           \
+    ::sv::lua::bindTeal<Class>(state, #Class, __VA_ARGS__);                                       \
   }
 
 #define DEF_SOL_UT(Class, ...)                                                                     \
   static sol::usertype<Class> bindSolUT(sol::state &lua) {                                         \
-    return ::agv::lua::bindSolUT<Class>(lua, #Class, __VA_ARGS__);                                 \
+    return ::sv::lua::bindSolUT<Class>(lua, #Class, __VA_ARGS__);                                 \
   }
 
 #define DEF_TEAL_SOL_UT(Class, ...)                                                                \

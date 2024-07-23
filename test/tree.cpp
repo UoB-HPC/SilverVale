@@ -12,8 +12,8 @@
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
 
-#include "agv/semantic_llvm.h"
-#include "agv/semantic_ts.h"
+#include "sv/semantic_llvm.h"
+#include "sv/semantic_ts.h"
 
 using namespace clang;
 using namespace clang::tooling;
@@ -33,12 +33,12 @@ std::unique_ptr<ASTUnit> makeASTUnit(const std::string &content) {
   return std::move(xs[0]);
 }
 
-std::vector<agv::SemanticTree<std::string>>
-makeNodes(const agv::ClangASTSemanticTreeVisitor::Option &option, const std::string &content) {
+std::vector<sv::SemanticTree<std::string>>
+makeNodes(const sv::ClangASTSemanticTreeVisitor::Option &option, const std::string &content) {
   auto unit = makeASTUnit(content);
-  return agv::topLevelDeclsInMainFile(*unit) ^ map([&](auto decl) {
-           agv::SemanticTree<std::string> root{"root", {}};
-           agv::ClangASTSemanticTreeVisitor V(&root, unit->getASTContext(), option);
+  return sv::topLevelDeclsInMainFile(*unit) ^ map([&](auto decl) {
+           sv::SemanticTree<std::string> root{"root", {}};
+           sv::ClangASTSemanticTreeVisitor V(&root, unit->getASTContext(), option);
            V.TraverseDecl(decl);
            //           decl->dump();
            return root;
@@ -57,7 +57,7 @@ return 0 /**/ + 1;// b
 // a // b
 )";
 
-  const auto &tree = agv::TsTree(source, tree_sitter_cpp()).deleteNodes("comment");
+  const auto &tree = sv::TsTree(source, tree_sitter_cpp()).deleteNodes("comment");
   CHECK(tree.source == R"(
 
 int main(){
@@ -94,7 +94,7 @@ end program main
 
 )";
 
-  const auto &tree = agv::TsTree(source, tree_sitter_fortran()).deleteNodes("comment");
+  const auto &tree = sv::TsTree(source, tree_sitter_fortran()).deleteNodes("comment");
   CHECK(tree.source == R"(
 
 program main
@@ -151,7 +151,7 @@ return 42;// w
 
 )";
 
-  CHECK(agv::TsTree(src, tree_sitter_cpp()).deleteNodes("comment").source == R"(
+  CHECK(sv::TsTree(src, tree_sitter_cpp()).deleteNodes("comment").source == R"(
 
 
 #include <stdio.h>
@@ -313,7 +313,7 @@ auto f  = [   & ]  ( auto   y )  {    return    2    ;   }   ; //
 
   SECTION("ws") {
 
-    CHECK(agv::TsTree(src, tree_sitter_cpp()).normaliseWhitespaces().source == R"(
+    CHECK(sv::TsTree(src, tree_sitter_cpp()).normaliseWhitespaces().source == R"(
 
 
 #include <stdio.h>
@@ -330,7 +330,7 @@ auto f = [ & ] ( auto y ) { return 2 ; } ; //
   }
 
   SECTION("nl") {
-    CHECK(agv::TsTree(src, tree_sitter_cpp()).normaliseNewLines().source == R"(#include <stdio.h>
+    CHECK(sv::TsTree(src, tree_sitter_cpp()).normaliseNewLines().source == R"(#include <stdio.h>
 #include <stdlib.h>
 int a  = 3;
 int  a_a   (      )        {     //a
@@ -340,7 +340,7 @@ auto f  = [   & ]  ( auto   y )  {    return    2    ;   }   ; //)");
   }
 
   SECTION("ws+nl") {
-    CHECK(agv::TsTree(src, tree_sitter_cpp()).normaliseNewLines().normaliseWhitespaces().source ==
+    CHECK(sv::TsTree(src, tree_sitter_cpp()).normaliseNewLines().normaliseWhitespaces().source ==
           R"(#include <stdio.h>
 #include <stdlib.h>
 int a = 3;
@@ -358,7 +358,7 @@ TEST_CASE("cpp-stmt-multiline") {
   1
    ;
 )";
-  CHECK(agv::TsTree(src, tree_sitter_cpp()).normaliseNewLines().normaliseWhitespaces().source ==
+  CHECK(sv::TsTree(src, tree_sitter_cpp()).normaliseNewLines().normaliseWhitespaces().source ==
         R"(int main() { return a ?
 0
 :

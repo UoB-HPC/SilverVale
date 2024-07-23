@@ -5,7 +5,7 @@
 #include "zstd.h"
 #include "llvm/Support/raw_ostream.h"
 
-namespace agv::utils {
+namespace sv::utils {
 
 class zstd_ostream : public llvm::raw_ostream {
   llvm::raw_fd_ostream out;
@@ -22,4 +22,4 @@ public:
 
 std::optional<std::vector<char>> zStdDecompress(const std::string &filename);
 
-} // namespace agv::utils
+} // namespace sv::utils

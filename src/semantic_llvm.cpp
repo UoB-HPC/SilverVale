@@ -8,12 +8,12 @@
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
 
-#include "agv/semantic_llvm.h"
+#include "sv/semantic_llvm.h"
 
 using namespace clang;
 using namespace aspartame;
 
-std::vector<Decl *> agv::topLevelDeclsInMainFile(ASTUnit &unit) {
+std::vector<Decl *> sv::topLevelDeclsInMainFile(ASTUnit &unit) {
   std::vector<Decl *> xs;
   unit.visitLocalTopLevelDecls(&xs, [](auto xsPtr, auto decl) {
     reinterpret_cast<decltype(xs) *>(xsPtr)->push_back(const_cast<Decl *>(decl));
@@ -41,7 +41,7 @@ template <typename T, typename Node, typename... Fs> std::optional<T> visitDyn(N
   std::optional<T> result{};
   [[maybe_unused]] auto _ = {[&]() {
     if (!result) {
-      if (auto x = llvm::dyn_cast<std::remove_pointer_t<agv::arg0_t<Fs>>>(n)) { result = T(fs(x)); }
+      if (auto x = llvm::dyn_cast<std::remove_pointer_t<sv::arg0_t<Fs>>>(n)) { result = T(fs(x)); }
     }
     return 0;
   }()...};
@@ -49,7 +49,7 @@ template <typename T, typename Node, typename... Fs> std::optional<T> visitDyn(N
 }
 template <typename Node, typename... Fs> void visitDyn0(Node n, Fs... fs) {
   [[maybe_unused]] auto _ = ([&]() -> bool {
-    if (auto x = llvm::dyn_cast<std::remove_pointer_t<agv::arg0_t<Fs>>>(n)) {
+    if (auto x = llvm::dyn_cast<std::remove_pointer_t<sv::arg0_t<Fs>>>(n)) {
       fs(x);
       return true;
     }
@@ -57,12 +57,12 @@ template <typename Node, typename... Fs> void visitDyn0(Node n, Fs... fs) {
   }() || ...);
 }
 
-agv::ClangASTSemanticTreeVisitor::ClangASTSemanticTreeVisitor(
-    agv::SemanticTree<std::string> *root, clang::ASTContext &Context,
-    agv::ClangASTSemanticTreeVisitor::Option option)
+sv::ClangASTSemanticTreeVisitor::ClangASTSemanticTreeVisitor(
+    sv::SemanticTree<std::string> *root, clang::ASTContext &Context,
+    sv::ClangASTSemanticTreeVisitor::Option option)
     : SemanticTreeVisitor(root), Context(Context), option(std::move(option)) {}
 
-bool agv::ClangASTSemanticTreeVisitor::TraverseStmt(clang::Stmt *stmt) { // NOLINT(*-no-recursion)
+bool sv::ClangASTSemanticTreeVisitor::TraverseStmt(clang::Stmt *stmt) { // NOLINT(*-no-recursion)
   // Remove implicits
   if (Expr *expr = llvm::dyn_cast_or_null<Expr>(stmt); expr) {
     stmt = expr->IgnoreUnlessSpelledInSource();
@@ -167,7 +167,7 @@ bool agv::ClangASTSemanticTreeVisitor::TraverseStmt(clang::Stmt *stmt) { // NOLI
          });
 }
 
-bool agv::ClangASTSemanticTreeVisitor::TraverseDecl(clang::Decl *decl) { // NOLINT(*-no-recursion)
+bool sv::ClangASTSemanticTreeVisitor::TraverseDecl(clang::Decl *decl) { // NOLINT(*-no-recursion)
   if (!decl) return true;
   auto suffix = visitDyn<std::string>(
       decl, //
@@ -190,8 +190,8 @@ static std::string print(llvm::Type *t) {
   return rso.str();
 }
 
-agv::LLVMIRTreeVisitor::LLVMIRTreeVisitor(agv::SemanticTree<std::string> *root,
-                                          const llvm::Module &module, bool normaliseName)
+sv::LLVMIRTreeVisitor::LLVMIRTreeVisitor(sv::SemanticTree<std::string> *root,
+                                         const llvm::Module &module, bool normaliseName)
     : SemanticTreeVisitor(root), normaliseName(normaliseName) {
 
   module.globals() | for_each([&](const llvm::GlobalVariable &var) {
@@ -224,11 +224,11 @@ agv::LLVMIRTreeVisitor::LLVMIRTreeVisitor(agv::SemanticTree<std::string> *root,
   });
 }
 
-std::string agv::LLVMIRTreeVisitor::named(const std::string &kind, const std::string &name) const {
+std::string sv::LLVMIRTreeVisitor::named(const std::string &kind, const std::string &name) const {
   return normaliseName ? kind : (kind + ": " + name);
 }
 
-void agv::LLVMIRTreeVisitor::walk(const llvm::Value *value) {
+void sv::LLVMIRTreeVisitor::walk(const llvm::Value *value) {
   if (!value) {
     single("<<<NUll>>>");
     return;

@@ -121,12 +121,12 @@ add_tree_sitter_lang(stadelmanma fortran HASH dde9829)
 
 # =====================
 
-list(APPEND AGV_COMPILE_DEBUG_FLAGS -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
-list(APPEND AGV_COMPILE_RELEASE_FLAGS -O3 -march=native)
-list(APPEND AGV_LINK_DEBUG_FLAGS -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
-list(APPEND AGV_COMPILE_FLAGS
-        "$<$<CONFIG:Release>:${AGV_COMPILE_RELEASE_FLAGS}>"
-        "$<$<CONFIG:Debug>:${AGV_COMPILE_DEBUG_FLAGS}>"
+list(APPEND SV_COMPILE_DEBUG_FLAGS -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
+list(APPEND SV_COMPILE_RELEASE_FLAGS -O3 -march=native)
+list(APPEND SV_LINK_DEBUG_FLAGS -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
+list(APPEND SV_COMPILE_FLAGS
+        "$<$<CONFIG:Release>:${SV_COMPILE_RELEASE_FLAGS}>"
+        "$<$<CONFIG:Debug>:${SV_COMPILE_DEBUG_FLAGS}>"
         -fexceptions
         -Wall
         -Wextra
@@ -140,9 +140,9 @@ list(APPEND AGV_COMPILE_FLAGS
         -Wno-unused-variable
         -Wno-unknown-warning-option
 )
-list(APPEND AGV_LINK_FLAGS "$<$<CONFIG:Debug>:${AGV_LINK_DEBUG_FLAGS}>")
+list(APPEND SV_LINK_FLAGS "$<$<CONFIG:Debug>:${SV_LINK_DEBUG_FLAGS}>")
 
-add_library(AGV
+add_library(SilverVale
         src/semantic_llvm.cpp
         src/semantic_ts.cpp
 
@@ -159,8 +159,8 @@ add_library(AGV
         src/model.cpp
         src/compress.cpp
         src/glob.cpp)
-target_include_directories(AGV PRIVATE include)
-target_link_libraries(AGV
+target_include_directories(SilverVale PRIVATE include)
+target_link_libraries(SilverVale
 
         PRIVATE
         libzstd_static
@@ -184,12 +184,10 @@ target_link_libraries(AGV
         clang-cpp
         LLVM
 )
-
-
-target_compile_options(AGV PRIVATE ${AGV_COMPILE_FLAGS})
-target_link_options(AGV PRIVATE ${AGV_LINK_FLAGS})
+target_compile_options(SilverVale PRIVATE ${SV_COMPILE_FLAGS})
+target_link_options(SilverVale PRIVATE ${SV_LINK_FLAGS})
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_precompile_headers(AGV PRIVATE
+    target_precompile_headers(SilverVale PRIVATE
             [["clang/Tooling/Tooling.h"]]
             [["clang/Frontend/ASTUnit.h"]]
             [["clang/AST/RecursiveASTVisitor.h"]]
@@ -236,12 +234,12 @@ add_executable(wrapper src/wrapper.cpp)
 add_executable(driver src/driver.cpp)
 add_executable(tests test/tree.cpp test/index.cpp test/structure.cpp test/preprocessor.cpp)
 target_link_libraries(tests PRIVATE Catch2::Catch2WithMain)
-set_target_properties(driver PROPERTIES OUTPUT_NAME "agv")
+set_target_properties(driver PROPERTIES OUTPUT_NAME "sv")
 foreach (target driver tests)
-    target_link_libraries(${target} PRIVATE AGV Aspartame::Aspartame nlohmann_json::nlohmann_json sol2 lua fmt::fmt)
+    target_link_libraries(${target} PRIVATE SilverVale Aspartame::Aspartame nlohmann_json::nlohmann_json sol2 lua fmt::fmt)
     target_include_directories(${target} PRIVATE include)
-    target_compile_options(${target} PRIVATE ${AGV_COMPILE_FLAGS})
-    target_link_options(${target} PRIVATE ${AGV_LINK_FLAGS})
+    target_compile_options(${target} PRIVATE ${SV_COMPILE_FLAGS})
+    target_link_options(${target} PRIVATE ${SV_LINK_FLAGS})
 endforeach ()
 
 function(setup_fixture name cc cxx fc suffix)

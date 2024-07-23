@@ -2,14 +2,14 @@
 #include <fstream>
 #include <iostream>
 
-#include "agv/cli.h"
-#include "agv/compress.h"
-#include "agv/exec.h"
-#include "agv/glob.h"
-#include "agv/index_common.h"
-#include "agv/index_llvm.h"
-#include "agv/model.h"
-#include "agv/par.h"
+#include "sv/cli.h"
+#include "sv/compress.h"
+#include "sv/exec.h"
+#include "sv/glob.h"
+#include "sv/index_common.h"
+#include "sv/index_llvm.h"
+#include "sv/model.h"
+#include "sv/par.h"
 
 #include "fmt/core.h"
 #include "fmt/std.h"
@@ -88,11 +88,11 @@ struct ClangOffloadBundle {
 //   HIP generates a clang-offload-bundle file
 //   OpenMP target generates a normal BC with a 0x10ff10ad prefixed @llvm.embedded.object
 //   see https://clang.llvm.org/docs/ClangOffloadPackager.html
-static std::vector<agv::LLVMBitcode> collectBitcodeFiles(bool verbose, const std::string &prefix,
-                                                         const std::string &name,
-                                                         const std::filesystem::path &wd,
-                                                         const std::filesystem::path &dest) {
-  std::vector<agv::LLVMBitcode> codes;
+static std::vector<sv::LLVMBitcode> collectBitcodeFiles(bool verbose, const std::string &prefix,
+                                                        const std::string &name,
+                                                        const std::filesystem::path &wd,
+                                                        const std::filesystem::path &dest) {
+  std::vector<sv::LLVMBitcode> codes;
   auto saveBC = [&, pattern = std::regex("^" + name + "-([a-zA-Z]+)-([a-zA-Z0-9-_]+)\\.bc$")](
                     const std::filesystem::path &src, const std::filesystem::path &dest) {
     auto e = std::error_code{};
@@ -206,13 +206,13 @@ static std::vector<agv::LLVMBitcode> collectBitcodeFiles(bool verbose, const std
   return codes;
 }
 
-bool agv::detectClangAndIndex(bool verbose,
-                              const agv::CompilationDatabase::Entry &cmd, //
-                              const std::filesystem::path &wd,            //
-                              const std::filesystem::path &dest,          //
-                              const std::unordered_map<std::string, std::string> &programLUT) {
+bool sv::detectClangAndIndex(bool verbose,
+                             const sv::CompilationDatabase::Entry &cmd, //
+                             const std::filesystem::path &wd,           //
+                             const std::filesystem::path &dest,         //
+                             const std::unordered_map<std::string, std::string> &programLUT) {
 
-  auto programAndVersion = agv::resolveProgramAndDetect(
+  auto programAndVersion = sv::resolveProgramAndDetect(
       cmd.command[0], [](auto &x) { return x ^ starts_with("clang "); }, programLUT);
   if (!programAndVersion) return false;
 
@@ -228,7 +228,7 @@ bool agv::detectClangAndIndex(bool verbose,
     return !isOMP || !(arg ^ starts_with("--offload-arch"));
   };
 
-  const auto args = agv::stripDashOArgs(cmd.command);
+  const auto args = sv::stripDashOArgs(cmd.command);
   const auto bcArgs =
       std::vector<std::string>{program, "-emit-llvm"} | concat(args) | to_vector();       //
   const auto pchArgs =                                                                    //
@@ -240,28 +240,28 @@ bool agv::detectClangAndIndex(bool verbose,
                                "-E", "-o" + iiName, "--offload-host-only"}                //
       | concat(args) | to_vector();
 
-  agv::par_for(std::vector{bcArgs, pchArgs, iiArgs}, [&](auto args, auto idx) {
+  sv::par_for(std::vector{bcArgs, pchArgs, iiArgs}, [&](auto args, auto idx) {
     auto line = args ^ mk_string(" ");
     if (verbose) AGV_COUT << line << std::endl;
-    if (auto code = agv::exec(line, std::cout); code) {
+    if (auto code = sv::exec(line, std::cout); code) {
       if (*code != 0) AGV_WARNF("non-zero return for `{}`", line);
     } else AGV_WARNF("popen failed for `{}`: ", line);
   });
 
-  agv::ClangEntry result{.kind = "clang",
-                         .language = "cpp",
-                         .file = std::filesystem::path(cmd.file).filename(),
-                         .command = cmd.command ^ mk_string(" "),
-                         .preprocessed = readFile(wd / iiName),
-                         .pchFile = fmt::format("{}.{}.zstd", prefix, pchName),
-                         .bitcodes = collectBitcodeFiles(verbose, prefix, fileStem, wd, dest),
-                         .dependencies = agv::readDepFile(wd / dFile, cmd.file),
-                         .attributes = {{"version", version}}};
+  sv::ClangEntry result{.kind = "clang",
+                        .language = "cpp",
+                        .file = std::filesystem::path(cmd.file).filename(),
+                        .command = cmd.command ^ mk_string(" "),
+                        .preprocessed = readFile(wd / iiName),
+                        .pchFile = fmt::format("{}.{}.zstd", prefix, pchName),
+                        .bitcodes = collectBitcodeFiles(verbose, prefix, fileStem, wd, dest),
+                        .dependencies = sv::readDepFile(wd / dFile, cmd.file),
+                        .attributes = {{"version", version}}};
 
   { // handle TU.pch CPCH file
     auto pchDest = dest / result.pchFile;
     std::error_code zstdError;
-    auto pchStream = agv::utils::zstd_ostream(pchDest, zstdError, 6);
+    auto pchStream = sv::utils::zstd_ostream(pchDest, zstdError, 6);
     if (zstdError)
       AGV_WARNF("cannot open compressed stream for PHC {}: {}", pchDest, zstdError.message());
     else {

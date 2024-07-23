@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace agv::index {
+namespace sv::index {
 
 struct Options {
   std::filesystem::path buildDir;
@@ -14,10 +14,10 @@ struct Options {
   bool verbose;
   int maxThreads;
 
-  [[nodiscard]] std::unique_ptr<agv::CompilationDatabase> resolveDatabase() const;
+  [[nodiscard]] std::unique_ptr<sv::CompilationDatabase> resolveDatabase() const;
 };
 
 [[nodiscard]] int main(int argc, const char **argv);
 [[nodiscard]] int run(const Options &options);
 
-} // namespace agv::index
+} // namespace sv::index

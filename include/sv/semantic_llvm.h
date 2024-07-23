@@ -6,7 +6,7 @@
 #include "clang/Frontend/ASTUnit.h"
 #include "llvm/IR/Module.h"
 
-namespace agv {
+namespace sv {
 
 std::vector<clang::Decl *> topLevelDeclsInMainFile(clang::ASTUnit &unit);
 
@@ -42,4 +42,4 @@ public:
   bool TraverseStmt(clang::Stmt *stmt);
 };
 
-} // namespace agv
+} // namespace sv

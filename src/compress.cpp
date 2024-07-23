@@ -1,4 +1,4 @@
-#include "agv/compress.h"
+#include "sv/compress.h"
 
 #include <iostream>
 #include <string>
@@ -16,7 +16,7 @@ static bool zStdIsError(size_t err) {
   return false;
 }
 
-agv::utils::zstd_ostream::zstd_ostream(const std::string &name, std::error_code &code, int cLevel)
+sv::utils::zstd_ostream::zstd_ostream(const std::string &name, std::error_code &code, int cLevel)
     : raw_ostream(true), out(name, code), cctx(ZSTD_createCCtx()),
       buffOut(ZSTD_CStreamOutSize(), '\0') {
   if (!cctx) {
@@ -30,7 +30,7 @@ agv::utils::zstd_ostream::zstd_ostream(const std::string &name, std::error_code 
     code = std::make_error_code(std::errc::io_error);
 }
 
-agv::utils::zstd_ostream::~zstd_ostream() {
+sv::utils::zstd_ostream::~zstd_ostream() {
   ZSTD_outBuffer output = {buffOut.data(), buffOut.size(), 0};
   if (zStdIsError(ZSTD_endStream(cctx, &output))) std::abort();
   if (zStdIsError(ZSTD_freeCCtx(cctx))) std::abort();
@@ -38,7 +38,7 @@ agv::utils::zstd_ostream::~zstd_ostream() {
   out.close();
 }
 
-void agv::utils::zstd_ostream::write_impl(const char *buffIn, size_t size) {
+void sv::utils::zstd_ostream::write_impl(const char *buffIn, size_t size) {
   ZSTD_inBuffer input = {buffIn, size, 0};
   do {
     ZSTD_outBuffer output = {buffOut.data(), buffOut.size(), 0};
@@ -49,9 +49,9 @@ void agv::utils::zstd_ostream::write_impl(const char *buffIn, size_t size) {
   pos += size;
 }
 
-[[nodiscard]] uint64_t agv::utils::zstd_ostream::current_pos() const { return pos; }
+[[nodiscard]] uint64_t sv::utils::zstd_ostream::current_pos() const { return pos; }
 
-std::optional<std::vector<char>> agv::utils::zStdDecompress(const std::string &filename) {
+std::optional<std::vector<char>> sv::utils::zStdDecompress(const std::string &filename) {
   auto buffer = llvm::MemoryBuffer::getFile(filename);
   if (auto error = buffer.getError(); error) {
     std::cerr << error.message() << std::endl;
@@ -103,4 +103,4 @@ std::optional<std::vector<char>> agv::utils::zStdDecompress(const std::string &f
     ZSTD_freeDStream(dstream);
     return result;
   }
-} // namespace agv::utils
+} // namespace sv::utils

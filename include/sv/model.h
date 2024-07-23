@@ -17,7 +17,7 @@
 #include "semantic_ts.h"
 #include "tree.h"
 
-namespace agv {
+namespace sv {
 
 template <typename T> struct Memoized {
   mutable std::optional<T> value{};
@@ -178,10 +178,8 @@ public:
   [[nodiscard]] bool matches(const std::string &string) const {
     return std::regex_match(string, regex);
   }
-  [[nodiscard]] static Glob pattern(const std::string &glob) {
-    return Glob{agv::globToRegex(glob)};
-  }
+  [[nodiscard]] static Glob pattern(const std::string &glob) { return Glob{sv::globToRegex(glob)}; }
   DEF_TEAL_SOL_UT(Glob, SOL_UT_FN(Glob, pattern), SOL_UT_FN(Glob, matches)) //
 };
 
-} // namespace agv
+} // namespace sv

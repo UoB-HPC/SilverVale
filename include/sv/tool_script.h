@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-namespace agv::script {
+namespace sv::script {
 
 struct Options {
   std::vector<std::string> roots;
@@ -16,4 +16,4 @@ struct Options {
 [[nodiscard]] int main(int argc, const char **argv);
 [[nodiscard]] int run(const Options &options);
 
-} // namespace agv::script
+} // namespace sv::script

@@ -7,7 +7,7 @@
 
 #include "nlohmann/json.hpp"
 
-namespace agv {
+namespace sv {
 
 namespace {
 template <typename Ret, typename Arg, typename... Rest> Arg arg0_helper(Ret (*)(Arg, Rest...));
@@ -166,4 +166,4 @@ protected:
   explicit SemanticTreeVisitor(SemanticTree<T> *root) : node(root) {}
 };
 
-} // namespace agv
+} // namespace sv

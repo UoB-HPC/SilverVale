@@ -4,7 +4,7 @@
 #include <iosfwd>
 #include <optional>
 
-namespace agv {
+namespace sv {
 
 template <size_t buffer_size = 4096>
 [[nodiscard]] std::optional<int> exec(const std::string &cmd, std::ostream &out) {
@@ -16,4 +16,4 @@ template <size_t buffer_size = 4096>
   return pclose(pipe);
 }
 
-} // namespace agv
+} // namespace sv

@@ -5,10 +5,10 @@
 #include "aspartame/string.hpp"
 #include "aspartame/view.hpp"
 
-#include "agv/tool_delta.h"
-#include "agv/tool_index.h"
-#include "agv/tool_inspect.h"
-#include "agv/tool_script.h"
+#include "sv/tool_delta.h"
+#include "sv/tool_index.h"
+#include "sv/tool_inspect.h"
+#include "sv/tool_script.h"
 
 using namespace aspartame;
 
@@ -57,10 +57,10 @@ int main(int argc, const char **argv) {
                              | keys()                                      //
                              | to_vector();
                switch (kind) {
-                 case Kind::Build: return agv::index::main(sliced.size(), sliced.data());
-                 case Kind::Inspect: return agv::inspect::main(sliced.size(), sliced.data());
-                 case Kind::Script: return agv::script::main(sliced.size(), sliced.data());
-                 case Kind::Delta: return agv::delta::main(sliced.size(), sliced.data());
+                 case Kind::Build: return sv::index::main(sliced.size(), sliced.data());
+                 case Kind::Inspect: return sv::inspect::main(sliced.size(), sliced.data());
+                 case Kind::Script: return sv::script::main(sliced.size(), sliced.data());
+                 case Kind::Delta: return sv::delta::main(sliced.size(), sliced.data());
                }
                return EXIT_SUCCESS;
              },

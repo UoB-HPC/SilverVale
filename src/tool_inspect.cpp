@@ -1,30 +1,30 @@
 #include <iostream>
 
-#include "agv/cli.h"
-#include "agv/model.h"
-#include "agv/tool_inspect.h"
 #include "aspartame/vector.hpp"
+#include "sv/cli.h"
+#include "sv/model.h"
+#include "sv/tool_inspect.h"
 
 using namespace aspartame;
 using namespace clang;
 using namespace llvm;
 
-static Expected<agv::inspect::Options> parseOpts(int argc, const char **argv) {
+static Expected<sv::inspect::Options> parseOpts(int argc, const char **argv) {
   static cl::OptionCategory category("List options");
 
   static cl::opt<std::string> dbPath(
       "db", cl::desc("The path to the P3MD database, as generated using the build command"),
       cl::Required, cl::cat(category));
 
-  if (auto e = agv::parseCategory(category, argc, argv); e) return std::move(*e);
-  return agv::inspect::Options{dbPath.getValue()};
+  if (auto e = sv::parseCategory(category, argc, argv); e) return std::move(*e);
+  return sv::inspect::Options{dbPath.getValue()};
 }
 
-int agv::inspect::main(int argc, const char **argv) {
+int sv::inspect::main(int argc, const char **argv) {
   return parseAndRun(argc, argv, &parseOpts, &run);
 }
 
-int agv::inspect::run(const Options &options) {
+int sv::inspect::run(const Options &options) {
   auto database = Codebase::loadDB(options.dbDir);
   std::cout << "entry,deps\n";
   database.entries                                                                                //

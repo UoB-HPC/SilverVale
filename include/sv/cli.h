@@ -22,7 +22,7 @@
 #define AGV_INFOF(...) (AGV_COUT << fmt::format("# " __VA_ARGS__) << std::endl)
 #define AGV_ERRF(...) (AGV_CERR << fmt::format(__VA_ARGS__) << std::endl)
 
-namespace agv {
+namespace sv {
 
 std::optional<llvm::Error> parseCategory(llvm::cl::OptionCategory &category, int &argc,
                                          const char **argv);
@@ -47,4 +47,4 @@ public:
   void log(const std::string &line, bool progress = true);
 };
 
-} // namespace agv
+} // namespace sv

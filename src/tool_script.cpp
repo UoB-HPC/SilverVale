@@ -2,12 +2,12 @@
 #include <iostream>
 #include <utility>
 
-#include "agv/cli.h"
-#include "agv/diff.h"
-#include "agv/lua.h"
-#include "agv/model.h"
-#include "agv/par.h"
-#include "agv/tool_script.h"
+#include "sv/cli.h"
+#include "sv/diff.h"
+#include "sv/lua.h"
+#include "sv/model.h"
+#include "sv/par.h"
+#include "sv/tool_script.h"
 
 #include "aspartame/variant.hpp"
 #include "aspartame/vector.hpp"
@@ -16,19 +16,17 @@
 using namespace aspartame;
 using namespace llvm;
 
-double tsTree(const agv::Unit &l, const agv::Unit &r) {
-  return agv::Diff::apted(l.writtenSource(true).tsTree(), r.writtenSource(true).tsTree());
+double tsTree(const sv::Unit &l, const sv::Unit &r) {
+  return sv::Diff::apted(l.writtenSource(true).tsTree(), r.writtenSource(true).tsTree());
 }
 
-double sTree(const agv::Unit &l, const agv::Unit &r) {
-  return agv::Diff::apted(l.sTree(), r.sTree());
+double sTree(const sv::Unit &l, const sv::Unit &r) { return sv::Diff::apted(l.sTree(), r.sTree()); }
+
+double diff(const sv::Unit &l, const sv::Unit &r) {
+  return sv::Diff::diff(l.writtenSource(true).content(), r.writtenSource(true).content());
 }
 
-double diff(const agv::Unit &l, const agv::Unit &r) {
-  return agv::Diff::diff(l.writtenSource(true).content(), r.writtenSource(true).content());
-}
-
-static Expected<agv::script::Options> parseOpts(int argc, const char **argv) {
+static Expected<sv::script::Options> parseOpts(int argc, const char **argv) {
   static cl::OptionCategory category("Run options");
 
   static cl::opt<bool> defs( //
@@ -58,31 +56,31 @@ static Expected<agv::script::Options> parseOpts(int argc, const char **argv) {
                "the script."),
       cl::cat(category));
 
-  if (auto e = agv::parseCategory(category, argc, argv); e) return std::move(*e);
+  if (auto e = sv::parseCategory(category, argc, argv); e) return std::move(*e);
 
-  return agv::script::Options{.roots = roots | to_vector(),
-                              .defs = defs.getValue(),
-                              .noBuffer = noBuffer.getValue(),
-                              .maxThreads = maxThreads,
-                              .args = args | to_vector()};
+  return sv::script::Options{.roots = roots | to_vector(),
+                             .defs = defs.getValue(),
+                             .noBuffer = noBuffer.getValue(),
+                             .maxThreads = maxThreads,
+                             .args = args | to_vector()};
 }
 
-int agv::script::main(int argc, const char **argv) {
-  return agv::parseAndRun(argc, argv, &parseOpts, &run);
+int sv::script::main(int argc, const char **argv) {
+  return sv::parseAndRun(argc, argv, &parseOpts, &run);
 }
 
-constexpr agv::lua::TypeList< //
-    agv::Dependency,          //
-    agv::FlatEntry,           //
-    agv::ClangEntry,          //
-    agv::LLVMBitcode,         //
-    agv::Tree,                //
-    agv::Source,              //
-    agv::Unit,                //
-    agv::Codebase,            //
-    agv::Database,            //
-    agv::Diff,                //
-    agv::Glob                 //
+constexpr sv::lua::TypeList< //
+    sv::Dependency,          //
+    sv::FlatEntry,           //
+    sv::ClangEntry,          //
+    sv::LLVMBitcode,         //
+    sv::Tree,                //
+    sv::Source,              //
+    sv::Unit,                //
+    sv::Codebase,            //
+    sv::Database,            //
+    sv::Diff,                //
+    sv::Glob                 //
     >
     Types;
 
@@ -91,7 +89,7 @@ int bufferedPrint(lua_State *L) {
   return 0;
 }
 
-int agv::script::run(const Options &options) {
+int sv::script::run(const Options &options) {
   if (options.defs) {
     lua::showTealType(std::cout, lua::bindTeal(Types));
     return EXIT_SUCCESS;

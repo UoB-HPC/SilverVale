@@ -6,9 +6,9 @@
 #include <utility>
 #include <variant>
 
-#include "agv/database.h"
-#include "agv/exec.h"
-#include "agv/tree.h"
+#include "sv/database.h"
+#include "sv/exec.h"
+#include "sv/tree.h"
 
 #include "gcc-plugin.h"
 
@@ -38,10 +38,10 @@ using namespace std::string_literals;
 
 template <typename Node, typename... Fs> void visitDyn0(Node n, Fs... fs) {
   [[maybe_unused]] auto _ = ([&]() -> bool {
-    if constexpr (std::is_same_v<agv::arg0_t<Fs>, Node>) {
+    if constexpr (std::is_same_v<sv::arg0_t<Fs>, Node>) {
       fs(n);
       return true;
-    } else if (auto x = safe_dyn_cast<agv::arg0_t<Fs>>(n)) {
+    } else if (auto x = safe_dyn_cast<sv::arg0_t<Fs>>(n)) {
       fs(x);
       return true;
     }
@@ -155,7 +155,7 @@ struct Node {
   };
 };
 
-class GimpleUprootPass : public gimple_opt_pass, agv::SemanticTreeVisitor<Node, void> {
+class GimpleUprootPass : public gimple_opt_pass, sv::SemanticTreeVisitor<Node, void> {
   static constexpr pass_data data = {
       GIMPLE_PASS,        /* type */
       "GimpleUprootPass", /* name */
@@ -170,13 +170,13 @@ class GimpleUprootPass : public gimple_opt_pass, agv::SemanticTreeVisitor<Node, 
 #pragma omp
 
   std::atomic_long nameCounter{};
-  agv::SemanticTree<Node> root;
+  sv::SemanticTree<Node> root;
   std::string basename, afterPass, kind;
 
 public:
   explicit GimpleUprootPass(gcc::context *ctx, std::string basename, std::string afterPass,
                             std::string kind)
-      : gimple_opt_pass(data, ctx), agv::SemanticTreeVisitor<Node, void>(&root),
+      : gimple_opt_pass(data, ctx), sv::SemanticTreeVisitor<Node, void>(&root),
         basename(std::move(basename)), afterPass(std::move(afterPass)), kind(std::move(kind)) {
     root.value = Node{r<Ref>(Name{this->basename})};
   }

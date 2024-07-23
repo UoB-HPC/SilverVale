@@ -5,10 +5,10 @@
 
 #include "catch2/catch_test_macros.hpp"
 
-#include "agv/model.h"
-#include "agv/tool_index.h"
-#include "agv/tool_inspect.h"
-#include "agv/tool_script.h"
+#include "sv/model.h"
+#include "sv/tool_index.h"
+#include "sv/tool_inspect.h"
+#include "sv/tool_script.h"
 #include "fixture.h"
 
 
@@ -22,7 +22,7 @@ TEST_CASE("structure") {
 //
 //  FIXTURE_DUMMY_GCC__DIR
 //
-//  int code = agv::index::run(agv::index::Options{
+//  int code = sv::index::run(sv::index::Options{
 //      .buildDir = ,
 //      .sourceGlobs = {"*"},
 //      .outDir = out,
@@ -33,8 +33,8 @@ TEST_CASE("structure") {
 //  });
 //  REQUIRE(code == 0);
 //
-//  auto db = agv::Codebase::loadDB(out);
-//  auto cb = agv::Codebase::load(db, std::cout, false, out, {}, [](auto &) { return true; });
+//  auto db = sv::Codebase::loadDB(out);
+//  auto cb = sv::Codebase::load(db, std::cout, false, out, {}, [](auto &) { return true; });
 ////
 //  REQUIRE(cb.units.size() == 1);
 ////

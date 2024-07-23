@@ -6,12 +6,12 @@
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
 
-#include "agv/diff.h"
-#include "agv/glob.h"
-#include "agv/model.h"
-#include "agv/tool_index.h"
-#include "agv/tool_inspect.h"
-#include "agv/tool_script.h"
+#include "sv/diff.h"
+#include "sv/glob.h"
+#include "sv/model.h"
+#include "sv/tool_index.h"
+#include "sv/tool_inspect.h"
+#include "sv/tool_script.h"
 #include "fixture.h"
 #include "fmt/core.h"
 
@@ -82,7 +82,7 @@ TEST_CASE("microstream") {
   DYNAMIC_SECTION(compiler << " " << model) {
 
     DYNAMIC_SECTION("index-" << model) {
-      int code = agv::index::run(agv::index::Options{
+      int code = sv::index::run(sv::index::Options{
           .buildDir = dir,
           .sourceGlobs = {"*"},
           .outDir = outDir,
@@ -99,7 +99,7 @@ TEST_CASE("microstream") {
           files.emplace_back(entry.path());
         for (auto glob : globs) {
           auto matches = files ^ filter([&](auto file) {
-                           return std::regex_match(file, agv::globToRegex(glob));
+                           return std::regex_match(file, sv::globToRegex(glob));
                          });
           INFO(glob << " matches one of " << (files ^ mk_string("[", ",", "]")));
           CHECK(matches.size() == 1);
@@ -113,7 +113,7 @@ TEST_CASE("microstream") {
       auto buffer = std::cout.rdbuf();
       std::ostringstream ss;
       std::cout.rdbuf(ss.rdbuf());
-      int code = agv::inspect::run(agv::inspect::Options{.dbDir = outDir});
+      int code = sv::inspect::run(sv::inspect::Options{.dbDir = outDir});
       std::cout.rdbuf(buffer);
       CHECK(code == 0);
       auto actual = ss.str() ^ lines();
@@ -123,13 +123,13 @@ TEST_CASE("microstream") {
     }
 
     DYNAMIC_SECTION("load-" << model) {
-      auto db = agv::Codebase::loadDB(outDir);
+      auto db = sv::Codebase::loadDB(outDir);
       CHECK(db.entries.size() == 1);
-      auto cb = agv::Codebase::load(db, true, {}, [](auto) { return true; });
+      auto cb = sv::Codebase::load(db, true, {}, [](auto) { return true; });
 
       REQUIRE(!cb.units.empty());
       CHECK(cb.units[0]->name() ^ starts_with("main."));
-      CHECK(agv::Diff::apted(cb.units[0]->sTree(), cb.units[0]->sTree()) == 0);
+      CHECK(sv::Diff::apted(cb.units[0]->sTree(), cb.units[0]->sTree()) == 0);
     }
 
     DYNAMIC_SECTION("script-" << model) {
@@ -154,8 +154,8 @@ print(Diff.apted(cb:units()[1]:sTree(), cb:units()[1]:sTree()))
       auto buffer = std::cout.rdbuf();
       std::ostringstream captured;
       std::cout.rdbuf(captured.rdbuf());
-      int code = agv::script::run(
-          agv::script::Options{.roots = {},
+      int code = sv::script::run(
+          sv::script::Options{.roots = {},
                                .defs = false,
                                .noBuffer = false,
                                .maxThreads = static_cast<int>(std::thread::hardware_concurrency()),

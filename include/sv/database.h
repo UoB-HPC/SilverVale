@@ -3,13 +3,13 @@
 #include <iosfwd>
 #include <map>
 #include <optional>
-#include <variant>
 #include <string>
+#include <variant>
 
-#include "agv/lua_shim.h"
 #include "nlohmann/json.hpp"
+#include "sv/lua_shim.h"
 
-namespace agv {
+namespace sv {
 
 struct CompilationDatabase {
   struct Entry {
@@ -94,7 +94,7 @@ public:
                   SOL_UT_FN_ACC(LLVMBitcode, kind), //
                   SOL_UT_FN_ACC(LLVMBitcode, triple));
   friend std::ostream &operator<<(std::ostream &os, const LLVMBitcode &bitcode) {
-    return os << "agv::LLVMBitcode{"              //
+    return os << "sv::LLVMBitcode{"               //
               << ".file=" << bitcode.file << ", " //
               << ".kind=" << bitcode.kind << ", " //
               << ".triple=" << bitcode.triple     //
@@ -143,7 +143,7 @@ public:
                   SOL_UT_FN_ACC(ClangEntry, attributes));
 
   friend std::ostream &operator<<(std::ostream &os, const ClangEntry &entry) {
-    os << "agv::ClangEntry{"                                        //
+    os << "sv::ClangEntry{"                                         //
        << ".kind=" << entry.kind << ", "                            //
        << ".language=" << entry.language << ", "                    //
        << ".file=" << entry.file << ", "                            //
@@ -212,7 +212,7 @@ public:
                   SOL_UT_FN_ACC(FlatEntry, attributes));
 
   friend std::ostream &operator<<(std::ostream &os, const FlatEntry &db) {
-    os << "agv::FlatEntry{"                                      //
+    os << "sv::FlatEntry{"                                       //
        << ".kind=" << db.kind << ", "                            //
        << ".language=" << db.language << ", "                    //
        << ".file=" << db.file << ", "                            //
@@ -245,7 +245,7 @@ public:
                   SOL_UT_FN_ACC(Database, entries));
 
   friend std::ostream &operator<<(std::ostream &os, const Database &db) {
-    os << "agv::Database{"             //
+    os << "sv::Database{"              //
        << ".root=" << db.root << ", "; //
     for (auto &e : db.entries)
       std::visit([&](auto &&e) { os << ".entries[" << e.file << "]=" << e << ", "; }, e);
@@ -254,4 +254,4 @@ public:
   }
 };
 
-} // namespace agv
+} // namespace sv

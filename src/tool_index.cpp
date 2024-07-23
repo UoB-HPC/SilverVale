@@ -3,13 +3,13 @@
 #include <system_error>
 #include <thread>
 
-#include "agv/cli.h"
-#include "agv/compress.h"
-#include "agv/glob.h"
-#include "agv/index_gcc.h"
-#include "agv/index_llvm.h"
-#include "agv/par.h"
-#include "agv/tool_index.h"
+#include "sv/cli.h"
+#include "sv/compress.h"
+#include "sv/glob.h"
+#include "sv/index_gcc.h"
+#include "sv/index_llvm.h"
+#include "sv/par.h"
+#include "sv/tool_index.h"
 
 #include "clang/Tooling/CommonOptionsParser.h"
 
@@ -23,7 +23,7 @@ using namespace std::string_literals;
 using namespace aspartame;
 using namespace llvm;
 
-std::unique_ptr<agv::CompilationDatabase> agv::index::Options::resolveDatabase() const {
+std::unique_ptr<sv::CompilationDatabase> sv::index::Options::resolveDatabase() const {
   auto root = buildDir;
   while (!root.empty()) {
     std::ifstream s(root / "compile_commands.json");
@@ -54,7 +54,7 @@ static int clearAndCreateDir(bool clear, const std::filesystem::path &outDir) {
   }
 }
 
-static void runIndexTasks(const std::vector<agv::CompilationDatabase::Entry> &commands,
+static void runIndexTasks(const std::vector<sv::CompilationDatabase::Entry> &commands,
                           const std::filesystem::path &outDir, bool verbose) {
 
   std::error_code wdEC;
@@ -81,7 +81,7 @@ static void runIndexTasks(const std::vector<agv::CompilationDatabase::Entry> &co
   auto maxFileLength = commands ^ fold_left(0, [](auto acc, auto &cmd) {
                          return std::max(acc, static_cast<int>(cmd.file.size()));
                        });
-  auto logger = agv::ProgressLogger(commands.size(), maxFileLength);
+  auto logger = sv::ProgressLogger(commands.size(), maxFileLength);
   for (auto &[wd, tasks] : commands ^ group_by([](auto &cmd) { return cmd.directory; })) {
 
     try {
@@ -92,14 +92,14 @@ static void runIndexTasks(const std::vector<agv::CompilationDatabase::Entry> &co
     }
 
     AGV_INFOF("cd {}", wd);
-    agv::par_for(tasks, [&](const agv::CompilationDatabase::Entry &cmd, auto idx) {
+    sv::par_for(tasks, [&](const sv::CompilationDatabase::Entry &cmd, auto idx) {
       if (cmd.command.empty()) {
         AGV_WARNF("empty command line for file {}", cmd.file);
         return;
       }
       logger.log(cmd.file);
-      if (!agv::detectClangAndIndex(verbose, cmd, wd, outDir, programLUT)) {
-        if (!agv::detectGccAndIndex(verbose, cmd, wd, outDir, programLUT)) {
+      if (!sv::detectClangAndIndex(verbose, cmd, wd, outDir, programLUT)) {
+        if (!sv::detectGccAndIndex(verbose, cmd, wd, outDir, programLUT)) {
           AGV_WARNF("unsupported compiler for {}", cmd.command ^ mk_string(" "));
         }
       }
@@ -114,7 +114,7 @@ static void runIndexTasks(const std::vector<agv::CompilationDatabase::Entry> &co
   }
 }
 
-static Expected<agv::index::Options> parseOpts(int argc, const char **argv) {
+static Expected<sv::index::Options> parseOpts(int argc, const char **argv) {
 
   static cl::OptionCategory category("Build options");
 
@@ -144,9 +144,9 @@ static Expected<agv::index::Options> parseOpts(int argc, const char **argv) {
       "j", cl::desc("Number of jobs in parallel, defaults to total number of threads."),
       cl::init(std::thread::hardware_concurrency()), cl::cat(category));
 
-  if (auto e = agv::parseCategory(category, argc, argv); e) return std::move(*e);
+  if (auto e = sv::parseCategory(category, argc, argv); e) return std::move(*e);
 
-  agv::index::Options options;
+  sv::index::Options options;
   options.buildDir = buildDir.getValue();
   options.sourceGlobs = sourceGlobs;
 
@@ -162,11 +162,11 @@ static Expected<agv::index::Options> parseOpts(int argc, const char **argv) {
   return options;
 }
 
-int agv::index::main(int argc, const char **argv) {
-  return agv::parseAndRun(argc, argv, &parseOpts, &run);
+int sv::index::main(int argc, const char **argv) {
+  return sv::parseAndRun(argc, argv, &parseOpts, &run);
 }
 
-int agv::index::run(const agv::index::Options &options) {
+int sv::index::run(const sv::index::Options &options) {
 
   AGV_COUT //
       << "Build:\n"

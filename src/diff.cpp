@@ -1,4 +1,4 @@
-#include "agv/diff.h"
+#include "sv/diff.h"
 #include "dtl/dtl.hpp"
 
 namespace topdiff {
@@ -27,15 +27,15 @@ template <> struct hash<StringLabel> {
 };
 } // namespace std
 
-static topdiff::node::Node<StringLabel> makeTree(const agv::SemanticTree<std::string> &tree) {
+static topdiff::node::Node<StringLabel> makeTree(const sv::SemanticTree<std::string> &tree) {
   return tree.template traverse<topdiff::node::Node<StringLabel>>(
       [](const auto &v) { return topdiff::node::Node<StringLabel>(StringLabel(v)); },
       [](auto &n, const auto &x) { n.add_child(x); });
 }
 
-namespace agv {
+namespace sv {
 
-double Diff::apted(const agv::Tree &lhsTree, const agv::Tree &rhsTree) {
+double Diff::apted(const sv::Tree &lhsTree, const sv::Tree &rhsTree) {
   using CostModelLD = topdiff::cost_model::UnitCostModelLD<StringLabel>;
   using LabelDictionary = topdiff::label::LabelDictionary<StringLabel>;
   LabelDictionary ld;
@@ -58,4 +58,4 @@ double Diff::diff(const std::string &lhs, const std::string &rhs) {
   return static_cast<double>(d.getEditDistance());
 }
 
-} // namespace agv
+} // namespace sv

@@ -2,7 +2,7 @@
 
 #include "oneapi/tbb.h"
 
-namespace agv {
+namespace sv {
 
 inline tbb::global_control par_setup(size_t n) {
   return {tbb::global_control::max_allowed_parallelism, n};
@@ -23,4 +23,4 @@ template <typename C, typename F> static auto par_map(C &&xs, F f) {
   return out;
 }
 
-} // namespace agv
+} // namespace sv

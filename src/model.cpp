@@ -2,12 +2,12 @@
 #include <iostream>
 #include <utility>
 
-#include "agv/cli.h"
-#include "agv/compress.h"
-#include "agv/model.h"
-#include "agv/par.h"
-#include "agv/semantic_llvm.h"
-#include "agv/semantic_ts.h"
+#include "sv/cli.h"
+#include "sv/compress.h"
+#include "sv/model.h"
+#include "sv/par.h"
+#include "sv/semantic_llvm.h"
+#include "sv/semantic_ts.h"
 
 #include "clang/Frontend/ASTUnit.h"
 #include "clang/Frontend/CompilerInstance.h"
@@ -40,7 +40,7 @@ class ClangContext {
   static EntryType mkEntry(llvm::LLVMContext &llvmContext,          //
                            std::vector<std::vector<char>> &storage, //
                            const std::filesystem::path &baseDir,    //
-                           const agv::ClangEntry &tu) {
+                           const sv::ClangEntry &tu) {
     auto modules =
         tu.bitcodes |
         collect([&](auto &entry)
@@ -69,7 +69,7 @@ class ClangContext {
 
     auto pchFile = baseDir / tu.pchFile;
 
-    auto pchData = agv::utils::zStdDecompress(pchFile);
+    auto pchData = sv::utils::zStdDecompress(pchFile);
     if (!pchData) {
       AGV_WARNF("Cannot read PCH data: {}", pchFile);
       return {nullptr, modules};
@@ -99,7 +99,7 @@ class ClangContext {
 
 public:
   std::map<std::string, EntryType> units;
-  explicit ClangContext(const std::vector<agv::ClangEntry> &entries, const std::string &baseDir)
+  explicit ClangContext(const std::vector<sv::ClangEntry> &entries, const std::string &baseDir)
       : context(),
         units(entries ^ map([&](auto &tu) { //
                 return std::pair{tu.file, mkEntry(context, astBackingBuffer, baseDir, tu)};
@@ -108,8 +108,8 @@ public:
 };
 
 // === Tree ===
-agv::Tree::Tree(const agv::SemanticTree<std::string> &root) : root(root) {}
-size_t agv::Tree::nodes() const {
+sv::Tree::Tree(const sv::SemanticTree<std::string> &root) : root(root) {}
+size_t sv::Tree::nodes() const {
   return lazyNodes([&] {
     size_t n = 0;
     root.walk([&](auto &, auto) {
@@ -119,7 +119,7 @@ size_t agv::Tree::nodes() const {
     return n;
   });
 }
-size_t agv::Tree::maxDepth() const {
+size_t sv::Tree::maxDepth() const {
   return lazyMaxDepth([&] {
     size_t maxDepth = 0;
     root.walk([&](auto &, size_t depth) {
@@ -129,7 +129,7 @@ size_t agv::Tree::maxDepth() const {
     return maxDepth;
   });
 }
-size_t agv::Tree::maxWidth() const {
+size_t sv::Tree::maxWidth() const {
   return lazyMaxWidth([&] {
     std::vector<int> levelSize;
     root.walk([&](auto &, size_t depth) {
@@ -140,65 +140,64 @@ size_t agv::Tree::maxWidth() const {
     return levelSize.empty() ? 0 : *std::max_element(levelSize.begin(), levelSize.end());
   });
 }
-agv::Tree agv::Tree::combine(const std::string &rootName, const std::vector<Tree> &trees) {
-  return Tree{
-      agv::SemanticTree<std::string>(rootName, trees ^ map([](auto &t) { return t.root; }))};
+sv::Tree sv::Tree::combine(const std::string &rootName, const std::vector<Tree> &trees) {
+  return Tree{sv::SemanticTree<std::string>(rootName, trees ^ map([](auto &t) { return t.root; }))};
 }
-std::string agv::Tree::prettyPrint() const {
+std::string sv::Tree::prettyPrint() const {
   std::stringstream ss;
   root.print(ss);
   return ss.str();
 }
-agv::Tree agv::Tree::leaf(const std::string &rootName) {
-  return agv::Tree{agv::SemanticTree<std::string>(rootName, {})};
+sv::Tree sv::Tree::leaf(const std::string &rootName) {
+  return sv::Tree{sv::SemanticTree<std::string>(rootName, {})};
 }
 
 // === Source ===
-agv::Source::Source(agv::TsTree tree) : tree(std::move(tree)) {}
-const std::string &agv::Source::content() const { return tree.source; }
-size_t agv::Source::sloc() const {
+sv::Source::Source(sv::TsTree tree) : tree(std::move(tree)) {}
+const std::string &sv::Source::content() const { return tree.source; }
+size_t sv::Source::sloc() const {
   return lazySloc([&] { return tree.sloc(); });
 }
-size_t agv::Source::lloc() const {
+size_t sv::Source::lloc() const {
   return lazyLloc([&] { return tree.lloc(); });
 }
 
-std::set<uint32_t> agv::Source::slocLines() const {
+std::set<uint32_t> sv::Source::slocLines() const {
   return lazySlocLines([&] { return tree.slocLines(); });
 }
-std::set<agv::Range> agv::Source::llocRanges() const {
+std::set<sv::Range> sv::Source::llocRanges() const {
   return lazyLlocRanges([&] {
-    return tree.llocRanges() ^ map([](auto &start, auto &end) { return agv::Range{start, end}; });
+    return tree.llocRanges() ^ map([](auto &start, auto &end) { return sv::Range{start, end}; });
   });
 }
-const agv::Tree &agv::Source::tsTree() const {
+const sv::Tree &sv::Source::tsTree() const {
   return lazyTsTree([&] {
-    return Tree{tree.template traverse<agv::SemanticTree<std::string>>(
-        [](const auto &v) { return agv::SemanticTree{v, {}}; },
+    return Tree{tree.template traverse<sv::SemanticTree<std::string>>(
+        [](const auto &v) { return sv::SemanticTree{v, {}}; },
         [](auto &n, const auto &x) { n.children.emplace_back(x); })};
   });
 }
 
 // === Unit ===
-agv::Unit::Unit(std::string path, agv::SemanticTree<std::string> sTree,
-                agv::SemanticTree<std::string> sTreeInlined, agv::SemanticTree<std::string> irTree,
-                TsTree source, TsTree preprocessedSource)
+sv::Unit::Unit(std::string path, sv::SemanticTree<std::string> sTree,
+               sv::SemanticTree<std::string> sTreeInlined, sv::SemanticTree<std::string> irTree,
+               TsTree source, TsTree preprocessedSource)
     : path_(std::move(path)), name_(std::filesystem::path(path_).filename()), //
       sTreeRoot(std::move(sTree)), sTreeInlinedRoot(std::move(sTreeInlined)),
       irTreeRoot(std::move(irTree)), sourceRoot(std::move(source)), //
       preprocessedRoot(std::move(preprocessedSource)) {}
-const std::string &agv::Unit::path() const { return path_; }
-const std::string &agv::Unit::name() const { return name_; }
-const agv::Tree &agv::Unit::sTree() const { return sTreeRoot; }
-const agv::Tree &agv::Unit::sTreeInlined() const { return sTreeInlinedRoot; }
-const agv::Tree &agv::Unit::irTree() const { return irTreeRoot; }
-agv::Source agv::Unit::writtenSource(bool normalise) const {
+const std::string &sv::Unit::path() const { return path_; }
+const std::string &sv::Unit::name() const { return name_; }
+const sv::Tree &sv::Unit::sTree() const { return sTreeRoot; }
+const sv::Tree &sv::Unit::sTreeInlined() const { return sTreeInlinedRoot; }
+const sv::Tree &sv::Unit::irTree() const { return irTreeRoot; }
+sv::Source sv::Unit::writtenSource(bool normalise) const {
   return normalise ? lazyWrittenSourceNormalised([&]() {
     return Source(sourceRoot.deleteNodes("comment").normaliseNewLines().normaliseWhitespaces());
   })
                    : lazyWrittenSource([&]() { return Source(sourceRoot); });
 }
-agv::Source agv::Unit::preprocessedSource(bool normalise) const {
+sv::Source sv::Unit::preprocessedSource(bool normalise) const {
   return normalise ? lazyPreprocessedSourceNormalised([&]() {
     return Source(
         preprocessedRoot.deleteNodes("comment").normaliseNewLines().normaliseWhitespaces());
@@ -226,7 +225,7 @@ template <typename T> static std::vector<T> loadAll(const std::string &root) {
   return entries;
 }
 
-agv::Database agv::Codebase::loadDB(const std::string &root) {
+sv::Database sv::Codebase::loadDB(const std::string &root) {
   std::vector<std::variant<ClangEntry, FlatEntry>> entries;
   try {
     for (auto &e : std::filesystem::directory_iterator(root)) {
@@ -250,20 +249,20 @@ agv::Database agv::Codebase::loadDB(const std::string &root) {
   return {root, entries};
 }
 
-agv::Codebase agv::Codebase::load(const Database &db,                    //
-                                  std::ostream &out,                     //
-                                  bool normalise,                        //
-                                  const std::vector<std::string> &roots, //
-                                  const std::function<bool(const std::string &)> &predicate) {
+sv::Codebase sv::Codebase::load(const Database &db,                    //
+                                std::ostream &out,                     //
+                                bool normalise,                        //
+                                const std::vector<std::string> &roots, //
+                                const std::function<bool(const std::string &)> &predicate) {
 
   const auto select = [](auto x, auto f) { return std::visit([&](auto &&x) { return f(x); }, x); };
 
   const auto extractPreprocessedTsRoot = [](auto iiLines) {
-    const auto [witnessed, contents] = agv::parseCPPLineMarkers(iiLines);
-    agv::TsTree tree{};
+    const auto [witnessed, contents] = sv::parseCPPLineMarkers(iiLines);
+    sv::TsTree tree{};
     if (!witnessed.empty()) {
       contents ^ get(witnessed.front()) ^
-          for_each([&](auto &s) { tree = agv::TsTree(s, tree_sitter_cpp()); });
+          for_each([&](auto &s) { tree = sv::TsTree(s, tree_sitter_cpp()); });
     }
     return tree;
   };
@@ -281,7 +280,7 @@ agv::Codebase agv::Codebase::load(const Database &db,                    //
 
   // Load clang entries first
   const auto clangEntries = selected ^ collect([](auto &x) { return x ^ get<ClangEntry>(); });
-  const auto clangUnits = agv::par_map(
+  const auto clangUnits = sv::par_map(
       clangEntries,
       [&, clangCtx = ClangContext(clangEntries, db.root)](const auto &x) -> std::shared_ptr<Unit> {
         try {
@@ -291,32 +290,32 @@ agv::Codebase agv::Codebase::load(const Database &db,                    //
             return {};
           };
           auto &[ast, modules] = *unitCtx;
-          agv::SemanticTree<std::string> irTreeRoot{"root", {}};
+          sv::SemanticTree<std::string> irTreeRoot{"root", {}};
           for (auto &[name, module] : modules) {
-            agv::SemanticTree<std::string> irTree{name, {}};
-            agv::LLVMIRTreeVisitor(&irTree, *module, normalise);
+            sv::SemanticTree<std::string> irTree{name, {}};
+            sv::LLVMIRTreeVisitor(&irTree, *module, normalise);
             irTreeRoot.children.emplace_back(irTree);
           }
 
-          agv::SemanticTree<std::string> sTree{"root", {}};
-          agv::SemanticTree<std::string> sTreeInlined{"root", {}};
-          agv::TsTree sourceRoot{};
+          sv::SemanticTree<std::string> sTree{"root", {}};
+          sv::SemanticTree<std::string> sTreeInlined{"root", {}};
+          sv::TsTree sourceRoot{};
           auto &sm = ast->getSourceManager();
           if (auto data = sm.getBufferDataOrNone(sm.getMainFileID()); data) {
-            sourceRoot = agv::TsTree(data->str(), tree_sitter_cpp());
+            sourceRoot = sv::TsTree(data->str(), tree_sitter_cpp());
           } else {
             AGV_WARNF("Failed to load original source for entry {}, main file ID missing", x.file);
             return {};
           }
           for (clang::Decl *decl :
-               agv::topLevelDeclsInMainFile(*ast) ^ sort_by([&](clang::Decl *decl) {
+               sv::topLevelDeclsInMainFile(*ast) ^ sort_by([&](clang::Decl *decl) {
                  return std::pair{sm.getDecomposedExpansionLoc(decl->getBeginLoc()).second,
                                   sm.getDecomposedExpansionLoc(decl->getEndLoc()).second};
                })) {
 
-            auto createTree = [&](const agv::ClangASTSemanticTreeVisitor::Option &option) {
-              agv::SemanticTree<std::string> topLevel{"toplevel", {}};
-              agv::ClangASTSemanticTreeVisitor(&topLevel, ast->getASTContext(), option)
+            auto createTree = [&](const sv::ClangASTSemanticTreeVisitor::Option &option) {
+              sv::SemanticTree<std::string> topLevel{"toplevel", {}};
+              sv::ClangASTSemanticTreeVisitor(&topLevel, ast->getASTContext(), option)
                   .TraverseDecl(decl);
               return topLevel;
             };
@@ -346,10 +345,10 @@ agv::Codebase agv::Codebase::load(const Database &db,                    //
 
   // Then flat entries
   const auto flatEntries = selected ^ collect([](auto &x) { return x ^ get<FlatEntry>(); });
-  auto flatUnits = agv::par_map(flatEntries, [&](const auto &x) -> std::shared_ptr<Unit> {
+  auto flatUnits = sv::par_map(flatEntries, [&](const auto &x) -> std::shared_ptr<Unit> {
     try {
       auto loadTree = [](const std::filesystem::path &path) {
-        agv::SemanticTree<std::string> tree;
+        sv::SemanticTree<std::string> tree;
         if (!std::filesystem::exists(path)) return tree;
         std::ifstream read(path);
         read.exceptions(std::ios::badbit | std::ios::failbit);
@@ -369,8 +368,8 @@ agv::Codebase agv::Codebase::load(const Database &db,                    //
                     }) |
                     head_maybe();
 
-      auto unit = std::make_unique<Unit>(x.file, stree, agv::SemanticTree<std::string>{}, irtree,
-                                         agv::TsTree(source.value_or(""), tree_sitter_cpp()),
+      auto unit = std::make_unique<Unit>(x.file, stree, sv::SemanticTree<std::string>{}, irtree,
+                                         sv::TsTree(source.value_or(""), tree_sitter_cpp()),
                                          extractPreprocessedTsRoot(x.preprocessed));
       out << "# Loaded " << std::left << std::setw(maxFileLen) << x.file << "\r";
       return unit;
@@ -380,25 +379,25 @@ agv::Codebase agv::Codebase::load(const Database &db,                    //
     }
   });
   out << std::endl;
-  return agv::Codebase(db.root, clangUnits ^ concat(flatUnits));
+  return sv::Codebase(db.root, clangUnits ^ concat(flatUnits));
 }
 
-namespace agv {
+namespace sv {
 std::ostream &operator<<(std::ostream &os, const Range &range) {
-  return os << "agv::Range{"                        //
+  return os << "sv::Range{"                         //
             << ".start=" << range.startByte << ", " //
             << ".end=" << range.endByte             //
             << "}";
 }
 
 std::ostream &operator<<(std::ostream &os, const Codebase &codebase) {
-  return os << "agv::Codebase{"                                       //
+  return os << "sv::Codebase{"                                        //
             << ".path=" << codebase.root                              //
             << ".units={" << (codebase.units ^ mk_string(",")) << "}" //
             << "}";
 }
 std::ostream &operator<<(std::ostream &os, const Unit &unit) {
-  return os << "agv::Unit{"                                                    //
+  return os << "sv::Unit{"                                                     //
             << ".path=" << unit.path_ << ", "                                  //
             << ".name=" << unit.name_ << ", "                                  //
             << ".sTreeRoot=(" << unit.sTreeRoot.nodes() << "), "               //
@@ -407,4 +406,4 @@ std::ostream &operator<<(std::ostream &os, const Unit &unit) {
             << ".sourceRoot=" << unit.sourceRoot.root().tree //
             << "}";
 }
-} // namespace agv
+} // namespace sv

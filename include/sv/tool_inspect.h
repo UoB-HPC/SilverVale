@@ -2,7 +2,7 @@
 
 #include <string>
 
-namespace agv::inspect {
+namespace sv::inspect {
 
 struct Options {
   std::filesystem::path dbDir;
@@ -11,4 +11,4 @@ struct Options {
 [[nodiscard]] int main(int argc, const char **argv);
 [[nodiscard]] int run(const Options &options);
 
-} // namespace agv::inspect
+} // namespace sv::inspect
