@@ -97,7 +97,7 @@ int agv::script::run(const Options &options) {
     return EXIT_SUCCESS;
   }
   if (auto script = options.args ^ head_maybe(); !script) {
-    std::cerr << "No script given, terminating..." << std::endl;
+    AGV_ERRF("No script given, terminating...");
     return EXIT_FAILURE;
   } else {
     auto global_limit = par_setup(options.maxThreads);

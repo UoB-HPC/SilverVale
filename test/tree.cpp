@@ -1,4 +1,5 @@
 #include "catch2/catch_test_macros.hpp"
+#include <iostream>
 
 #include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Tooling/Tooling.h"
@@ -11,8 +12,8 @@
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
 
-#include "agv/semantic_ts.h"
 #include "agv/semantic_llvm.h"
+#include "agv/semantic_ts.h"
 
 using namespace clang;
 using namespace clang::tooling;
@@ -168,7 +169,6 @@ return 42;
 )");
 }
 
-
 TEST_CASE("cpp-inline") {
   auto trees =
       makeNodes(
@@ -288,8 +288,6 @@ int b() {
   CHECK(trees[0] == trees[1]);
 }
 
-
-
 TEST_CASE("cpp-normalise") {
 
   std::string src = R"(
@@ -342,15 +340,28 @@ auto f  = [   & ]  ( auto   y )  {    return    2    ;   }   ; //)");
   }
 
   SECTION("ws+nl") {
-    SECTION("nl") {
-      CHECK(agv::TsTree(src, tree_sitter_cpp()).normaliseNewLines().normaliseWhitespaces().source ==
-            R"(#include <stdio.h>
+    CHECK(agv::TsTree(src, tree_sitter_cpp()).normaliseNewLines().normaliseWhitespaces().source ==
+          R"(#include <stdio.h>
 #include <stdlib.h>
 int a = 3;
 int a_a ( ) { //a
 return 42;
 }
 auto f = [ & ] ( auto y ) { return 2 ; } ; //)");
-    }
   }
+}
+
+TEST_CASE("cpp-stmt-multiline") {
+  std::string src = R"(int main() { return a ?
+0
+ :
+  1
+   ;
+)";
+  CHECK(agv::TsTree(src, tree_sitter_cpp()).normaliseNewLines().normaliseWhitespaces().source ==
+        R"(int main() { return a ?
+0
+:
+1
+;)");
 }

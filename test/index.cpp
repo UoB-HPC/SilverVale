@@ -6,7 +6,9 @@
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
 
+#include "agv/diff.h"
 #include "agv/glob.h"
+#include "agv/model.h"
 #include "agv/tool_index.h"
 #include "agv/tool_inspect.h"
 #include "agv/tool_script.h"
@@ -18,7 +20,7 @@
 
 using namespace aspartame;
 
-TEST_CASE("clang-database") {
+TEST_CASE("microstream") {
 
   auto gccBaseGlobs = std::vector{"*/*main.sv.json"};
   auto clangBaseGlobs = std::vector{"*/*main.sv.json", "*/*main.pch.zstd"};
@@ -79,7 +81,7 @@ TEST_CASE("clang-database") {
 
   DYNAMIC_SECTION(compiler << " " << model) {
 
-    DYNAMIC_SECTION("index " << model) {
+    DYNAMIC_SECTION("index-" << model) {
       int code = agv::index::run(agv::index::Options{
           .buildDir = dir,
           .sourceGlobs = {"*"},
@@ -107,7 +109,7 @@ TEST_CASE("clang-database") {
       }
     }
 
-    DYNAMIC_SECTION("inspect " << model) {
+    DYNAMIC_SECTION("inspect-" << model) {
       auto buffer = std::cout.rdbuf();
       std::ostringstream ss;
       std::cout.rdbuf(ss.rdbuf());
@@ -120,7 +122,17 @@ TEST_CASE("clang-database") {
       CHECK(actual[1] ^ contains_slice(fmt::format("main{},", ext)));
     }
 
-    DYNAMIC_SECTION("script " << model) {
+    DYNAMIC_SECTION("load-" << model) {
+      auto db = agv::Codebase::loadDB(outDir);
+      CHECK(db.entries.size() == 1);
+      auto cb = agv::Codebase::load(db, true, {}, [](auto) { return true; });
+
+      REQUIRE(!cb.units.empty());
+      CHECK(cb.units[0]->name() ^ starts_with("main."));
+      CHECK(agv::Diff::apted(cb.units[0]->sTree(), cb.units[0]->sTree()) == 0);
+    }
+
+    DYNAMIC_SECTION("script-" << model) {
       std::string scriptPath = fmt::format("{}/script.lua", FIXTURE_TMP_DIR);
       {
         std::ofstream script(scriptPath, std::ios::trunc);
@@ -134,7 +146,7 @@ local n = 0
 for _ in pairs(db:entries()) do n = n + 1 end
 print(n)
 
-local cb = Codebase.load(db, true, arg[1], {}, function(s) return true end)
+local cb = Codebase.load(db, true, {}, function(s) return true end)
 print(cb:units()[1]:name())
 print(Diff.apted(cb:units()[1]:sTree(), cb:units()[1]:sTree()))
 )";

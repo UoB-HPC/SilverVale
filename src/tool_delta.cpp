@@ -181,8 +181,7 @@ Expected<delta::Options> parseOpts(int argc, const char **argv) {
                         char delim) -> std::optional<std::pair<std::string, std::string>> {
     auto pair = in ^ split(delim);
     if (pair.size() == 2) return std::pair{pair[0], pair[1]};
-    std::cerr << "Ignoring malformed pair pattern with delimiter (" << delim << "): `" //
-              << in << "`" << std::endl;
+    AGV_WARNF("Ignoring malformed pair pattern with delimiter ({}): `{}`", delim, in);
     return std::nullopt;
   };
 
@@ -224,7 +223,7 @@ int delta::run(const delta::Options &options) {
                                    options.maxThreads);
 
   if (options.databases.empty()) {
-    std::cerr << "At least 1 database required for comparison" << std::endl;
+    AGV_ERRF("At least 1 database required for comparison");
     return EXIT_FAILURE;
   }
 
@@ -245,15 +244,15 @@ int delta::run(const delta::Options &options) {
 
   std::vector<Model> models(options.databases.size());
   par_for(options.databases, [&](auto &spec, auto idx) {
-    auto dbFile = spec.path + "/db.json";
+    auto dbFile = spec.path + "/db.json"; // TODO fix this
     const auto db = Codebase::loadDB(dbFile);
     const auto excludes = options.excludes ^ map([](auto &f) { return globToRegex(f.glob); });
-    const auto cb = Codebase::load(db, std::cout, true, spec.path, {}, [&](auto &path) {
+    const auto cb = Codebase::load(db, std::cout, true, {}, [&](auto &path) {
       return excludes ^ forall([&](auto &r) { return !std::regex_match(path, r); });
     });
     const auto merges =
         options.merges ^ map([](auto &m) { return std::pair{globToRegex(m.glob), m.name}; });
-    models[idx].path = cb.path;
+    models[idx].path = cb.root;
     models[idx].entries =                                                                     //
         cb.units                                                                              //
         ^ group_by([&](auto &u) {                                                             //

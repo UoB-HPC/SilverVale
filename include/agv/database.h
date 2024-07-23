@@ -3,6 +3,7 @@
 #include <iosfwd>
 #include <map>
 #include <optional>
+#include <variant>
 #include <string>
 
 #include "agv/lua_shim.h"

@@ -2,11 +2,16 @@
 
 #include <set>
 
-#include "aspartame/view.hpp"
 #include "tree.h"
 #include "tree_sitter/api.h"
 
+#include "aspartame/view.hpp"
+
 namespace agv {
+
+[[nodiscard]]
+std::pair<std::vector<std::string>, std::unordered_map<std::string, std::string>>
+parseCPPLineMarkers(const std::string &iiLines);
 
 struct TsTree {
 
@@ -42,25 +47,29 @@ struct TsTree {
   [[nodiscard]] size_t sloc(const std::optional<TSNode> &node = {}) const;
   [[nodiscard]] size_t lloc(const std::optional<TSNode> &node = {}) const;
 
-  template <typename F> void walk(F f, const std::optional<TSNode> &node = {}) const {
+  template <typename F>
+  void walk(F f, const std::optional<TSNode> &node = {}, bool namedOnly = true) const {
     static_assert(std::is_same_v<std::invoke_result_t<F, const TSNode &>, bool>);
     if (!node) walk<F>(f, root());
     else if (f(*node)) {
       for (uint32_t i = 0; i < ts_node_child_count(*node); ++i) {
-        if (auto child = ts_node_child(*node, i); ts_node_is_named(child)) { walk(f, child); }
+        if (auto child = ts_node_child(*node, i); namedOnly ? ts_node_is_named(child) : true) {
+          walk(f, child, namedOnly);
+        }
       }
     }
   }
 
   template <typename U, typename Alloc, typename Insert>
-  U traverse(Alloc alloc, Insert insert, int depth = 0,
-             const std::optional<TSNode> &node = {}) const {
+  U traverse(Alloc alloc, Insert insert, int depth = 0, const std::optional<TSNode> &node = {},
+             bool namedOnly = true) const {
     if (!node) return traverse<U, Alloc, Insert>(alloc, insert, depth, root());
     else {
       U n = alloc(std::string(ts_node_type(*node)));
       for (uint32_t i = 0; i < ts_node_child_count(*node); ++i) {
-        if (auto child = ts_node_child(*node, i); ts_node_is_named(child)) {
-          insert(n, std::move(traverse<U, Alloc, Insert>(alloc, insert, depth + 1, child)));
+        if (auto child = ts_node_child(*node, i); namedOnly ? ts_node_is_named(child) : true) {
+          insert(n,
+                 std::move(traverse<U, Alloc, Insert>(alloc, insert, depth + 1, child, namedOnly)));
         }
       }
       return n;

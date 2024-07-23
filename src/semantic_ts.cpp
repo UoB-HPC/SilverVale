@@ -7,6 +7,51 @@
 
 using namespace aspartame;
 
+std::pair<std::vector<std::string>, std::unordered_map<std::string, std::string>>
+agv::parseCPPLineMarkers(const std::string &iiContent) {
+  // see https://gcc.gnu.org/onlinedocs/cpp/Preprocessor-Output.html
+  const static std::string prefix = "# ";
+  std::unordered_map<std::string, std::string> files;
+  std::vector<std::string> encountered;
+  std::unordered_set<std::string> witnessed;
+  std::string currentFile;
+
+  auto push = [&](auto next) {
+    currentFile = next;
+    if (auto it = witnessed.emplace(next); it.second) { encountered.emplace_back(currentFile); }
+  };
+
+  for (const auto &line : iiContent ^ lines()) {
+    if (line.starts_with(prefix)) { // # linenum "filename" flags
+      auto marker = line.substr(prefix.length());
+      auto validLineNum = marker ^ take_while([](auto c) { return c != ' '; }) ^
+                          forall([](auto x) { return std::isdigit(x); });
+      if (validLineNum) { // line marker started with a number first, keep going
+        // the path may be quoted with spaces in between, so match up the quotes
+        auto quoteIndices = marker                                                    //
+                            | zip_with_index()                                        //
+                            | collect([](auto c, auto idx) -> std::optional<size_t> { //
+                                return c == '"' ? std::optional{idx} : std::nullopt;  //
+                              })                                                      //
+                            | to_vector();
+        if (quoteIndices.empty()) { // not quoted: `linenum filename flags`
+          auto fragments = marker ^ split(' ');
+          if (fragments.size() >= 2) push(fragments[1]);
+        } else if (quoteIndices.size() > 1) { // quoted: `linenum "filename" flags`
+          auto start = quoteIndices.front() + 1;
+          auto len = quoteIndices.back() - start;
+          push(marker.substr(start, len)); // pop the quotes
+        }
+        continue; // eat the line even on parse failure as we are sure it's a line marker
+      }
+    }
+    auto &content = files[currentFile];
+    content += line;
+    content += "\n";
+  }
+  return {encountered, files};
+}
+
 agv::TsTree::TsTree() = default;
 agv::TsTree::TsTree(const std::string &source, const TSLanguage *lang)
     : source(source),
@@ -125,7 +170,7 @@ std::set<uint32_t> agv::TsTree::slocLines(const std::optional<TSNode> &node) con
         slocLines.emplace(ts_node_end_point(x).row);
         return true;
       },
-      node);
+      node, false);
   return slocLines;
 }
 

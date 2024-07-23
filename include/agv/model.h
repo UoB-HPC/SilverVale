@@ -113,9 +113,8 @@ public:
   TsTree sourceRoot;
   TsTree preprocessedRoot;
 
-  Unit(std::string path, const SemanticTree<std::string> &sTree,
-       const SemanticTree<std::string> &sTreeInlined, const SemanticTree<std::string> &irTree,
-       TsTree source);
+  Unit(std::string path, SemanticTree<std::string> sTree, SemanticTree<std::string> sTreeInlined,
+       SemanticTree<std::string> irTree, TsTree source, TsTree preprocessedSource);
   [[nodiscard]] const std::string &path() const;
   [[nodiscard]] const std::string &name() const;
   [[nodiscard]] const Tree &sTree() const;
@@ -135,11 +134,11 @@ public:
 };
 
 struct Codebase {
-  std::string path;
+  std::string root;
   std::vector<std::shared_ptr<Unit>> units;
 
 private:
-  DEF_SOL_UT_ACCESSOR(path);
+  DEF_SOL_UT_ACCESSOR(root);
   DEF_SOL_UT_ACCESSOR(units);
 
 public:
@@ -148,28 +147,25 @@ public:
   [[nodiscard]] static Codebase load(const Database &x,                     //
                                      std::ostream &out,                     //
                                      bool normalise,                        //
-                                     const std::string &path,               //
                                      const std::vector<std::string> &roots, //
                                      const std::function<bool(const std::string &)> &predicate);
 
   [[nodiscard]] static Codebase load(const Database &db,                                 //
                                      bool normalise,                                     //
-                                     const std::string &path,                            //
                                      const sol::nested<std::vector<std::string>> &roots, //
                                      const std::function<bool(const std::string &)> &predicate) {
-    return load(db, std::cout, normalise, path, roots.value(), predicate);
+    return load(db, std::cout, normalise, roots.value(), predicate);
   }
 
   friend std::ostream &operator<<(std::ostream &os, const Codebase &codebase);
 
   DEF_TEAL_SOL_UT(Codebase,                       //
-                  SOL_UT_FN_ACC(Codebase, path),  //
+                  SOL_UT_FN_ACC(Codebase, root),  //
                   SOL_UT_FN_ACC(Codebase, units), //
                   SOL_UT_FN(Codebase, loadDB),
                   SOL_UT_FN0(Codebase, load,                                                   //
                              Codebase (*)(const Database &,                                    //
                                           bool,                                                //
-                                          const std::string &,                                 //
                                           const sol::nested<std::vector<std::string>> &,       //
                                           const std::function<bool(const std::string &)> &))); //
 };

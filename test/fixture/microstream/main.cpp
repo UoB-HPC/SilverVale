@@ -30,7 +30,7 @@ auto execute(size_t times, I init, R read, C copy, M mul, A add, T triad, D dot)
   };
 
   init();
-  for (int k = 0; k < times; k++) {
+  for (size_t k = 0; k < times; k++) {
     time(0, copy);
     time(1, mul);
     time(2, add);

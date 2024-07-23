@@ -234,7 +234,7 @@ endif ()
 add_executable(wrapper src/wrapper.cpp)
 
 add_executable(driver src/driver.cpp)
-add_executable(tests test/tree.cpp test/index.cpp test/structure.cpp)
+add_executable(tests test/tree.cpp test/index.cpp test/structure.cpp test/preprocessor.cpp)
 target_link_libraries(tests PRIVATE Catch2::Catch2WithMain)
 set_target_properties(driver PROPERTIES OUTPUT_NAME "agv")
 foreach (target driver tests)
@@ -268,6 +268,9 @@ function(setup_fixture name cc cxx fc suffix)
     )
 endfunction()
 
+add_library(processor_fixture OBJECT test/fixture/processor.cpp)
+target_compile_options(processor_fixture PRIVATE -E)
+set(FIXTURE_PROCESSOR_FILE "$<TARGET_OBJECTS:processor_fixture>")
 
 setup_fixture(dummy clang clang++ flang-new "")
 setup_fixture(dummy gcc g++ gfortran "")
@@ -299,9 +302,14 @@ foreach (var ${all_variables})
     endif ()
 endforeach ()
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/fixture.h.in" "${config_template}")
-configure_file("${CMAKE_CURRENT_BINARY_DIR}/fixture.h.in" ${CMAKE_CURRENT_BINARY_DIR}/fixture.h @ONLY)
+configure_file("${CMAKE_CURRENT_BINARY_DIR}/fixture.h.in" "${CMAKE_CURRENT_BINARY_DIR}/fixture.h" @ONLY)
 target_include_directories(tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+file(GENERATE # expand generator expressions too
+        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/fixture.h"
+        INPUT "${CMAKE_CURRENT_BINARY_DIR}/fixture.h")
+
 
 add_subdirectory(uproot_gcc)
-add_dependencies(tests uproot_gcc)
+add_dependencies(tests uproot_gcc processor_fixture)
+
 
