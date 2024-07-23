@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(microstream CXX)
+project(microstream CXX Fortran)
 
 
 set(CMAKE_CXX_STANDARD 17)
@@ -11,18 +11,24 @@ if (USE_CUDA)
 endif ()
 
 
-add_executable(microstream main.cpp)
+if (USE_FORTRAN)
+    add_executable(microstream main.F90)
+    set(LANG "Fortran")
+else ()
+    add_executable(microstream main.cpp)
+    set(LANG "CXX")
+endif ()
 
 
 if (USE_SERIAL)
     target_compile_definitions(microstream PUBLIC USE_SERIAL)
 elseif (USE_OMP)
     find_package(OpenMP)
-    target_link_libraries(microstream PUBLIC OpenMP::OpenMP_CXX)
+    target_link_libraries(microstream PUBLIC OpenMP::OpenMP_${LANG})
     target_compile_definitions(microstream PUBLIC USE_OMP)
 elseif (USE_OMP_TARGET)
     find_package(OpenMP)
-    target_link_libraries(microstream PUBLIC OpenMP::OpenMP_CXX)
+    target_link_libraries(microstream PUBLIC OpenMP::OpenMP_${LANG})
     target_compile_definitions(microstream PUBLIC USE_OMP_TARGET)
     target_compile_options(microstream PUBLIC --offload-arch=${USE_OMP_TARGET})
     target_link_options(microstream PUBLIC --offload-arch=${USE_OMP_TARGET} ${OpenMP_CXX_FLAGS})

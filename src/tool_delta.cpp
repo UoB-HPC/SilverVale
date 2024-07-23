@@ -53,7 +53,7 @@ std::unordered_map<delta::Kind, std::pair<DeltaFn, MaxFn>> fns = {
     {delta::Kind::SLOCRawAbs, std::pair{
                                   [](const Units &, const Units &rhs) -> double {
                                     return rhs ^ fold_left(0, [](auto acc, auto &u) {
-                                             return acc + u->source(true).sloc();
+                                             return acc + u->writtenSource(true).sloc();
                                            });
                                   },
                                   [](const Units &) -> std::optional<double> { return {}; },
@@ -61,7 +61,7 @@ std::unordered_map<delta::Kind, std::pair<DeltaFn, MaxFn>> fns = {
     {delta::Kind::LLOCRawAbs, std::pair{
                                   [](const Units &, const Units &rhs) -> double {
                                     return rhs ^ fold_left(0, [](auto acc, auto &u) {
-                                             return acc + u->source(true).lloc();
+                                             return acc + u->writtenSource(true).lloc();
                                            });
                                   },
                                   [](const Units &) -> std::optional<double> { return {}; },
@@ -70,11 +70,11 @@ std::unordered_map<delta::Kind, std::pair<DeltaFn, MaxFn>> fns = {
      std::pair{
          [](const Units &lhs, const Units &rhs) -> double {
            auto value = std::numeric_limits<double>::max();
-           auto ls = lhs ^ map([](auto &x) { return x->source(true).content(); });
+           auto ls = lhs ^ map([](auto &x) { return x->writtenSource(true).content(); });
            do {
              auto lhsSrc =
                  ls ^ fold_left(std::string{}, [](auto &&acc, auto &x) { return acc += x; });
-             auto rs = lhs ^ map([](auto &x) { return x->source(true).content(); });
+             auto rs = lhs ^ map([](auto &x) { return x->writtenSource(true).content(); });
              do {
                auto rhsSrc =
                    rs ^ fold_left(std::string{}, [](auto &&acc, auto &x) { return acc += x; });
@@ -84,14 +84,15 @@ std::unordered_map<delta::Kind, std::pair<DeltaFn, MaxFn>> fns = {
            return value;
          },
          [](const Units &xs) -> std::optional<double> {
-           return (xs ^
-                   fold_left(std::string{},
-                             [](auto &&acc, auto &x) { return acc += x->source(true).content(); }))
+           return (xs ^ fold_left(std::string{},
+                                  [](auto &&acc, auto &x) {
+                                    return acc += x->writtenSource(true).content();
+                                  }))
                .size();
          },
      }},
-    treeSelect(delta::Kind::TSTreeRel, [](auto &u) { return u->source(true).tsTree(); }),
-    treeSelect(delta::Kind::TSTreeRawRel, [](auto &u) { return u->source(true).tsTree(); }),
+    treeSelect(delta::Kind::TSTreeRel, [](auto &u) { return u->writtenSource(true).tsTree(); }),
+    treeSelect(delta::Kind::TSTreeRawRel, [](auto &u) { return u->writtenSource(true).tsTree(); }),
 
     treeSelect(delta::Kind::STreeRel, [](auto &u) { return u->sTree(); }),
     treeSelect(delta::Kind::STreeInlineRel, [](auto &u) { return u->sTreeInlined(); }),
@@ -245,7 +246,7 @@ int delta::run(const delta::Options &options) {
   std::vector<Model> models(options.databases.size());
   par_for(options.databases, [&](auto &spec, auto idx) {
     auto dbFile = spec.path + "/db.json";
-    const auto db = Databases::clangDBFromJsonFile(dbFile);
+    const auto db = Codebase::loadDB(dbFile);
     const auto excludes = options.excludes ^ map([](auto &f) { return globToRegex(f.glob); });
     const auto cb = Codebase::load(db, std::cout, true, spec.path, {}, [&](auto &path) {
       return excludes ^ forall([&](auto &r) { return !std::regex_match(path, r); });
@@ -263,9 +264,10 @@ int delta::run(const delta::Options &options) {
                    get_or_else(u->name());                                                    //
           })                                                                                  //
         ^ to_vector() ^ sort_by([](auto &name, auto &us) {                                    //
-            return std::pair{
-                name, //
-                us ^ fold_left(0, [](auto acc, auto &u) { return acc + u->source(true).sloc(); })};
+            return std::pair{name,                                                            //
+                             us ^ fold_left(0, [](auto acc, auto &u) {
+                               return acc + u->writtenSource(true).sloc();
+                             })};
           });
     std::cout << "# [ " << models[idx].path << " ]" << std::endl;
     for (auto &[name, us] : models[idx].entries) {
@@ -296,11 +298,11 @@ int delta::run(const delta::Options &options) {
     std::vector<std::tuple<delta::Kind, std::string, size_t, double>> deltas(tasks.size());
     auto taskReverseSizes = tasks ^ sort_by([](auto, auto, auto, auto, auto &l, auto &r) {
                               return -(l | concat(r) | fold_left(0, [](auto acc, auto &u) {
-                                         return acc                                 //
-                                                + u->sTree().nodes()                //
-                                                + u->sTreeInlined().nodes()         //
-                                                + u->irTree().nodes()               //
-                                                + u->source(true).tsTree().nodes(); //
+                                         return acc                                        //
+                                                + u->sTree().nodes()                       //
+                                                + u->sTreeInlined().nodes()                //
+                                                + u->irTree().nodes()                      //
+                                                + u->writtenSource(true).tsTree().nodes(); //
                                        }));
                             });
 

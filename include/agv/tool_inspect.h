@@ -4,10 +4,8 @@
 
 namespace agv::inspect {
 
-enum class Kind { Entry, Dependencies };
 struct Options {
-  std::string dbDir;
-  Kind kind;
+  std::filesystem::path dbDir;
 };
 
 [[nodiscard]] int main(int argc, const char **argv);

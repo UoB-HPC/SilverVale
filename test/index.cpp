@@ -1,6 +1,7 @@
 #include <fstream>
 #include <iostream>
 #include <thread>
+#include <tuple>
 
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
@@ -17,100 +18,117 @@
 
 using namespace aspartame;
 
-using namespace clang;
-using namespace clang::tooling;
-using namespace llvm;
-
-static bool fileExist(const std::string &file) {
-  std::ifstream infile(file);
-  return infile.good();
-}
-
 TEST_CASE("clang-database") {
 
-  auto baseGlobs = std::vector<std::string>{"*/db.json", "*/*main.cpp.pch.zstd"};
+  auto gccBaseGlobs = std::vector{"*/*main.sv.json"};
+  auto clangBaseGlobs = std::vector{"*/*main.sv.json", "*/*main.pch.zstd"};
 
-  auto [dir, model, globs] =
-      GENERATE(std::tuple{FIXTURE_MICROSTREAM_CLANG_SERIAL_DIR, "serial", //
-                          std::vector{"*/*main.bc"}}                      //
-#ifdef FIXTURE_MICROSTREAM_CLANG_OMP_DIR
-               ,
-               std::tuple{FIXTURE_MICROSTREAM_CLANG_OMP_DIR, "omp", //
-                          std::vector{"*/*main.bc"}}                //
+  auto [expr, globs, ext] = GENERATE_REF(
+      std::tuple{FIXTURE_MICROSTREAM_GCC_SERIAL_EXPR,
+                 std::vector{"*/*.main.named.irtree.json", "*/*.main.unnamed.irtree.json"} ^
+                     concat(gccBaseGlobs),
+                 ".cpp"},
+
+      std::tuple{FIXTURE_MICROSTREAM_GCC_OMP_EXPR,
+                 std::vector{"*/*.main.named.irtree.json", "*/*.main.unnamed.irtree.json"} ^
+                     concat(gccBaseGlobs),
+                 ".cpp"},
+
+      std::tuple{FIXTURE_MICROSTREAM_GCC_SERIAL_F90_EXPR,
+                 std::vector{"*/*.main.named.irtree.json", "*/*.main.unnamed.irtree.json"} ^
+                     concat(gccBaseGlobs),
+                 ".F90"},
+
+      std::tuple{FIXTURE_MICROSTREAM_GCC_OMP_F90_EXPR,
+                 std::vector{"*/*.main.named.irtree.json", "*/*.main.unnamed.irtree.json"} ^
+                     concat(gccBaseGlobs),
+                 ".F90"},
+
+      std::tuple{FIXTURE_MICROSTREAM_CLANG_SERIAL_EXPR,
+                 std::vector{"*/*main.bc"} ^ concat(clangBaseGlobs), ".cpp"} //
+
+#ifdef FIXTURE_MICROSTREAM_CLANG_OMP_EXPR
+      ,
+      std::tuple{FIXTURE_MICROSTREAM_CLANG_OMP_EXPR,
+                 std::vector{"*/*main.bc"} ^ concat(clangBaseGlobs), ".cpp"} //
 #endif
-#ifdef FIXTURE_MICROSTREAM_CLANG_OMP_TARGET_DIR
-               ,
-               std::tuple{FIXTURE_MICROSTREAM_CLANG_OMP_TARGET_DIR, "omp_target", //
-                          std::vector{"*/*main.bc", "*/*main-openmp-*.bc"}}       //
+#ifdef FIXTURE_MICROSTREAM_CLANG_OMP_TARGET_EXPR
+      ,
+      std::tuple{FIXTURE_MICROSTREAM_CLANG_OMP_TARGET_EXPR,
+                 std::vector{"*/*main.bc", "*/*main-openmp-*.bc"} ^ concat(clangBaseGlobs), ".cpp"}
+  //
 #endif
-#ifdef FIXTURE_MICROSTREAM_CLANG_HIP_DIR
-               ,
-               std::tuple{FIXTURE_MICROSTREAM_CLANG_HIP_DIR, "hip",             //
-                          std::vector{"*/*main-host-*.bc", "*/*main-hip-*.bc"}} //
+#ifdef FIXTURE_MICROSTREAM_CLANG_HIP_EXPR
+      ,
+      std::tuple{FIXTURE_MICROSTREAM_CLANG_HIP_EXPR, //
+                 std::vector{"*/*main-host-*.bc", "*/*main-hip-*.bc"} ^ concat(clangBaseGlobs),
+                 ".cpp"} //
 #endif
-#ifdef FIXTURE_MICROSTREAM_CLANG_CUDA_DIR
-               ,
-               std::tuple{FIXTURE_MICROSTREAM_CLANG_CUDA_DIR, "cuda", //
-                          std::vector{"*/*main.bc", "*/*main-cuda-*.bc"}}
+#ifdef FIXTURE_MICROSTREAM_CLANG_CUDA_EXPR
+      ,
+      std::tuple{FIXTURE_MICROSTREAM_CLANG_CUDA_EXPR,
+                 std::vector{"*/*main.bc", "*/*main-cuda-*-sm_60.bc"} ^ concat(clangBaseGlobs),
+                 ".cpp"}
 #endif
-      ); //
+  ); //
 
-  auto out = fmt::format("{}/microstream_{}_db", FIXTURE_TMP_DIR, model);
+  auto [name, compiler, model, dir] = expr;
 
-  DYNAMIC_SECTION("index " << model) {
-    int code = agv::index::run(agv::index::Options{
-        .buildDir = dir,
-        .sourceGlobs = {"*"},
-        .argsBefore = {},
-        .argsAfter = {},
-        .outDir = out,
-        .clearOutDir = true,
-        .verbose = true,
-        .noCompress = false,
-        .maxThreads = static_cast<int>(std::thread::hardware_concurrency()),
+  auto outDir = fmt::format("{}/{}_{}_{}_db", FIXTURE_TMP_DIR, name, compiler, model);
+  INFO(outDir);
 
-    });
-    CHECK(code == 0);
-    //    CHECK(fileExist(out + "/db.json"));
-    //    CHECK(fileExist(out + "/0.main.cpp.pch.zstd"));
-    //    CHECK(fileExist(out + "/0.main.bc"));
+  DYNAMIC_SECTION(compiler << " " << model) {
 
-    std::error_code walkError{};
-    for (sys::fs::directory_iterator it = sys::fs::directory_iterator(out, walkError), itEnd;
-         it != itEnd && !walkError; it.increment(walkError)) {
-      std::string bcFile = sys::path::filename(it->path()).str();
-      CHECK((baseGlobs ^ concat(globs) ^ exists([&](auto glob) {
-               INFO("Validating " << glob << " against " << it->path());
-               return std::regex_match(it->path(), agv::globToRegex(glob));
-             })));
+    DYNAMIC_SECTION("index " << model) {
+      int code = agv::index::run(agv::index::Options{
+          .buildDir = dir,
+          .sourceGlobs = {"*"},
+          .outDir = outDir,
+          .clearOutDir = true,
+          .verbose = true,
+          .maxThreads = static_cast<int>(std::thread::hardware_concurrency()),
+
+      });
+      CHECK(code == 0);
+
+      try {
+        std::vector<std::string> files;
+        for (const auto &entry : std::filesystem::directory_iterator(outDir))
+          files.emplace_back(entry.path());
+        for (auto glob : globs) {
+          auto matches = files ^ filter([&](auto file) {
+                           return std::regex_match(file, agv::globToRegex(glob));
+                         });
+          INFO(glob << " matches one of " << (files ^ mk_string("[", ",", "]")));
+          CHECK(matches.size() == 1);
+        }
+      } catch (const std::exception &e) {
+        FAIL("cannot walk directory" << outDir << ": " << e.what());
+      }
     }
 
-    if (walkError) FAIL("cannot walk directory" << out);
-  }
+    DYNAMIC_SECTION("inspect " << model) {
+      auto buffer = std::cout.rdbuf();
+      std::ostringstream ss;
+      std::cout.rdbuf(ss.rdbuf());
+      int code = agv::inspect::run(agv::inspect::Options{.dbDir = outDir});
+      std::cout.rdbuf(buffer);
+      CHECK(code == 0);
+      auto actual = ss.str() ^ lines();
+      REQUIRE(actual.size() == 2);
+      CHECK(actual[0] == "entry,deps");
+      CHECK(actual[1] ^ contains_slice(fmt::format("main{},", ext)));
+    }
 
-  DYNAMIC_SECTION("inspect " << model) {
-    auto buffer = std::cout.rdbuf();
-    std::ostringstream ss;
-    std::cout.rdbuf(ss.rdbuf());
-    int code =
-        agv::inspect::run(agv::inspect::Options{.dbDir = out, .kind = agv::inspect::Kind::Entry});
-    std::cout.rdbuf(buffer);
-    CHECK(code == 0);
-    auto actual = ss.str() ^ lines();
-    REQUIRE(actual.size() == 2);
-    CHECK(actual[0] == "entry,deps");
-    CHECK(actual[1] ^ contains_slice("microstream/main.cpp,"));
-  }
-
-  DYNAMIC_SECTION("script " << model) {
-    std::string scriptPath = std::string(FIXTURE_TMP_DIR) + "/script.lua";
-    {
-      std::ofstream script(scriptPath, std::ios::trunc);
-      REQUIRE(script.is_open());
-      script << R"(
+    DYNAMIC_SECTION("script " << model) {
+      std::string scriptPath = fmt::format("{}/script.lua", FIXTURE_TMP_DIR);
+      {
+        std::ofstream script(scriptPath, std::ios::trunc);
+        REQUIRE(script.is_open());
+        script << R"(
 print(#arg)
 print(arg[1])
-local db = Databases.clangDBFromJsonFile(arg[1] .. "/db.json")
+local db = Codebase.loadDB(arg[1])
 
 local n = 0
 for _ in pairs(db:entries()) do n = n + 1 end
@@ -120,25 +138,29 @@ local cb = Codebase.load(db, true, arg[1], {}, function(s) return true end)
 print(cb:units()[1]:name())
 print(Diff.apted(cb:units()[1]:sTree(), cb:units()[1]:sTree()))
 )";
-    }
-    auto buffer = std::cout.rdbuf();
-    std::ostringstream ss;
-    std::cout.rdbuf(ss.rdbuf());
-    int code = agv::script::run(
-        agv::script::Options{.roots = {},
-                             .defs = false,
-                             .noBuffer = false,
-                             .maxThreads = static_cast<int>(std::thread::hardware_concurrency()),
-                             .args = {scriptPath, out}});
-    std::cout.rdbuf(buffer);
-    CHECK(code == 0);
+      }
+      auto buffer = std::cout.rdbuf();
+      std::ostringstream captured;
+      std::cout.rdbuf(captured.rdbuf());
+      int code = agv::script::run(
+          agv::script::Options{.roots = {},
+                               .defs = false,
+                               .noBuffer = false,
+                               .maxThreads = static_cast<int>(std::thread::hardware_concurrency()),
+                               .args = {scriptPath, outDir}});
+      std::cout.rdbuf(buffer);
 
-    auto actual = ss.str() ^ lines() ^ filter([](auto &l) { return !(l ^ starts_with("#")); });
-    REQUIRE(actual.size() == 5);
-    CHECK(actual[0] == "1");
-    CHECK(actual[1] == out);
-    CHECK(actual[2] == "1");
-    CHECK(actual[3] ^ starts_with("main.")); // either main.cpp or main.ii
-    CHECK(actual[4] == "0.0");
+      CHECK(code == 0);
+
+      auto actual =
+          captured.str() ^ lines() ^ filter([](auto &l) { return !(l ^ starts_with("#")); });
+      INFO((actual ^ mk_string("\n")));
+      REQUIRE(actual.size() == 5);
+      CHECK(actual[0] == "1");
+      CHECK(actual[1] == outDir);
+      CHECK(actual[2] == "1");
+      CHECK(actual[3] ^ starts_with("main.")); // either main.cpp or main.ii
+      CHECK(actual[4] == "0.0");
+    }
   }
 }

@@ -10,7 +10,6 @@
 #include "agv/tool_inspect.h"
 #include "agv/tool_script.h"
 
-using namespace llvm;
 using namespace aspartame;
 
 enum class Kind : uint8_t { Build = 1, Inspect, Script, Delta };

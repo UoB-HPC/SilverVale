@@ -17,7 +17,7 @@ using namespace aspartame;
 using namespace llvm;
 
 double tsTree(const agv::Unit &l, const agv::Unit &r) {
-  return agv::Diff::apted(l.source(true).tsTree(), r.source(true).tsTree());
+  return agv::Diff::apted(l.writtenSource(true).tsTree(), r.writtenSource(true).tsTree());
 }
 
 double sTree(const agv::Unit &l, const agv::Unit &r) {
@@ -25,7 +25,7 @@ double sTree(const agv::Unit &l, const agv::Unit &r) {
 }
 
 double diff(const agv::Unit &l, const agv::Unit &r) {
-  return agv::Diff::diff(l.source(true).content(), r.source(true).content());
+  return agv::Diff::diff(l.writtenSource(true).content(), r.writtenSource(true).content());
 }
 
 static Expected<agv::script::Options> parseOpts(int argc, const char **argv) {
@@ -71,20 +71,18 @@ int agv::script::main(int argc, const char **argv) {
   return agv::parseAndRun(argc, argv, &parseOpts, &run);
 }
 
-constexpr agv::lua::TypeList<       //
-    agv::FlatDatabase,              //
-    agv::FlatDatabase::Entry,       //
-    agv::ClangDatabase,             //
-    agv::ClangDatabase::Entry,      //
-    agv::ClangDatabase::Bitcode,    //
-    agv::ClangDatabase::Dependency, //
-    agv::Tree,                      //
-    agv::Source,                    //
-    agv::Unit,                      //
-    agv::Codebase,                  //
-    agv::Databases,                 //
-    agv::Diff,                      //
-    agv::Glob                       //
+constexpr agv::lua::TypeList< //
+    agv::Dependency,          //
+    agv::FlatEntry,           //
+    agv::ClangEntry,          //
+    agv::LLVMBitcode,         //
+    agv::Tree,                //
+    agv::Source,              //
+    agv::Unit,                //
+    agv::Codebase,            //
+    agv::Database,            //
+    agv::Diff,                //
+    agv::Glob                 //
     >
     Types;
 

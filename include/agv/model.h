@@ -10,8 +10,8 @@
 #include <vector>
 
 #include "glob.h"
-#include "nlohmann/json.hpp"
 #include "lua.h"
+#include "nlohmann/json.hpp"
 
 #include "database.h"
 #include "semantic_ts.h"
@@ -105,11 +105,13 @@ public:
 
 class Unit {
   std::string path_, name_;
-  Memoized<Source> lazySourceNormalised, lazySource;
+  Memoized<Source> lazyWrittenSourceNormalised, lazyWrittenSource;
+  Memoized<Source> lazyPreprocessedSourceNormalised, lazyPreprocessedSource;
 
 public:
   Tree sTreeRoot, sTreeInlinedRoot, irTreeRoot;
   TsTree sourceRoot;
+  TsTree preprocessedRoot;
 
   Unit(std::string path, const SemanticTree<std::string> &sTree,
        const SemanticTree<std::string> &sTreeInlined, const SemanticTree<std::string> &irTree,
@@ -119,14 +121,16 @@ public:
   [[nodiscard]] const Tree &sTree() const;
   [[nodiscard]] const Tree &sTreeInlined() const;
   [[nodiscard]] const Tree &irTree() const;
-  [[nodiscard]] Source source(bool normalise) const;
-  DEF_TEAL_SOL_UT(Unit,                          //
-                  SOL_UT_FN(Unit, path),         //
-                  SOL_UT_FN(Unit, name),         //
-                  SOL_UT_FN(Unit, sTree),        //
-                  SOL_UT_FN(Unit, sTreeInlined), //
-                  SOL_UT_FN(Unit, irTree),       //
-                  SOL_UT_FN(Unit, source));
+  [[nodiscard]] Source writtenSource(bool normalise) const;
+  [[nodiscard]] Source preprocessedSource(bool normalise) const;
+  DEF_TEAL_SOL_UT(Unit,                           //
+                  SOL_UT_FN(Unit, path),          //
+                  SOL_UT_FN(Unit, name),          //
+                  SOL_UT_FN(Unit, sTree),         //
+                  SOL_UT_FN(Unit, sTreeInlined),  //
+                  SOL_UT_FN(Unit, irTree),        //
+                  SOL_UT_FN(Unit, writtenSource), //
+                  SOL_UT_FN(Unit, preprocessedSource));
   friend std::ostream &operator<<(std::ostream &os, const Unit &unit);
 };
 
@@ -139,44 +143,35 @@ private:
   DEF_SOL_UT_ACCESSOR(units);
 
 public:
-  DEF_TEAL_SOL_UT(Codebase,                                                                    //
-                  SOL_UT_FN_ACC(Codebase, path),                                               //
-                  SOL_UT_FN_ACC(Codebase, units),                                              //
-                  SOL_UT_FN0(Codebase, load,                                                   //
-                             Codebase (*)(const ClangDatabase &,                               //
-                                          bool,                                                //
-                                          const std::string &,                                 //
-                                          const sol::nested<std::vector<std::string>> &,       //
-                                          const std::function<bool(const std::string &)> &))); //
-  friend std::ostream &operator<<(std::ostream &os, const Codebase &codebase);
+  [[nodiscard]] static Database loadDB(const std::string &dir);
 
-  [[nodiscard]] static Codebase load(const ClangDatabase &db,               //
+  [[nodiscard]] static Codebase load(const Database &x,                     //
                                      std::ostream &out,                     //
                                      bool normalise,                        //
                                      const std::string &path,               //
                                      const std::vector<std::string> &roots, //
                                      const std::function<bool(const std::string &)> &predicate);
-  [[nodiscard]] static Codebase load(const ClangDatabase &db,                            //
+
+  [[nodiscard]] static Codebase load(const Database &db,                                 //
                                      bool normalise,                                     //
                                      const std::string &path,                            //
                                      const sol::nested<std::vector<std::string>> &roots, //
                                      const std::function<bool(const std::string &)> &predicate) {
     return load(db, std::cout, normalise, path, roots.value(), predicate);
   }
-};
 
-struct Databases {
-  // FIXME move to Codebase and add FlatDB versions
-  [[nodiscard]] static ClangDatabase clangDBFromJsonString(const std::string &json);
-  [[nodiscard]] static ClangDatabase clangDBFromJsonStream(std::ifstream &stream);
-  [[nodiscard]] static ClangDatabase clangDBFromJsonFile(const std::string &file);
+  friend std::ostream &operator<<(std::ostream &os, const Codebase &codebase);
 
-  [[nodiscard]] static FlatDatabase flatDBFromDir(const std::string &dir);
-
-  DEF_TEAL_SOL_UT(Databases,                                   //
-                  SOL_UT_FN(Databases, clangDBFromJsonString), //
-                  SOL_UT_FN(Databases, clangDBFromJsonFile),   //
-                  SOL_UT_FN(Databases, flatDBFromDir))         //
+  DEF_TEAL_SOL_UT(Codebase,                       //
+                  SOL_UT_FN_ACC(Codebase, path),  //
+                  SOL_UT_FN_ACC(Codebase, units), //
+                  SOL_UT_FN(Codebase, loadDB),
+                  SOL_UT_FN0(Codebase, load,                                                   //
+                             Codebase (*)(const Database &,                                    //
+                                          bool,                                                //
+                                          const std::string &,                                 //
+                                          const sol::nested<std::vector<std::string>> &,       //
+                                          const std::function<bool(const std::string &)> &))); //
 };
 
 class Glob {

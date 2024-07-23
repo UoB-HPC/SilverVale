@@ -25,7 +25,7 @@ message(STATUS "Using ClangConfig.cmake in: ${Clang_DIR}")
 include(${LLVM_DIR}/AddLLVM.cmake)
 include(${Clang_DIR}/AddClang.cmake)
 
-CPMAddPackage("gh:nlohmann/json@3.11.2")
+CPMAddPackage("gh:nlohmann/json@3.11.3")
 CPMAddPackage("gh:fmtlib/fmt#11.0.1")
 CPMAddPackage("gh:catchorg/Catch2@3.6.0")
 CPMAddPackage("gh:ThePhD/sol2@3.3.0")
@@ -38,9 +38,12 @@ CPMAddPackage(
         GITHUB_REPOSITORY facebook/zstd
         VERSION 1.5.6
         SOURCE_SUBDIR build/cmake
-        OPTIONS
-        "ZSTD_BUILD_STATIC ON"
-        "ZSTD_BUILD_SHARED OFF")
+        OPTIONS "ZSTD_BUILD_STATIC ON" "ZSTD_BUILD_SHARED OFF" "BUILD_SHARED_LIBS OFF")
+CPMAddPackage(
+        GITHUB_REPOSITORY Cyan4973/xxHash
+        GIT_TAG a57f6cc # after https://github.com/Cyan4973/xxHash/commit/f17d319
+        SOURCE_SUBDIR cmake_unofficial
+        OPTIONS "XXHASH_BUILD_ENABLE_INLINE_API OFF" "XXHASH_BUILD_XXHSUM OFF")
 CPMAddPackage(
         NAME lua
         GITHUB_REPOSITORY lua/lua
@@ -142,6 +145,11 @@ list(APPEND AGV_LINK_FLAGS "$<$<CONFIG:Debug>:${AGV_LINK_DEBUG_FLAGS}>")
 add_library(AGV
         src/semantic_llvm.cpp
         src/semantic_ts.cpp
+
+        src/index_llvm.cpp
+        src/index_gcc.cpp
+        src/index_common.cpp
+
         src/tool_script.cpp
         src/tool_delta.cpp
         src/tool_index.cpp
@@ -164,6 +172,7 @@ target_link_libraries(AGV
         sol2
         lua
         fmt::fmt
+        xxHash::xxhash
 
         PUBLIC
         tree-sitter
@@ -179,47 +188,50 @@ target_link_libraries(AGV
 
 target_compile_options(AGV PRIVATE ${AGV_COMPILE_FLAGS})
 target_link_options(AGV PRIVATE ${AGV_LINK_FLAGS})
-target_precompile_headers(AGV PRIVATE
-        [["clang/Tooling/Tooling.h"]]
-        [["clang/Frontend/ASTUnit.h"]]
-        [["clang/AST/RecursiveASTVisitor.h"]]
-        [["clang/Frontend/FrontendActions.h"]]
-        [["clang/Tooling/CommonOptionsParser.h"]]
+if (CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_precompile_headers(AGV PRIVATE
+            [["clang/Tooling/Tooling.h"]]
+            [["clang/Frontend/ASTUnit.h"]]
+            [["clang/AST/RecursiveASTVisitor.h"]]
+            [["clang/Frontend/FrontendActions.h"]]
+            [["clang/Tooling/CommonOptionsParser.h"]]
 
-        [["llvm/IR/Module.h"]]
-        [["llvm/IR/LLVMContext.h"]]
-        [["llvm/Support/raw_ostream.h"]]
-        [["llvm/Bitcode/BitcodeReader.h"]]
+            [["llvm/IR/Module.h"]]
+            [["llvm/IR/LLVMContext.h"]]
+            [["llvm/Support/raw_ostream.h"]]
+            [["llvm/Bitcode/BitcodeReader.h"]]
 
-        [["oneapi/tbb.h"]]
+            [["oneapi/tbb.h"]]
 
-        [["nlohmann/json.hpp"]]
-        [["fmt/core.h"]]
-        [["sol/sol.hpp"]]
-        [["zstd.h"]]
+            [["nlohmann/json.hpp"]]
+            [["fmt/core.h"]]
+            [["sol/sol.hpp"]]
+            [["zstd.h"]]
 
-        [["aspartame/map.hpp"]]
-        [["aspartame/optional.hpp"]]
-        [["aspartame/string.hpp"]]
-        [["aspartame/vector.hpp"]]
-        [["aspartame/view.hpp"]]
+            [["aspartame/map.hpp"]]
+            [["aspartame/optional.hpp"]]
+            [["aspartame/string.hpp"]]
+            [["aspartame/vector.hpp"]]
+            [["aspartame/view.hpp"]]
 
-        <map>
-        <tuple>
-        <ctime>
-        <cstdint>
-        <memory>
-        <regex>
-        <string>
-        <vector>
-        <utility>
-        <optional>
-        <iostream>
-        <type_traits>
-        <functional>
-        <unordered_map>
+            <map>
+            <tuple>
+            <ctime>
+            <cstdint>
+            <memory>
+            <regex>
+            <string>
+            <vector>
+            <utility>
+            <optional>
+            <iostream>
+            <type_traits>
+            <functional>
+            <unordered_map>
+    )
+endif ()
 
-)
+add_executable(wrapper src/wrapper.cpp)
 
 add_executable(driver src/driver.cpp)
 add_executable(tests test/tree.cpp test/index.cpp test/structure.cpp)
@@ -232,16 +244,16 @@ foreach (target driver tests)
     target_link_options(${target} PRIVATE ${AGV_LINK_FLAGS})
 endforeach ()
 
-function(setup_fixture name cc cxx suffix)
+function(setup_fixture name cc cxx fc suffix)
     set(fixture_name "${name}_${cc}_${suffix}")
     string(TOUPPER ${fixture_name} fixture_name_upper)
     message(STATUS "Adding fixture ${fixture_name}")
     set(build_dir "${CMAKE_BINARY_DIR}/${fixture_name}_build")
-    set(FIXTURE_${fixture_name_upper}_DIR "${build_dir}" PARENT_SCOPE)
+    set(FIXTURE_${fixture_name_upper}_EXPR "std::tuple{ \"${name}\", \"${cc}\", \"${suffix}\", \"${build_dir}\" }" PARENT_SCOPE)
     add_custom_command(
             TARGET tests
             PRE_BUILD
-            COMMAND ${CMAKE_COMMAND} -E env CC=${cc} CXX=${cxx} ${CMAKE_COMMAND}
+            COMMAND ${CMAKE_COMMAND} -E env CC=${cc} CXX=${cxx} FC=${fc} ${CMAKE_COMMAND}
             -S "${CMAKE_SOURCE_DIR}/test/fixture/${name}"
             -B "${build_dir}"
             ${ARGN}
@@ -257,18 +269,21 @@ function(setup_fixture name cc cxx suffix)
 endfunction()
 
 
-setup_fixture(dummy clang clang++ "")
-setup_fixture(dummy gcc g++ "")
+setup_fixture(dummy clang clang++ flang-new "")
+setup_fixture(dummy gcc g++ gfortran "")
 
-setup_fixture(microstream clang clang++ serial -DUSE_SERIAL=ON)
-setup_fixture(microstream gcc g++ serial -DUSE_SERIAL=ON)
+setup_fixture(microstream gcc g++ gfortran serial_f90 -DUSE_SERIAL=ON -DUSE_FORTRAN=ON)
+setup_fixture(microstream gcc g++ gfortran omp_f90 -DUSE_OMP=ON -DUSE_FORTRAN=ON)
 
-setup_fixture(microstream clang clang++ omp -DUSE_OMP=ON)
-setup_fixture(microstream gcc g++ omp -DUSE_OMP=ON)
+setup_fixture(microstream clang clang++ flang-new serial -DUSE_SERIAL=ON)
+setup_fixture(microstream gcc g++ gfortran serial -DUSE_SERIAL=ON)
 
-setup_fixture(microstream clang clang++ omp_target -DUSE_OMP_TARGET=sm_60)
-setup_fixture(microstream clang clang++ cuda -DUSE_CUDA=sm_60 -DCMAKE_CUDA_COMPILER=clang++)
-setup_fixture(microstream clang clang++ hip -DUSE_HIP=gfx1036)
+setup_fixture(microstream clang clang++ flang-new omp -DUSE_OMP=ON)
+setup_fixture(microstream gcc g++ gfortran omp -DUSE_OMP=ON)
+
+setup_fixture(microstream clang clang++ flang-new omp_target -DUSE_OMP_TARGET=sm_60)
+setup_fixture(microstream clang clang++ flang-new cuda -DUSE_CUDA=sm_60 -DCMAKE_CUDA_COMPILER=clang++)
+setup_fixture(microstream clang clang++ flang-new hip -DUSE_HIP=gfx1036)
 set(FIXTURE_TMP_DIR ${CMAKE_CURRENT_BINARY_DIR})
 
 
@@ -276,7 +291,11 @@ set(config_template "#pragma once\n")
 get_cmake_property(all_variables VARIABLES)
 foreach (var ${all_variables})
     if (var MATCHES "^FIXTURE_")
-        string(APPEND config_template "#cmakedefine ${var} \"@${var}@\"\n")
+        if (var MATCHES "_EXPR$")
+            string(APPEND config_template "#cmakedefine ${var} @${var}@\n")
+        else ()
+            string(APPEND config_template "#cmakedefine ${var} \"@${var}@\"\n")
+        endif ()
     endif ()
 endforeach ()
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/fixture.h.in" "${config_template}")
@@ -284,3 +303,5 @@ configure_file("${CMAKE_CURRENT_BINARY_DIR}/fixture.h.in" ${CMAKE_CURRENT_BINARY
 target_include_directories(tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 
 add_subdirectory(uproot_gcc)
+add_dependencies(tests uproot_gcc)
+

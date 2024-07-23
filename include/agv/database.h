@@ -10,184 +10,247 @@
 
 namespace agv {
 
-struct ClangDatabase {
-
-  struct Dependency {
-    std::time_t modified{};
-    std::string content{};
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Dependency, modified, content);
-
-  private:
-    DEF_SOL_UT_ACCESSOR(modified);
-    DEF_SOL_UT_ACCESSOR(content);
-
-  public:
-    DEF_TEAL_SOL_UT(Dependency,                          //
-                    SOL_UT_FN_ACC(Dependency, modified), //
-                    SOL_UT_FN_ACC(Dependency, content));
-  };
-
-  struct Bitcode {
-    std::string name{};
-    std::string kind{};
-    std::string triple{};
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Bitcode, name, kind, triple);
-
-  private:
-    DEF_SOL_UT_ACCESSOR(name);
-    DEF_SOL_UT_ACCESSOR(kind);
-    DEF_SOL_UT_ACCESSOR(triple);
-
-  public:
-    DEF_TEAL_SOL_UT(Bitcode,                      //
-                    SOL_UT_FN_ACC(Bitcode, name), //
-                    SOL_UT_FN_ACC(Bitcode, kind), //
-                    SOL_UT_FN_ACC(Bitcode, triple));
-    friend std::ostream &operator<<(std::ostream &os, const ClangDatabase::Bitcode &bitcode) {
-      return os << "agv::Database::Bitcode{"        //
-                << ".name=" << bitcode.name << ", " //
-                << ".kind=" << bitcode.kind << ", " //
-                << ".triple=" << bitcode.triple     //
-                << "}";
-    }
-  };
-
+struct CompilationDatabase {
   struct Entry {
-    std::string compileCommand{};
-    std::string pchName{};
-    std::vector<Bitcode> bitcodes{};
-    std::map<std::string, std::string> dependencies{};
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Entry, compileCommand, pchName, bitcodes, dependencies);
+    std::string directory;
+    std::vector<std::string> command;
+    std::string file;
+    std::string output;
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_ONLY_SERIALIZE(Entry, directory, command, file, output);
+
+    friend void from_json(const nlohmann::json &json, Entry &entry) {
+      // see https://clang.llvm.org/docs/JSONCompilationDatabase.html
+      json.at("directory").get_to(entry.directory);
+      json.at("file").get_to(entry.file);
+      json.at("output").get_to(entry.output);
+      // we may see either arguments: string[] or command: string
+      if (json.contains("command")) {
+        auto cmd = json.at("command").get<std::string>();
+        std::istringstream iss(cmd);
+        std::string s;
+        while (getline(iss, s, ' '))
+          entry.command.emplace_back(s);
+      } else if (json.contains("arguments")) json.at("arguments").get_to(entry.command);
+    }
 
   private:
-    DEF_SOL_UT_ACCESSOR(compileCommand);
-    DEF_SOL_UT_ACCESSOR(pchName);
-    DEF_SOL_UT_ACCESSOR(bitcodes);
-    DEF_SOL_UT_ACCESSOR(dependencies);
+    DEF_SOL_UT_ACCESSOR(directory);
+    DEF_SOL_UT_ACCESSOR(command);
+    DEF_SOL_UT_ACCESSOR(file);
+    DEF_SOL_UT_ACCESSOR(output);
 
   public:
-    DEF_TEAL_SOL_UT(Entry,                                //
-                    SOL_UT_FN_ACC(Entry, compileCommand), //
-                    SOL_UT_FN_ACC(Entry, pchName),        //
-                    SOL_UT_FN_ACC(Entry, bitcodes),       //
-                    SOL_UT_FN_ACC(Entry, dependencies));
-
-    friend std::ostream &operator<<(std::ostream &os, const ClangDatabase::Entry &entry) {
-      os << "agv::Database::Entry{"                                        //
-         << ".pchName=" << entry.pchName << ", "                           //
-         << ".compileCommands=" << entry.compileCommand << ", "            //
-         << ".dependencies=(" << entry.dependencies.size() << ")" << ", "; //
-      for (size_t i = 0; i < entry.bitcodes.size(); ++i)                   //
-        os << ".bitcodes[" << i << "]=" << entry.bitcodes[i] << ", ";      //
-      os << "}";
-      return os;
-    }
+    DEF_TEAL_SOL_UT(Entry,                           //
+                    SOL_UT_FN_ACC(Entry, directory), //
+                    SOL_UT_FN_ACC(Entry, command),   //
+                    SOL_UT_FN_ACC(Entry, file),      //
+                    SOL_UT_FN_ACC(Entry, output));
   };
 
-  std::map<std::string, std::string> attributes{};
-  std::string root{};
-  std::map<std::string, Entry> entries{};
-  std::map<std::string, Dependency> dependencies{};
-
-  NLOHMANN_DEFINE_TYPE_INTRUSIVE(ClangDatabase, //
-                                 attributes,    //
-                                 root, entries, dependencies);
+  std::vector<Entry> entries;
+  friend void to_json(nlohmann::json &json, const CompilationDatabase &db) { json = db.entries; }
+  friend void from_json(const nlohmann::json &json, CompilationDatabase &db) {
+    json.get_to(db.entries);
+  }
 
 private:
-  DEF_SOL_UT_ACCESSOR(attributes);
-  DEF_SOL_UT_ACCESSOR(root);
   DEF_SOL_UT_ACCESSOR(entries);
-  DEF_SOL_UT_ACCESSOR(dependencies);
 
 public:
-  DEF_TEAL_SOL_UT(ClangDatabase,                            //
-                  SOL_UT_FN_ACC(ClangDatabase, attributes), //
-                  SOL_UT_FN_ACC(ClangDatabase, root),       //
-                  SOL_UT_FN_ACC(ClangDatabase, entries),    //
-                  SOL_UT_FN_ACC(ClangDatabase, dependencies));
+  DEF_TEAL_SOL_UT(CompilationDatabase, //
+                  SOL_UT_FN_ACC(CompilationDatabase, entries));
+};
 
-  friend std::ostream &operator<<(std::ostream &os, const ClangDatabase &database) {
-    os << "agv::Database{"; //
-    for (auto &[k, v] : database.attributes)
+struct Dependency {
+  std::time_t modified{};
+  std::string content{};
+  NLOHMANN_DEFINE_TYPE_INTRUSIVE(Dependency, modified, content);
+
+private:
+  DEF_SOL_UT_ACCESSOR(modified);
+  DEF_SOL_UT_ACCESSOR(content);
+
+public:
+  DEF_TEAL_SOL_UT(Dependency,                          //
+                  SOL_UT_FN_ACC(Dependency, modified), //
+                  SOL_UT_FN_ACC(Dependency, content));
+};
+
+struct LLVMBitcode {
+  std::string file{};
+  std::string kind{};
+  std::string triple{};
+  NLOHMANN_DEFINE_TYPE_INTRUSIVE(LLVMBitcode, file, kind, triple);
+
+private:
+  DEF_SOL_UT_ACCESSOR(file);
+  DEF_SOL_UT_ACCESSOR(kind);
+  DEF_SOL_UT_ACCESSOR(triple);
+
+public:
+  DEF_TEAL_SOL_UT(LLVMBitcode,                      //
+                  SOL_UT_FN_ACC(LLVMBitcode, file), //
+                  SOL_UT_FN_ACC(LLVMBitcode, kind), //
+                  SOL_UT_FN_ACC(LLVMBitcode, triple));
+  friend std::ostream &operator<<(std::ostream &os, const LLVMBitcode &bitcode) {
+    return os << "agv::LLVMBitcode{"              //
+              << ".file=" << bitcode.file << ", " //
+              << ".kind=" << bitcode.kind << ", " //
+              << ".triple=" << bitcode.triple     //
+              << "}";
+  }
+};
+
+struct ClangEntry {
+
+  std::string kind = "clang";
+  std::string language;
+
+  std::string file;
+  std::string command;
+  std::string preprocessed{};
+
+  std::string pchFile{};
+  std::vector<LLVMBitcode> bitcodes{};
+  std::map<std::string, Dependency> dependencies{};
+  std::map<std::string, std::string> attributes{};
+
+  NLOHMANN_DEFINE_TYPE_INTRUSIVE(ClangEntry, kind, language, file, command, preprocessed, //
+                                 pchFile, bitcodes, dependencies, attributes);
+
+private:
+  DEF_SOL_UT_ACCESSOR(kind);
+  DEF_SOL_UT_ACCESSOR(language);
+  DEF_SOL_UT_ACCESSOR(file);
+  DEF_SOL_UT_ACCESSOR(command);
+  DEF_SOL_UT_ACCESSOR(preprocessed);
+  DEF_SOL_UT_ACCESSOR(pchFile);
+  DEF_SOL_UT_ACCESSOR(bitcodes);
+  DEF_SOL_UT_ACCESSOR(dependencies);
+  DEF_SOL_UT_ACCESSOR(attributes);
+
+public:
+  DEF_TEAL_SOL_UT(ClangEntry,                              //
+                  SOL_UT_FN_ACC(ClangEntry, kind),         //
+                  SOL_UT_FN_ACC(ClangEntry, language),     //
+                  SOL_UT_FN_ACC(ClangEntry, file),         //
+                  SOL_UT_FN_ACC(ClangEntry, command),      //
+                  SOL_UT_FN_ACC(ClangEntry, preprocessed), //
+                  SOL_UT_FN_ACC(ClangEntry, pchFile),      //
+                  SOL_UT_FN_ACC(ClangEntry, bitcodes),     //
+                  SOL_UT_FN_ACC(ClangEntry, dependencies), //
+                  SOL_UT_FN_ACC(ClangEntry, attributes));
+
+  friend std::ostream &operator<<(std::ostream &os, const ClangEntry &entry) {
+    os << "agv::ClangEntry{"                                        //
+       << ".kind=" << entry.kind << ", "                            //
+       << ".language=" << entry.language << ", "                    //
+       << ".file=" << entry.file << ", "                            //
+       << ".commands=" << entry.command << ", "                     //
+       << ".preprocessed=(" << entry.preprocessed.size() << "), "   //
+       << ".pchFile=" << entry.pchFile << ", ";                     //
+    for (size_t i = 0; i < entry.bitcodes.size(); ++i)              //
+      os << ".bitcodes[" << i << "]=" << entry.bitcodes[i] << ", "; //
+    for (auto &[k, v] : entry.dependencies)
+      os << ".dependencies[" << k << "]=(" << v.content.size() << "), ";
+    for (auto &[k, v] : entry.attributes)
       os << ".attributes[" << k << "]=" << v << ", ";
-    for (auto &[k, v] : database.entries)
-      os << ".entries[" << k << "]=" << v << ", ";
-    os << ".dependencies=(" << database.dependencies.size() << ")" //
-       << "}";
+    os << "}";
     return os;
   }
 };
 
-struct FlatDatabase {
+struct FlatEntry {
 
-  struct Entry {
-    std::string filename;
-    std::string command;
-    std::string raw{};
-    std::string preprocessed{};
+  std::string kind = "flat";
+  std::string language;
 
-    std::string namedSTreeFile{};
-    std::string unnamedSTreeFile{};
-    std::string namedIRTreeFile{};
-    std::string unnamedIRTreeFile{};
+  std::string file;
+  std::string command;
+  std::string preprocessed{};
 
-    std::map<std::string, std::string> attributes{};
+  std::string namedSTreeFile{};
+  std::string unnamedSTreeFile{};
+  std::string namedIRTreeFile{};
+  std::string unnamedIRTreeFile{};
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Entry,                                //
-                                   filename, command, raw, preprocessed, //
-                                   namedIRTreeFile, unnamedSTreeFile,    //
-                                   namedIRTreeFile, unnamedIRTreeFile,   //
-                                   attributes);
+  std::map<std::string, Dependency> dependencies{};
+  std::map<std::string, std::string> attributes{};
 
-  private:
-    DEF_SOL_UT_ACCESSOR(filename);
-    DEF_SOL_UT_ACCESSOR(command);
-    DEF_SOL_UT_ACCESSOR(raw);
-    DEF_SOL_UT_ACCESSOR(preprocessed);
-    DEF_SOL_UT_ACCESSOR(namedSTreeFile);
-    DEF_SOL_UT_ACCESSOR(unnamedSTreeFile);
-    DEF_SOL_UT_ACCESSOR(namedIRTreeFile);
-    DEF_SOL_UT_ACCESSOR(unnamedIRTreeFile);
-    DEF_SOL_UT_ACCESSOR(attributes);
-
-  public:
-    DEF_TEAL_SOL_UT(Entry,                                   //
-                    SOL_UT_FN_ACC(Entry, filename),          //
-                    SOL_UT_FN_ACC(Entry, command),           //
-                    SOL_UT_FN_ACC(Entry, raw),               //
-                    SOL_UT_FN_ACC(Entry, preprocessed),      //
-                    SOL_UT_FN_ACC(Entry, namedSTreeFile),    //
-                    SOL_UT_FN_ACC(Entry, unnamedSTreeFile),  //
-                    SOL_UT_FN_ACC(Entry, namedIRTreeFile),   //
-                    SOL_UT_FN_ACC(Entry, unnamedIRTreeFile), //
-                    SOL_UT_FN_ACC(Entry, attributes));
-
-    friend std::ostream &operator<<(std::ostream &os, const Entry &database) {
-      os << "agv::FlatDatabase::Entry{"                                  //
-         << ".filename=" << database.filename << ", "                    //
-         << ".command=" << database.command << ", "                      //
-         << ".raw=" << database.raw << ", "                              //
-         << ".preprocessed=" << database.preprocessed << ", "            //
-         << ".namedSTreeFile=" << database.namedSTreeFile << ", "        //
-         << ".unnamedSTreeFile=" << database.unnamedSTreeFile << ", "    //
-         << ".namedIRTreeFile=" << database.namedIRTreeFile << ", "      //
-         << ".unnamedIRTreeFile=" << database.unnamedIRTreeFile << ", "; //
-      for (auto &[k, v] : database.attributes)
-        os << ".attributes[" << k << "]=" << v << ", ";
-      os << "}";
-      return os;
-    }
-  };
-
-  std::map<std::string, Entry> entries{};
-
-  NLOHMANN_DEFINE_TYPE_INTRUSIVE(FlatDatabase, entries);
+  NLOHMANN_DEFINE_TYPE_INTRUSIVE(FlatEntry,                                   //
+                                 kind, language, file, command, preprocessed, //
+                                 namedSTreeFile, unnamedSTreeFile,            //
+                                 namedIRTreeFile, unnamedIRTreeFile,          //
+                                 dependencies, attributes);
 
 private:
+  DEF_SOL_UT_ACCESSOR(kind);
+  DEF_SOL_UT_ACCESSOR(language);
+  DEF_SOL_UT_ACCESSOR(file);
+  DEF_SOL_UT_ACCESSOR(command);
+  DEF_SOL_UT_ACCESSOR(preprocessed);
+  DEF_SOL_UT_ACCESSOR(namedSTreeFile);
+  DEF_SOL_UT_ACCESSOR(unnamedSTreeFile);
+  DEF_SOL_UT_ACCESSOR(namedIRTreeFile);
+  DEF_SOL_UT_ACCESSOR(unnamedIRTreeFile);
+  DEF_SOL_UT_ACCESSOR(dependencies);
+  DEF_SOL_UT_ACCESSOR(attributes);
+
+public:
+  DEF_TEAL_SOL_UT(FlatEntry,                                   //
+                  SOL_UT_FN_ACC(FlatEntry, kind),              //
+                  SOL_UT_FN_ACC(FlatEntry, language),          //
+                  SOL_UT_FN_ACC(FlatEntry, file),              //
+                  SOL_UT_FN_ACC(FlatEntry, command),           //
+                  SOL_UT_FN_ACC(FlatEntry, preprocessed),      //
+                  SOL_UT_FN_ACC(FlatEntry, namedSTreeFile),    //
+                  SOL_UT_FN_ACC(FlatEntry, unnamedSTreeFile),  //
+                  SOL_UT_FN_ACC(FlatEntry, namedIRTreeFile),   //
+                  SOL_UT_FN_ACC(FlatEntry, unnamedIRTreeFile), //
+                  SOL_UT_FN_ACC(FlatEntry, dependencies),      //
+                  SOL_UT_FN_ACC(FlatEntry, attributes));
+
+  friend std::ostream &operator<<(std::ostream &os, const FlatEntry &db) {
+    os << "agv::FlatEntry{"                                      //
+       << ".kind=" << db.kind << ", "                            //
+       << ".language=" << db.language << ", "                    //
+       << ".file=" << db.file << ", "                            //
+       << ".command=" << db.command << ", "                      //
+       << ".preprocessed=(" << db.preprocessed.size() << "), "   //
+       << ".namedSTreeFile=" << db.namedSTreeFile << ", "        //
+       << ".unnamedSTreeFile=" << db.unnamedSTreeFile << ", "    //
+       << ".namedIRTreeFile=" << db.namedIRTreeFile << ", "      //
+       << ".unnamedIRTreeFile=" << db.unnamedIRTreeFile << ", "; //
+    for (auto &[k, v] : db.dependencies)
+      os << ".dependencies[" << k << "]=(" << v.content.size() << "), ";
+    for (auto &[k, v] : db.attributes)
+      os << ".attributes[" << k << "]=" << v << ", ";
+    os << "}";
+    return os;
+  }
+};
+
+struct Database {
+  std::string root{};
+  std::vector<std::variant<ClangEntry, FlatEntry>> entries{};
+
+private:
+  DEF_SOL_UT_ACCESSOR(root);
   DEF_SOL_UT_ACCESSOR(entries);
 
 public:
-  DEF_TEAL_SOL_UT(FlatDatabase, SOL_UT_FN_ACC(FlatDatabase, entries));
+  DEF_TEAL_SOL_UT(Database,                      //
+                  SOL_UT_FN_ACC(Database, root), //
+                  SOL_UT_FN_ACC(Database, entries));
+
+  friend std::ostream &operator<<(std::ostream &os, const Database &db) {
+    os << "agv::Database{"             //
+       << ".root=" << db.root << ", "; //
+    for (auto &e : db.entries)
+      std::visit([&](auto &&e) { os << ".entries[" << e.file << "]=" << e << ", "; }, e);
+    os << "}";
+    return os;
+  }
 };
 
 } // namespace agv

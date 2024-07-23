@@ -3,9 +3,11 @@
 #include <iostream>
 #include <string>
 #include <thread>
+#include <utility>
 #include <variant>
 
 #include "agv/database.h"
+#include "agv/exec.h"
 #include "agv/tree.h"
 
 #include "gcc-plugin.h"
@@ -169,15 +171,14 @@ class GimpleUprootPass : public gimple_opt_pass, agv::SemanticTreeVisitor<Node, 
 
   std::atomic_long nameCounter{};
   agv::SemanticTree<Node> root;
-  agv::FlatDatabase::Entry entry;
-  std::string dbDir;
+  std::string basename, afterPass, kind;
 
 public:
-  explicit GimpleUprootPass(gcc::context *ctx, const agv::FlatDatabase::Entry &entry,
-                            const std::string &dbDir)
-      : gimple_opt_pass(data, ctx), agv::SemanticTreeVisitor<Node, void>(&root), entry(entry),
-        dbDir(dbDir) {
-    root.value = Node{r<Ref>(Name{entry.filename})};
+  explicit GimpleUprootPass(gcc::context *ctx, std::string basename, std::string afterPass,
+                            std::string kind)
+      : gimple_opt_pass(data, ctx), agv::SemanticTreeVisitor<Node, void>(&root),
+        basename(std::move(basename)), afterPass(std::move(afterPass)), kind(std::move(kind)) {
+    root.value = Node{r<Ref>(Name{this->basename})};
   }
 
   static std::string to_string(tree tree) { return print_generic_expr_to_str(tree); }
@@ -443,64 +444,48 @@ public:
     return 0;
   }
 
+  static std::string to_lower(const std::string &xs) {
+    std::string ys(0, xs.size());
+    std::transform(xs.begin(), xs.end(), ys.begin(),
+                   [](auto c) { return TOLOWER(c); }); // GCC's nonsense
+    return ys;
+  }
+
   static bool hasEnv(const std::string &name) {
     if (auto valueCStr = std::getenv(name.c_str()); !valueCStr) {
       return false;
     } else {
-      std::string value(valueCStr);
-      std::transform(value.begin(), value.end(), value.begin(),
-                     [](auto c) { return TOLOWER(c); }); // GCC's nonsense
+      std::string value = to_lower(valueCStr);
       if (value == "1" || value == "true" || value == "on" || value == "yes") return true;
       return false;
     }
   }
 
   void flush() {
-
     size_t nodes{};
     root.walk([&](auto, auto) {
       nodes++;
       return true;
     });
-    auto dump = [&](auto envName, auto name, auto &dest, auto f) {
-      std::fstream out(fmt::format("{}/{}", dbDir, name), std::ios::out | std::ios::trunc);
+    auto dump = [&](auto variant, auto f) {
       auto tree = root.map<std::string>(f);
-      if (hasEnv(envName)) tree.print(std::cout);
-      nlohmann::json json = tree;
-      out << json;
-      std::cout << "# [uproot] Wrote " << nodes << " nodes to " << name << std::endl;
-      dest = name;
+      if (hasEnv(fmt::format("UPROOT_SHOW_{}_{}", variant, kind))) tree.print(std::cout);
+      auto pathEnv = fmt::format("UPROOT_{}_{}_PATH", variant, kind);
+      if (auto path = std::getenv(pathEnv.c_str())) {
+        std::ofstream out(path, std::ios::out);
+        if (!out) std::cerr << "# [uproot] Unable to open " << path << " for writing" << std::endl;
+        else {
+          out << nlohmann::json(tree);
+          std::cout << "# [uproot] Wrote " << nodes << " nodes to " << path << std::endl;
+        }
+      } else
+        std::cout << "# [uproot] " << pathEnv << " not set, tree with " << nodes
+                  << " nodes discarded" << std::endl;
     };
-
-    dump("UPROOT_SHOW_UNNAMED_IRTREE", fmt::format("{}.unnamed_ir_tree.json", entry.filename),
-         entry.unnamedIRTreeFile,
-         [](auto &r) { return r.to_string([](auto x) { return ""; }, false); });
-    dump("UPROOT_SHOW_NAMED_IRTREE", fmt::format("{}.named_ir_tree.json", entry.filename),
-         entry.namedIRTreeFile,
-         [](auto &r) { return r.to_string([](auto x) { return x; }, true); });
-
-    nlohmann::json j = entry;
-    std::fstream out(fmt::format("{}/{}.entry.json", dbDir, entry.filename),
-                     std::ios::out | std::ios::trunc);
-    out << j;
-    std::cout << "# [uproot] Wrote " << nodes << " nodes to " << name << std::endl;
+    dump("UNNAMED", [](auto &r) { return r.to_string([](auto x) { return ""; }, false); });
+    dump("NAMED", [](auto &r) { return r.to_string([](auto x) { return x; }, true); });
   }
 };
-
-template <size_t buffer_size = 4096> int exec(const std::string &cmd, std::ostream &out) {
-  auto pipe = popen(cmd.c_str(), "r");
-  if (!pipe) {
-    std::cerr << " [uproot] Cannot popen `" << cmd << "`" << std::endl;
-    return 1;
-  }
-  std::array<char, buffer_size> buffer{};
-  while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr)
-    out << buffer.data();
-  auto code = pclose(pipe);
-  if (code != 0)
-    std::cerr << " [uproot] Non-zero exit code " << code << "` from `" << cmd << "`" << std::endl;
-  return code;
-}
 
 std::vector<std::string> collectArgs() {
   std::vector<std::string> args;
@@ -546,52 +531,34 @@ std::string createEArgs(const std::string &pluginName, const std::vector<std::st
         const auto name = reinterpret_cast<const char *>(data);
         auto basename = main_input_basename;
 
-        std::string dest = "db";
-        std::cout << "# [uproot] Starting to uproot unit " << basename
-                  << ", saving to: " << get_current_dir_name() << "/" << dest << std::endl;
+        //        std::string dest = "db";
+        std::cout << "# [uproot] Starting to uproot unit " << basename << std::endl;
 
-        if (auto result = mkdir(dest.c_str(), S_IRWXU | S_IRWXG | S_IRWXO); result != 0) {
-          if (errno != EEXIST) {
-            perror("");
-            std::cout << "# [uproot] Cannot create database directory; plugin cannot continue"
-                      << std::endl;
-            return;
-          }
+        //        if (auto result = mkdir(dest.c_str(), S_IRWXU | S_IRWXG | S_IRWXO); result != 0) {
+        //          if (errno != EEXIST) {
+        //            perror("");
+        //            std::cout << "# [uproot] Cannot create database directory; plugin cannot
+        //            continue"
+        //                      << std::endl;
+        //            return;
+        //          }
+        //        }
+
+        for (auto [afterPass, kind] : {//                 std::pair{"original", "STREE"},
+                                       std::pair{"optimized", "IRTREE"}}) {
+          const auto pass = new GimpleUprootPass(g, basename, afterPass, kind);
+          register_pass_info info{
+              .pass = pass,
+              .reference_pass_name = afterPass,
+              .ref_pass_instance_number = 1,
+              .pos_op = PASS_POS_INSERT_AFTER,
+          };
+          const auto flush = [](void *, void *data) {
+            (reinterpret_cast<GimpleUprootPass *>(data))->flush();
+          };
+          register_callback(name, PLUGIN_PASS_MANAGER_SETUP, nullptr, &info);
+          register_callback(name, PLUGIN_FINISH_UNIT, flush, pass);
         }
-
-        auto args = collectArgs();
-
-        agv::FlatDatabase::Entry entry{
-            .filename = basename,
-            .command = args | mk_string(" "),
-        };
-
-        std::stringstream raw;
-        {
-          std::ifstream f(basename);
-          raw << f.rdbuf();
-        }
-        entry.raw = raw.str();
-        std::cout << "# [uproot] Collected raw source " << std::endl;
-
-        std::stringstream preprocessed;
-        exec(createEArgs(std::string(name), args), preprocessed);
-        entry.preprocessed = preprocessed.str();
-        std::cout << "# [uproot] Collected preprocessed source " << std::endl;
-
-        auto after = std::getenv("UPROOT_AFTER_PASS");
-        const auto pass = new GimpleUprootPass(g, entry, dest);
-        register_pass_info info{
-            .pass = pass,
-            .reference_pass_name = after ? after : "optimized",
-            .ref_pass_instance_number = 1,
-            .pos_op = PASS_POS_INSERT_AFTER,
-        };
-        const auto flush = [](void *, void *data) {
-          (reinterpret_cast<GimpleUprootPass *>(data))->flush();
-        };
-        register_callback(name, PLUGIN_PASS_MANAGER_SETUP, nullptr, &info);
-        register_callback(name, PLUGIN_FINISH_UNIT, flush, pass);
       },
       args->base_name);
   return 0;

@@ -1,4 +1,5 @@
 #include <fstream>
+#include <iostream>
 #include <utility>
 
 #include "agv/cli.h"
@@ -19,29 +20,30 @@
 
 #include "aspartame/map.hpp"
 #include "aspartame/set.hpp"
+#include "aspartame/string.hpp"
+#include "aspartame/variant.hpp"
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
 
 using namespace aspartame;
 using namespace clang;
 
-class Context {
+class ClangContext {
   llvm::LLVMContext context;
   std::vector<std::vector<char>> astBackingBuffer;
 
-  using EntryType = std::pair<std::unique_ptr<clang::ASTUnit>,
+  using EntryType = std::pair<std::shared_ptr<clang::ASTUnit>,
                               std::map<std::string, std::shared_ptr<llvm::Module>>>;
 
   static EntryType mkEntry(llvm::LLVMContext &llvmContext,          //
                            std::vector<std::vector<char>> &storage, //
-                           const agv::ClangDatabase &db,                 //
                            const std::string &baseDir,              //
-                           const agv::ClangDatabase::Entry &tu) {
+                           const agv::ClangEntry &tu) {
     auto modules =
         tu.bitcodes |
         collect([&](auto &entry)
                     -> std::optional<std::pair<std::string, std::shared_ptr<llvm::Module>>> {
-          auto bcFile = baseDir + "/" + entry.name;
+          auto bcFile = baseDir + "/" + entry.file;
 
           auto buffer = llvm::MemoryBuffer::getFile(bcFile);
           if (auto ec = buffer.getError()) {
@@ -55,7 +57,7 @@ class Context {
             return {};
           }
 
-          return std::pair{entry.name, std::move(module.get())};
+          return std::pair{entry.file, std::move(module.get())};
         }) |
         and_then([](auto &xs) { return std::map{xs.begin(), xs.end()}; });
 
@@ -64,7 +66,7 @@ class Context {
 
     IntrusiveRefCntPtr<llvm::vfs::InMemoryFileSystem> vfs = new llvm::vfs::InMemoryFileSystem();
 
-    auto pchFile = baseDir + "/" + tu.pchName;
+    auto pchFile = baseDir + "/" + tu.pchFile;
 
     auto pchData = agv::utils::zStdDecompress(pchFile);
     if (!pchData) {
@@ -77,15 +79,8 @@ class Context {
                                                false);
     vfs->addFile(pchFile, 0, std::move(mb));
     for (auto &[name, actual] : tu.dependencies) {
-      if (auto source = db.dependencies.find(actual); source != db.dependencies.end()) {
-        vfs->addFile(name, source->second.modified,
-                     llvm::MemoryBuffer::getMemBuffer(source->second.content));
-      } else {
-        std::cerr << "Cannot find dependency " << actual << " in db!" << std::endl;
-      }
+      vfs->addFile(name, actual.modified, llvm::MemoryBuffer::getMemBuffer(actual.content));
     }
-
-
 
     auto opt = std::make_shared<clang::HeaderSearchOptions>();
     auto ast = ASTUnit::LoadFromASTFile(pchFile,                          //
@@ -94,7 +89,7 @@ class Context {
                                         diagnostics,                      //
                                         clang::FileSystemOptions(""),     //
                                         opt, false,
-#if  LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 18
                                         true,
 #endif
                                         CaptureDiagsKind::None, true, true, vfs);
@@ -104,10 +99,12 @@ class Context {
 
 public:
   std::map<std::string, EntryType> units;
-  explicit Context(const agv::ClangDatabase &db, const std::string &baseDir)
-      : context(), units(db.entries ^ map_values([&](auto &tu) {
-                           return mkEntry(context, astBackingBuffer, db, baseDir, tu);
-                         })) {}
+  explicit ClangContext(const std::vector<agv::ClangEntry> &entries, const std::string &baseDir)
+      : context(),
+        units(entries ^ map([&](auto &tu) { //
+                return std::pair{tu.file, mkEntry(context, astBackingBuffer, baseDir, tu)};
+              }) //
+              ^ and_then([](auto &xs) { return std::map{xs.begin(), xs.end()}; })) {}
 };
 
 // === Tree ===
@@ -186,7 +183,7 @@ const agv::Tree &agv::Source::tsTree() const {
 agv::Unit::Unit(std::string path, const agv::SemanticTree<std::string> &sTree,
                 const agv::SemanticTree<std::string> &sTreeInlined,
                 const agv::SemanticTree<std::string> &irTree, TsTree source)
-    : path_(std::move(path)), name_(llvm::sys::path::filename(path_).str()), //
+    : path_(std::move(path)), name_(std::filesystem::path(path_).filename()), //
       sTreeRoot(sTree), sTreeInlinedRoot(sTreeInlined), irTreeRoot(irTree),
       sourceRoot(std::move(source)) {}
 const std::string &agv::Unit::path() const { return path_; }
@@ -194,103 +191,182 @@ const std::string &agv::Unit::name() const { return name_; }
 const agv::Tree &agv::Unit::sTree() const { return sTreeRoot; }
 const agv::Tree &agv::Unit::sTreeInlined() const { return sTreeInlinedRoot; }
 const agv::Tree &agv::Unit::irTree() const { return irTreeRoot; }
-agv::Source agv::Unit::source(bool normalise) const {
-  return normalise
-             ? lazySourceNormalised([&]() { return Source(sourceRoot.deleteNodes("comment")); })
-             : lazySource([&]() { return Source(sourceRoot); });
+agv::Source agv::Unit::writtenSource(bool normalise) const {
+  return normalise ? lazyWrittenSourceNormalised(
+                         [&]() { return Source(sourceRoot.deleteNodes("comment")); })
+                   : lazyWrittenSource([&]() { return Source(sourceRoot); });
+}
+agv::Source agv::Unit::preprocessedSource(bool normalise) const {
+  return normalise ? lazyPreprocessedSourceNormalised(
+                         [&]() { return Source(preprocessedRoot.deleteNodes("comment")); })
+                   : lazyPreprocessedSource([&]() { return Source(preprocessedRoot); });
 }
 
 // === Database ===
-agv::ClangDatabase agv::Databases::clangDBFromJsonString(const std::string &json) {
-  agv::ClangDatabase database;
-  nlohmann::json dbJson = nlohmann::json::parse(json);
-  nlohmann::from_json(dbJson, database);
-  return database;
-}
-agv::ClangDatabase agv::Databases::clangDBFromJsonStream(std::ifstream &stream) {
-  agv::ClangDatabase database;
-  nlohmann::json dbJson = nlohmann::json::parse(stream);
-  nlohmann::from_json(dbJson, database);
-  return database;
-}
-agv::ClangDatabase agv::Databases::clangDBFromJsonFile(const std::string &file) {
-  std::ifstream s(file);
-  s.exceptions(std::ios::failbit | std::ios::badbit);
-  return agv::Databases::clangDBFromJsonStream(s);
-}
 
-agv::FlatDatabase agv::Databases::flatDBFromDir(const std::string &dir) {
-  return {};
-
+template <typename T> static std::vector<T> loadAll(const std::string &root) {
+  std::vector<T> entries;
+  try {
+    for (auto &e : std::filesystem::directory_iterator(root)) {
+      if (auto path = e.path(); path.string() ^ ends_with("sv.json")) {
+        try {
+          std::ifstream s(path);
+          s.exceptions(std::ios::failbit | std::ios::badbit);
+          T entry;
+          nlohmann::from_json(nlohmann::json::parse(s), entry);
+          entries.emplace_back(entry);
+        } catch (const std::exception &e) { AGV_WARNF("Cannot load entry {}: {}", path, e); }
+      }
+    }
+  } catch (const std::exception &e) { AGV_WARNF("Cannot list directory {}: {}", root, e); }
+  return entries;
 }
 
+agv::Database agv::Codebase::loadDB(const std::string &root) {
+  std::vector<std::variant<ClangEntry, FlatEntry>> entries;
+  try {
+    for (auto &e : std::filesystem::directory_iterator(root)) {
+      if (auto path = e.path(); path.string() ^ ends_with("sv.json")) {
+        try {
+          std::ifstream s(path);
+          s.exceptions(std::ios::failbit | std::ios::badbit);
+          auto entry = nlohmann::json::parse(s);
+          auto kind = entry.at("kind").get<std::string>();
+          if (kind == "clang") {
+            entries.emplace_back(entry.get<ClangEntry>());
+          } else if (kind == "flat") {
+            entries.emplace_back(entry.get<FlatEntry>());
+          } else {
+            AGV_WARNF("Unknown entry kind {} from {}", kind, path);
+          }
+        } catch (const std::exception &e) { AGV_WARNF("Cannot load entry {}: {}", path, e); }
+      }
+    }
+  } catch (const std::exception &e) { AGV_WARNF("Cannot list directory {}: {}", root, e); }
+  return {root, entries};
+}
 
-agv::Codebase agv::Codebase::load(const ClangDatabase &db,                    //
+agv::Codebase agv::Codebase::load(const Database &db,                    //
                                   std::ostream &out,                     //
                                   bool normalise,                        //
                                   const std::string &path,               //
                                   const std::vector<std::string> &roots, //
                                   const std::function<bool(const std::string &)> &predicate) {
 
-  Context ctx(db, path);
+  const auto select = [](auto x, auto f) { return std::visit([&](auto &&x) { return f(x); }, x); };
 
-  auto selected = ctx.units | keys() | filter(predicate) | to_vector();
+  const auto selected =
+      db.entries                                                                               //
+      | filter([&](auto &x) { return select(x, [&](auto &x) { return predicate(x.file); }); }) //
+      | to_vector();                                                                           //
+  const auto maxFileLen =                                                                      //
+      selected                                                                                 //
+      | map([&](auto &x) {                                                                     //
+          return select(x, [&](auto &x) { return static_cast<int>(x.file.size()); });          //
+        })                                                                                     //
+      | fold_left(int{}, [](auto l, auto r) { return std::max(l, r); });                       //
 
-  auto maxFileLen =
-      static_cast<int>(selected | map([](auto &k) { return k.size(); }) |
-                       fold_left(size_t{}, [](auto l, auto r) { return std::max(l, r); }));
+  // Load clang entries first
+  const auto clangEntries = selected ^ collect([](auto &x) { return x ^ get<ClangEntry>(); });
+  const auto clangUnits = agv::par_map(
+      clangEntries,
+      [&, clangCtx = ClangContext(clangEntries, path)](const auto &x) -> std::shared_ptr<Unit> {
+        try {
+          auto unitCtx = clangCtx.units ^ get(x.file);
+          if (!unitCtx) {
+            AGV_WARNF("Failed to load entry {}: cannot find context", x.file);
+            return {};
+          };
+          auto &[ast, modules] = *unitCtx;
+          agv::SemanticTree<std::string> irTreeRoot{"root", {}};
+          for (auto &[name, module] : modules) {
+            agv::SemanticTree<std::string> irTree{name, {}};
+            agv::LLVMIRTreeVisitor(&irTree, *module, normalise);
+            irTreeRoot.children.emplace_back(irTree);
+          }
 
-  std::vector<std::shared_ptr<Unit>> units(selected.size());
-  agv::par_for(selected, [&](auto &key, auto idx) {
-    auto &[ast, modules] = ctx.units[key];
+          agv::SemanticTree<std::string> sTree{"root", {}};
+          agv::SemanticTree<std::string> sTreeInlined{"root", {}};
+          agv::TsTree tsTree{};
+          auto &sm = ast->getSourceManager();
+          if (auto data = sm.getBufferDataOrNone(sm.getMainFileID()); data) {
+            tsTree = agv::TsTree(data->str(), tree_sitter_cpp()).deleteNodes("comment");
+          } else {
+            AGV_WARNF("Failed to load original source for entry {}, main file ID missing", x.file);
+            return {};
+          }
+          for (clang::Decl *decl :
+               agv::topLevelDeclsInMainFile(*ast) ^ sort_by([&](clang::Decl *decl) {
+                 return std::pair{sm.getDecomposedExpansionLoc(decl->getBeginLoc()).second,
+                                  sm.getDecomposedExpansionLoc(decl->getEndLoc()).second};
+               })) {
 
-    agv::SemanticTree<std::string> irTreeRoot{"root", {}};
-    for (auto &[name, module] : modules) {
-      agv::SemanticTree<std::string> irTree{name, {}};
-      agv::LLVMIRTreeVisitor(&irTree, *module, normalise);
-      irTreeRoot.children.emplace_back(irTree);
+            auto createTree = [&](const agv::ClangASTSemanticTreeVisitor::Option &option) {
+              agv::SemanticTree<std::string> topLevel{"toplevel", {}};
+              agv::ClangASTSemanticTreeVisitor(&topLevel, ast->getASTContext(), option)
+                  .TraverseDecl(decl);
+              return topLevel;
+            };
+            sTree.children.emplace_back(createTree({
+                .inlineCalls = false,
+                .normaliseVarName = normalise, //
+                .normaliseFnName = normalise,  //
+                .roots = roots                 //
+            }));
+            sTreeInlined.children.emplace_back(createTree({
+                .inlineCalls = true,
+                .normaliseVarName = normalise, //
+                .normaliseFnName = normalise,  //
+                .roots = roots                 //
+            }));
+          }
+          auto unit = std::make_shared<Unit>( //
+              ast->getMainFileName().str(), sTree, sTreeInlined, irTreeRoot, tsTree);
+          out << "# Loaded " << std::left << std::setw(maxFileLen) << x << "\r";
+          return unit;
+        } catch (const std::exception &e) {
+          AGV_WARNF("Failed to load entry {}: {}", x.file, e);
+          return {};
+        }
+      });
+
+  // Then flat entries
+  const auto flatEntries = selected ^ collect([](auto &x) { return x ^ get<FlatEntry>(); });
+  auto flatUnits = agv::par_map(flatEntries, [&](const auto &x) -> std::shared_ptr<Unit> {
+    try {
+      auto loadTree = [](const std::filesystem::path &path) {
+        agv::SemanticTree<std::string> tree;
+        if (!std::filesystem::exists(path)) return tree;
+        std::ifstream read(path);
+        read.exceptions(std::ios::badbit | std::ios::failbit);
+        nlohmann::from_json(nlohmann::json::parse(read), tree);
+        return tree;
+      };
+
+      auto irtree =
+          loadTree(fmt::format("{}/{}", path, normalise ? x.unnamedIRTreeFile : x.namedIRTreeFile));
+      auto stree =
+          loadTree(fmt::format("{}/{}", path, normalise ? x.unnamedSTreeFile : x.namedSTreeFile));
+
+      auto source = x.dependencies |
+                    collect([&](auto &path, auto &dep) -> std::optional<std::string> {
+                      if (std::filesystem::path(path).filename() == x.file) return dep.content;
+                      return std::nullopt;
+                    }) |
+                    head_maybe();
+
+      auto tsTree = agv::TsTree(source.value_or(""), tree_sitter_cpp()).deleteNodes("comment");
+      auto unit =
+          std::make_unique<Unit>(x.file, stree, agv::SemanticTree<std::string>{}, irtree, tsTree);
+      out << "# Loaded " << std::left << std::setw(maxFileLen) << x.file << "\r";
+      return unit;
+    } catch (const std::exception &e) {
+      AGV_WARNF("Failed to load entry {}: {}", x.file, e);
+      return {};
     }
-
-    agv::SemanticTree<std::string> sTree{"root", {}};
-    agv::SemanticTree<std::string> sTreeInlined{"root", {}};
-    auto &sm = ast->getSourceManager();
-    if (auto data = sm.getBufferDataOrNone(sm.getMainFileID()); data) {
-      for (clang::Decl *decl :
-           agv::topLevelDeclsInMainFile(*ast) ^ sort_by([&](clang::Decl *decl) {
-             return std::pair{sm.getDecomposedExpansionLoc(decl->getBeginLoc()).second,
-                              sm.getDecomposedExpansionLoc(decl->getEndLoc()).second};
-           })) {
-
-        auto createTree = [&](const agv::ClangASTSemanticTreeVisitor::Option &option) {
-          agv::SemanticTree<std::string> topLevel{"toplevel", {}};
-          agv::ClangASTSemanticTreeVisitor(&topLevel, ast->getASTContext(), option)
-              .TraverseDecl(decl);
-          return topLevel;
-        };
-        sTree.children.emplace_back(createTree({
-            .inlineCalls = false,
-            .normaliseVarName = normalise, //
-            .normaliseFnName = normalise,  //
-            .roots = roots                 //
-        }));
-        sTreeInlined.children.emplace_back(createTree({
-            .inlineCalls = true,
-            .normaliseVarName = normalise, //
-            .normaliseFnName = normalise,  //
-            .roots = roots                 //
-        }));
-      }
-
-      auto tsTree = agv::TsTree(data->str(), tree_sitter_cpp()).deleteNodes("comment");
-      units[idx] = std::make_unique<Unit>(ast->getMainFileName().str(), sTree, sTreeInlined,
-                                          irTreeRoot, tsTree);
-    } else {
-      std::cerr << "Failed to load AST for " << key << ", stree data will be empty!" << std::endl;
-    }
-    out << "# Loaded " << std::left << std::setw(maxFileLen) << key << "\r";
   });
   out << std::endl;
-  return agv::Codebase(path, units);
+  return agv::Codebase(path, clangUnits ^ concat(flatUnits));
 }
 
 namespace agv {

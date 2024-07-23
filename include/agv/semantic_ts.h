@@ -22,9 +22,9 @@ struct TsTree {
     }
   };
 
-  std::string source;
-  std::shared_ptr<TSParser> parser;
-  std::shared_ptr<TSTree> tree;
+  std::string source{};
+  std::shared_ptr<TSParser> parser{};
+  std::shared_ptr<TSTree> tree{};
   TsTree();
   TsTree(const std::string &source, const TSLanguage *lang);
   [[nodiscard]] TSNode root() const;

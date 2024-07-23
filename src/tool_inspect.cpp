@@ -4,8 +4,6 @@
 #include "agv/model.h"
 #include "agv/tool_inspect.h"
 #include "aspartame/vector.hpp"
-#include "aspartame/view.hpp"
-#include "llvm/Support/MemoryBuffer.h"
 
 using namespace aspartame;
 using namespace clang;
@@ -18,15 +16,8 @@ static Expected<agv::inspect::Options> parseOpts(int argc, const char **argv) {
       "db", cl::desc("The path to the P3MD database, as generated using the build command"),
       cl::Required, cl::cat(category));
 
-  static cl::opt<agv::inspect::Kind> kind(
-      "kind", cl::desc("The kind of data to list"),
-      cl::values(
-          clEnumValN(agv::inspect::Kind::Entry, "entry", "Enable trivial optimizations"),
-          clEnumValN(agv::inspect::Kind::Dependencies, "deps", "Enable default optimizations")),
-      cl::Required, cl::cat(category));
-
   if (auto e = agv::parseCategory(category, argc, argv); e) return std::move(*e);
-  return agv::inspect::Options{dbPath.getValue(), kind};
+  return agv::inspect::Options{dbPath.getValue()};
 }
 
 int agv::inspect::main(int argc, const char **argv) {
@@ -34,32 +25,13 @@ int agv::inspect::main(int argc, const char **argv) {
 }
 
 int agv::inspect::run(const Options &options) {
-  auto dbDile = options.dbDir + "/db.json";
-  auto buffer = llvm::MemoryBuffer::getFile(dbDile, /*IsText*/ true);
-  if (auto e = buffer.getError()) {
-    std::cerr << "Cannot read file " << dbDile << ": " << e.message() << std::endl;
-    return e.value();
-  }
-  auto database = Databases::clangDBFromJsonString((*buffer)->getBuffer().str());
-  switch (options.kind) {
-    case Kind::Entry:
-      std::cout << "entry,deps\n";
-      (database.entries | to_vector()) ^
-          map([](auto &file, auto &pch) { return std::pair{file, pch.dependencies.size()}; }) ^
-          sort_by([](auto &, auto deps) { return deps; }) ^
-          for_each([](auto &file, auto deps) { std::cout << file << "," << deps << "\n"; });
-      break;
-    case Kind::Dependencies:
-      std::cout << "dep,dependents,modified\n";
-      (database.dependencies | keys() | map([&](auto &file) {
-         auto rDeps = database.entries | values() |
-                      count([&](auto &r) { return r.dependencies | values() | contains(file); });
-         return std::pair{file, rDeps};
-       }) |
-       to_vector()) ^
-          sort_by([](auto &, auto rDep) { return rDep; }) ^
-          for_each([](auto &file, auto rDeps) { std::cout << file << "," << rDeps << "\n"; });
-      break;
-  }
+  auto database = Codebase::loadDB(options.dbDir);
+  std::cout << "entry,deps\n";
+  database.entries                                                                                //
+      ^ map([](auto &e) {                                                                         //
+          return std::visit([](auto &x) { return std::pair{x.file, x.dependencies.size()}; }, e); //
+        })                                                                                        //
+      ^ sort_by([](auto &, auto deps) { return deps; })                                           //
+      ^ for_each([](auto &file, auto deps) { std::cout << file << "," << deps << "\n"; });        //
   return EXIT_SUCCESS;
 }

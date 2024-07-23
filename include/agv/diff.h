@@ -13,4 +13,3 @@ struct Diff {
   DEF_TEAL_SOL_UT(Diff, SOL_UT_FN(Diff, apted), SOL_UT_FN(Diff, diff));
 };
 } // namespace agv
-
