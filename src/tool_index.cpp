@@ -92,7 +92,7 @@ static void runIndexTasks(const std::vector<sv::CompilationDatabase::Entry> &com
     }
 
     AGV_INFOF("cd {}", wd);
-    sv::par_for(tasks, [&](const sv::CompilationDatabase::Entry &cmd, auto idx) {
+    sv::par_for(tasks, [&](const sv::CompilationDatabase::Entry &cmd, auto) {
       if (cmd.command.empty()) {
         AGV_WARNF("empty command line for file {}", cmd.file);
         return;
@@ -100,7 +100,7 @@ static void runIndexTasks(const std::vector<sv::CompilationDatabase::Entry> &com
       logger.log(cmd.file);
       if (!sv::detectClangAndIndex(verbose, cmd, wd, outDir, programLUT)) {
         if (!sv::detectGccAndIndex(verbose, cmd, wd, outDir, programLUT)) {
-          AGV_WARNF("unsupported compiler for {}", cmd.command ^ mk_string(" "));
+          AGV_WARNF("unsupported compiler in command `{}`", cmd.command ^ mk_string(" "));
         }
       }
     });

@@ -12,6 +12,12 @@ enum class Kind : uint8_t {
   SourceRawRel,
   TSTreeRawRel,
 
+  TSTreeSizeRawAbs,
+  TSTreeSizeAbs,
+  STreeSizeAbs,
+  STreeInlineSizeAbs,
+  IRTreeSizeAbs,
+
   SLOCAbs,
   LLOCAbs,
   SourceRel,
@@ -19,15 +25,21 @@ enum class Kind : uint8_t {
 
   STreeRel,
   STreeInlineRel,
-  IRTreeRel
+  IRTreeRel,
 };
 
-inline std::string_view to_string(const Kind &kind) {
+static constexpr std::string_view to_string(const Kind &kind) {
   switch (kind) {
     case Kind::SLOCRawAbs: return "slocA";
     case Kind::LLOCRawAbs: return "llocA";
     case Kind::SourceRawRel: return "sourceR";
     case Kind::TSTreeRawRel: return "tstreeR";
+
+    case Kind::TSTreeSizeRawAbs: return "|tstree|A";
+    case Kind::TSTreeSizeAbs: return "|tstree+p|A";
+    case Kind::STreeSizeAbs: return "|stree|A";
+    case Kind::STreeInlineSizeAbs: return "|stree+i|A";
+    case Kind::IRTreeSizeAbs: return "|irtree|A";
 
     case Kind::SLOCAbs: return "slocA+p";
     case Kind::LLOCAbs: return "llocA+p";

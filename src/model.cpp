@@ -198,17 +198,21 @@ const sv::Tree &sv::Unit::sTree() const { return sTreeRoot; }
 const sv::Tree &sv::Unit::sTreeInlined() const { return sTreeInlinedRoot; }
 const sv::Tree &sv::Unit::irTree() const { return irTreeRoot; }
 sv::Source sv::Unit::writtenSource(bool normalise) const {
-  return normalise ? lazyWrittenSourceNormalised([&]() {
-    return Source(sourceRoot.deleteNodes("comment").normaliseNewLines().normaliseWhitespaces());
-  })
-                   : lazyWrittenSource([&]() { return Source(sourceRoot); });
+  return normalise //
+             ? lazyWrittenSourceNormalised([&]() {
+                 return Source(
+                     sourceRoot.deleteNodes("comment").normaliseNewLines().normaliseWhitespaces());
+               })
+             : lazyWrittenSource([&]() { return Source(sourceRoot); });
 }
 sv::Source sv::Unit::preprocessedSource(bool normalise) const {
-  return normalise ? lazyPreprocessedSourceNormalised([&]() {
-    return Source(
-        preprocessedRoot.deleteNodes("comment").normaliseNewLines().normaliseWhitespaces());
-  })
-                   : lazyPreprocessedSource([&]() { return Source(preprocessedRoot); });
+  return normalise //
+             ? lazyPreprocessedSourceNormalised([&]() {
+                 return Source(preprocessedRoot.deleteNodes("comment")
+                                   .normaliseNewLines()
+                                   .normaliseWhitespaces());
+               })
+             : lazyPreprocessedSource([&]() { return Source(preprocessedRoot); });
 }
 
 // === Database ===
@@ -287,6 +291,15 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
     return tree;
   };
 
+  auto findSourceInDeps = [](auto deps, auto file) {
+    return deps                                                                 //
+           | collect([&](auto &path, auto &dep) -> std::optional<std::string> { //
+               if (std::filesystem::path(path).filename() == file) return dep.content;
+               return std::nullopt;
+             }) //
+           | head_maybe();
+  };
+
   const auto selected =
       db.entries                                                                               //
       | filter([&](auto &x) { return select(x, [&](auto &x) { return predicate(x.file); }); }) //
@@ -320,53 +333,60 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
           sv::SemanticTree<std::string> sTree{"root", {}};
           sv::SemanticTree<std::string> sTreeInlined{"root", {}};
           sv::TsTree sourceRoot{};
-          clang::SourceManager &sm = ast->getSourceManager();
 
-          clang::LangOptions o = ast->getLangOpts();
+          if (ast) {
+            clang::SourceManager &sm = ast->getSourceManager();
+            clang::LangOptions o = ast->getLangOpts();
+            auto language = x.language;
+            // we consider HIP/CUDA the same, but HIP also sets CUDA and not the other way around
+            if (o.HIP || o.CUDA) language = "cuda";
+            else if (o.CPlusPlus) language = "cpp";
+            else if (o.C99 || o.C11 || o.C17 || o.C2x) language = "c";
+            else
+              AGV_WARNF("Cannot determine precise language from PCH for {}, using driver-based "
+                        "language: {}",
+                        x.file, language);
 
-          auto language = x.language;
-          // we consider HIP/CUDA the same, but HIP also sets CUDA and not the other way around
-          if (o.HIP || o.CUDA) language = "cuda";
-          else if (o.CPlusPlus) language = "cpp";
-          else if (o.C99 || o.C11 || o.C17 || o.C2x) language = "c";
-          else
-            AGV_WARNF("Cannot determine precise language from PCH for {}, using driver-based "
-                      "language: {}",
-                      x.file, language);
+            if (auto data = sm.getBufferDataOrNone(sm.getMainFileID()); data)
+              sourceRoot = sv::TsTree(data->str(), createTsParser(language));
+            else
+              AGV_WARNF("Failed to load original source for entry {}, main file ID missing",
+                        x.file);
 
-          if (auto data = sm.getBufferDataOrNone(sm.getMainFileID()); data)
-            sourceRoot = sv::TsTree(data->str(), createTsParser(language));
-          else
-            AGV_WARNF("Failed to load original source for entry {}, main file ID missing", x.file);
+            for (clang::Decl *decl :
+                 sv::topLevelDeclsInMainFile(*ast) ^ sort_by([&](clang::Decl *decl) {
+                   return std::pair{sm.getDecomposedExpansionLoc(decl->getBeginLoc()).second,
+                                    sm.getDecomposedExpansionLoc(decl->getEndLoc()).second};
+                 })) {
 
-          for (clang::Decl *decl :
-               sv::topLevelDeclsInMainFile(*ast) ^ sort_by([&](clang::Decl *decl) {
-                 return std::pair{sm.getDecomposedExpansionLoc(decl->getBeginLoc()).second,
-                                  sm.getDecomposedExpansionLoc(decl->getEndLoc()).second};
-               })) {
-
-            auto createTree = [&](const sv::ClangASTSemanticTreeVisitor::Option &option) {
-              sv::SemanticTree<std::string> topLevel{"toplevel", {}};
-              sv::ClangASTSemanticTreeVisitor(&topLevel, ast->getASTContext(), option)
-                  .TraverseDecl(decl);
-              return topLevel;
-            };
-            sTree.children.emplace_back(createTree({
-                .inlineCalls = false,
-                .normaliseVarName = normalise, //
-                .normaliseFnName = normalise,  //
-                .roots = roots                 //
-            }));
-            sTreeInlined.children.emplace_back(createTree({
-                .inlineCalls = true,
-                .normaliseVarName = normalise, //
-                .normaliseFnName = normalise,  //
-                .roots = roots                 //
-            }));
+              auto createTree = [&](const sv::ClangASTSemanticTreeVisitor::Option &option) {
+                sv::SemanticTree<std::string> topLevel{"toplevel", {}};
+                sv::ClangASTSemanticTreeVisitor(&topLevel, ast->getASTContext(), option)
+                    .TraverseDecl(decl);
+                return topLevel;
+              };
+              sTree.children.emplace_back(createTree({
+                  .inlineCalls = false,
+                  .normaliseVarName = normalise, //
+                  .normaliseFnName = normalise,  //
+                  .roots = roots                 //
+              }));
+              sTreeInlined.children.emplace_back(createTree({
+                  .inlineCalls = true,
+                  .normaliseVarName = normalise, //
+                  .normaliseFnName = normalise,  //
+                  .roots = roots                 //
+              }));
+            }
+          } else {
+            AGV_WARNF("Failed to load AST for entry {}", x.file);
+            auto source = findSourceInDeps(x.dependencies, x.file);
+            sourceRoot = sv::TsTree(source.value_or(""), createTsParser(x.language));
           }
+
           auto unit = std::make_shared<Unit>( //
-              ast->getMainFileName().str(), sTree, sTreeInlined, irTreeRoot, sourceRoot,
-              extractPreprocessedTsRoot(x.preprocessed, x.language));
+              ast ? ast->getMainFileName().str() : x.file, sTree, sTreeInlined, irTreeRoot,
+              sourceRoot, extractPreprocessedTsRoot(x.preprocessed, x.language));
           out << "# Loaded " << std::left << std::setw(maxFileLen) << x.file << "\r";
           return unit;
         } catch (const std::exception &e) {
@@ -393,13 +413,7 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
       auto stree = loadTree(
           fmt::format("{}/{}", db.root, normalise ? x.unnamedSTreeFile : x.namedSTreeFile));
 
-      auto source = x.dependencies                                                       //
-                    | collect([&](auto &path, auto &dep) -> std::optional<std::string> { //
-                        if (std::filesystem::path(path).filename() == x.file) return dep.content;
-                        return std::nullopt;
-                      }) //
-                    | head_maybe();
-
+      auto source = findSourceInDeps(x.dependencies, x.file);
       auto unit =
           std::make_unique<Unit>(x.file, stree, sv::SemanticTree<std::string>{}, irtree,
                                  sv::TsTree(source.value_or(""), createTsParser(x.language)),

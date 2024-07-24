@@ -13,6 +13,7 @@
 #include "aspartame/optional.hpp"
 #include "aspartame/string.hpp"
 #include "aspartame/unordered_map.hpp"
+#include "aspartame/variant.hpp"
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
 
@@ -32,11 +33,50 @@ size_t longestCommonPrefixLen(const std::vector<std::string> &strings) {
   return i;
 }
 using Units = std::vector<std::shared_ptr<Unit>>;
-using DeltaFn = std::function<double(const Units &, const Units &)>;
+using DiffFn = std::function<double(const Units &, const Units &)>;
 using MaxFn = std::function<std::optional<double>(const Units &)>;
 
+struct MemInfo {
+
+  int totalMemoryKB = -1;
+  int totalSwapKB = -1;
+  int freeSwapKB = -1;
+  int availableMemoryKB = -1;
+
+  [[nodiscard]] double swapUsedPCt() const {
+    return 1.0 - static_cast<double>(freeSwapKB) / totalSwapKB;
+  }
+
+  [[nodiscard]] double ramUsedPct() const {
+    return 1.0 - static_cast<double>(availableMemoryKB) / totalMemoryKB;
+  }
+
+  static MemInfo read() {
+    auto parse = [](const std::string &prefix, const std::string &content) {
+      std::size_t start = content.find(prefix);
+      if (start != std::string::npos) {
+        auto begin = start + prefix.length();
+        auto end = content.find("kB", start);
+        return std::stoi(content.substr(begin, end - begin));
+      }
+      return -1;
+    };
+    if (auto meminfo = std::ifstream("/proc/meminfo"); meminfo.good()) {
+      std::string content((std::istreambuf_iterator<char>(meminfo)),
+                          std::istreambuf_iterator<char>());
+      return MemInfo{
+          .totalMemoryKB = parse("MemTotal:", content),
+          .totalSwapKB = parse("SwapTotal:", content),
+          .freeSwapKB = parse("SwapFree:", content),
+          .availableMemoryKB = parse("MemAvailable:", content),
+      };
+    }
+    return {};
+  }
+};
+
 template <typename F>
-std::pair<delta::Kind, std::pair<DeltaFn, MaxFn>> treeSelect(delta::Kind kind, F f) {
+std::pair<delta::Kind, std::pair<DiffFn, MaxFn>> treeSelect(delta::Kind kind, F f) {
   return {kind,
           std::pair{
               [&](const Units &lhs, const Units &rhs) -> double {
@@ -61,7 +101,7 @@ double minDiff(std::vector<std::string> &&ls, std::vector<std::string> &&rs) {
   return value;
 }
 
-std::unordered_map<delta::Kind, std::pair<DeltaFn, MaxFn>> fns = {
+std::unordered_map<delta::Kind, std::pair<DiffFn, MaxFn>> fns = {
     {delta::Kind::SLOCRawAbs, std::pair{
                                   [](const Units &, const Units &rhs) -> double {
                                     return rhs ^ fold_left(0, [](auto acc, auto &u) {
@@ -282,8 +322,7 @@ int delta::run(const delta::Options &options) {
     std::vector<std::pair<std::string, Units>> entries;
   };
 
-  std::vector<Model> models(options.databases.size());
-  par_for(options.databases, [&](auto &spec, auto idx) {
+  std::vector<Model> models = par_map(options.databases, [&](auto &spec) {
     const auto db = Codebase::loadDB(spec.path);
     const auto excludes = options.excludes ^ map([](auto &f) { return globToRegex(f.glob); });
     const auto cb = Codebase::load(db, std::cout, true, {}, [&](auto &path) {
@@ -291,8 +330,9 @@ int delta::run(const delta::Options &options) {
     });
     const auto merges =
         options.merges ^ map([](auto &m) { return std::pair{globToRegex(m.glob), m.name}; });
-    models[idx].path = cb.root;
-    models[idx].entries =                                                                     //
+    Model model{
+        .path = cb.root,
+        .entries =                                                                            //
         cb.units                                                                              //
         ^ group_by([&](auto &u) {                                                             //
             return (merges                                                                    //
@@ -306,193 +346,150 @@ int delta::run(const delta::Options &options) {
                              us ^ fold_left(0, [](auto acc, auto &u) {
                                return acc + u->writtenSource(true).sloc();
                              })};
-          });
-    std::cout << "# [ " << models[idx].path << " ]" << std::endl;
-    for (auto &[name, us] : models[idx].entries) {
+          })};
+    std::cout << "# [ " << model.path << " ]" << std::endl;
+    for (auto &[name, us] : model.entries) {
       std::cout << "# " << name << " -> {"
                 << (us ^ mk_string(", ", [](auto &u) { return u->path(); })) << "\n";
     }
+    return model;
   });
-  AGV_COUT << "# All models loaded" << std::endl;
+
+  AGV_INFOF("All models loaded");
+
+  struct Key {
+    delta::Kind kind{};
+    std::string name{};
+    size_t modelIdx{};
+  };
+
+  using Task =
+      std::pair<Key, std::variant<std::tuple<DiffFn, Units, Units>, std::tuple<MaxFn, Units>>>;
 
   if (auto ls = models ^ head_maybe(); ls) {
-    std::vector<std::tuple<delta::Kind, DeltaFn, std::string, size_t, Units, Units>> tasks;
-
-    fns | filter([&](auto &k, auto) { return options.kinds ^ contains(k); })            //
-        | for_each([&](auto &k, auto &p) {                                              //
-            ls->entries | for_each([&](auto &lhsName, const Units &l) {                 //
-              models | zip_with_index() | for_each([&](auto &r, size_t idx) {           //
+    std::vector<Task> deltaTasks;
+    fns | filter([&](auto &k, auto) { return options.kinds ^ contains(k); }) //
+        | for_each([&](auto &k, auto &p) {
+            auto [delta, max] = p;
+            ls->entries | for_each([&](auto &lhsName, const Units &l) {
+              auto addTask = [&](size_t idx, auto fn) {
+                deltaTasks.emplace_back(
+                    std::pair{Key{.kind = k, .name = lhsName, .modelIdx = idx}, fn});
+              };
+              models | zip_with_index() | for_each([&](auto &r, size_t idx) { //
+                Key key{.kind = k, .name = lhsName, .modelIdx = idx};
                 r.entries                                                               //
                     | filter([&](auto &rhsName, auto &) { return lhsName == rhsName; }) //
                     | for_each([&](auto &, const Units &r) {                            //
-                        tasks.emplace_back(k, p.first, lhsName, idx, l, r);
+                        deltaTasks.emplace_back(key, std::tuple{delta, l, r});
+                        deltaTasks.emplace_back(key, std::tuple{max, r});
                       });
               });
             });
           });
 
-    std::cout << tasks.size() << "\n";
+    AGV_INFOF("Created {} tasks", deltaTasks.size());
 
-    std::vector<std::tuple<delta::Kind, std::string, size_t, double>> deltas(tasks.size());
-    auto taskReverseSizes = tasks ^ sort_by([](auto, auto, auto, auto, auto &l, auto &r) {
-                              return -(l | concat(r) | fold_left(0, [](auto acc, auto &u) {
-                                         return acc                                        //
-                                                + u->sTree().nodes()                       //
-                                                + u->sTreeInlined().nodes()                //
-                                                + u->irTree().nodes()                      //
-                                                + u->writtenSource(true).tsTree().nodes(); //
-                                       }));
+    auto cost = [](auto &&xs) {
+      return xs | fold_left(0, [](auto acc, auto &u) {
+               return acc                         //
+                      + u->sTree().nodes()        //
+                      + u->sTreeInlined().nodes() //
+                      + u->irTree().nodes();      //
+             });
+    };
+    auto taskReverseSizes = deltaTasks ^ sort_by([&](auto &, auto v) {
+                              return v ^ fold_total(
+                                             [&](const std::tuple<DiffFn, Units, Units> &t) {
+                                               auto [_, lhs, rhs] = t;
+                                               return -cost(lhs | concat(rhs));
+                                             },
+                                             [&](const std::tuple<MaxFn, Units> &t) {
+                                               auto [_, xs] = t;
+                                               return -cost(xs);
+                                             });
                             });
 
-    {
-      auto logger = ProgressLogger{
-          tasks.size(), tasks ^ fold_left(int{}, [](auto acc, auto &e) {
-                          return std::max(acc, static_cast<int>(std::get<std::string>(e).size()));
-                        })};
-      par_for(taskReverseSizes, [&](auto &task, size_t idx) {
-        auto &[k, f, name, modelIdx, l, r] = task;
-        logger.log(name);
-        deltas[idx] = {k, name, modelIdx, f(l, r)};
-      });
-    }
+    auto logger = ProgressLogger{deltaTasks.size(),
+                                 deltaTasks ^ fold_left(int{}, [](auto acc, auto &t) {
+                                   return std::max(acc, static_cast<int>(t.first.name.size()));
+                                 })};
 
-    size_t prefixLen = longestCommonPrefixLen(models ^ map([&](auto &m) { return m.path; }));
-    auto m =
-        (deltas ^ group_map([](auto, auto, auto &modelIdx, auto) { return modelIdx; }, //
-                            [](auto &kind, auto &name, auto &, auto &value) {
-                              return std::tuple{kind, name, value};
-                            }))                                  //
-        ^ to_vector()                                            //
-        ^ sort_by([](auto &modelIdx, auto) { return modelIdx; }) //
-        ^ bind([&](auto &modelIdx, auto &xs) {
-            auto modelName = models[modelIdx].path.substr(prefixLen);
-            return xs                                                                            //
-                   ^ sort_by([](auto &kind, auto &name, auto) { return std::pair{kind, name}; }) //
-                   ^ map([&](auto &kind, auto &name, auto &value) {                              //
-                       return modelIdx == 0 ? std::vector{std::string(to_string(kind)), name,    //
-                                                          std::to_string(value)}                 //
-                                            : std::vector{std::to_string(value)};                //
-                     })                                                                          //
-                   ^ prepend(modelIdx == 0                                                       //
-                                 ? std::vector<std::string>{"kind", "name", modelName}           //
-                                 : std::vector{modelName})                                       //
-                   ^ transpose();
-          }) //
-        ^ transpose();
+    Cached<MemInfo> memInfo(std::chrono::milliseconds(100));
 
+    double limit = 0.95;
+    using Result = std::pair<Key, std::variant<double, std::optional<double>>>;
+    auto results = par_map(taskReverseSizes, [&](auto &task) {
+      auto usedPct = memInfo(&MemInfo::read).ramUsedPct();
+      while (usedPct > limit) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        usedPct = memInfo(&MemInfo::read).ramUsedPct();
+      }
+      auto &[key, fn] = task;
+      logger.log(key.name);
+      return fn ^ fold_total(
+                      [&](const std::tuple<DiffFn, Units, Units> &t) -> Result {
+                        auto [f, l, r] = t;
+                        return std::pair{key, f(l, r)};
+                      },
+                      [&](const std::tuple<MaxFn, Units> &t) -> Result {
+                        auto [f, xs] = t;
+                        return std::pair{key, f(xs)};
+                      });
+    });
+
+    auto tabulate = [&]<typename T>(const std::vector<std::pair<Key, T>> &xs, auto f) {
+      size_t prefixLen = longestCommonPrefixLen(models ^ map([&](auto &m) { return m.path; }));
+      return (xs ^ group_map([](auto &k, auto) { return k.modelIdx; },                       //
+                             [](auto &k, auto v) { return std::tuple{k.kind, k.name, v}; })) //
+             ^ to_vector()                                                                   //
+             ^ sort_by([](auto &modelIdx, auto) { return modelIdx; })                        //
+             ^
+             bind([&](auto &modelIdx, auto &xs) { //
+               auto modelName = models[modelIdx].path.substr(prefixLen);
+               return xs //
+                      ^
+                      sort_by([](auto &kind, auto &name, auto) { return std::pair{kind, name}; }) //
+                      ^ map([&](auto &kind, auto &name, auto &value) {
+                          return modelIdx == 0 ? std::vector{std::string(to_string(kind)), name, //
+                                                             f(value)}                           //
+                                               : std::vector{f(value)};                          //
+                        })                                                                       //
+                      ^ prepend(modelIdx == 0                                                    //
+                                    ? std::vector<std::string>{"kind", "name", modelName}        //
+                                    : std::vector{modelName})                                    //
+                      ^ transpose();
+             }) //
+             ^ transpose();
+    };
+
+    auto diffs = results ^ collect([](auto k, auto v) {
+                   return v ^ get<double>() ^ map([&](auto v) { return std::pair{k, v}; });
+                 });
+
+    auto maxes =
+        results ^ collect([](auto k, auto v) {
+          return v ^ get<std::optional<double>>() ^ map([&](auto v) { return std::pair{k, v}; });
+        });
+
+    auto m = tabulate(maxes, [](auto v) { return std::to_string(v.value_or(-1)); });
     for (auto row : m) {
       AGV_COUT << (row ^ mk_string(", ")) << std::endl;
     }
+    std::cout << "\n";
+    auto d = tabulate(diffs, [](auto v) { return std::to_string(v); });
+    for (auto row : d) {
+      AGV_COUT << (row ^ mk_string(", ")) << std::endl;
+    }
+
+    // MEMORY
+    // SAVE FORMAT
 
     //    m.x;
 
     //              model
     // kind, entry
   }
-
-  //  auto outputPrefix = options.outputPrefix.empty() ? "" : options.outputPrefix + ".";
-  //
-  //  auto lhsEntriesSorted =
-  //      (models ^ find([&](auto &m) { return m.dir == options.base; }) ^
-  //       fold(
-  //           [](auto &m) {
-  //             P3MD_COUT << "# Using base model " << m.dir << std::endl;
-  //             return m;
-  //           },
-  //           [&]() {
-  //             P3MD_COUT << "# Base model " << options.base
-  //                       << " not found, using the first database: " << models[0].dir <<
-  //                       std::endl;
-  //             return models[0];
-  //           }))
-  //          .entries;
-  //
-  //  if (models.size() == 1) {
-  //    auto commonPrefixLen = lhsEntriesSorted                      //
-  //                           ^ map([](auto &e) { return e.file; }) //
-  //                           ^ and_then(&longestCommonPrefixLen);  //
-  //
-  //    auto model =
-  //        DiffModel{lhsEntriesSorted //
-  //                      | map([&](auto &e) { return e.file.substr(commonPrefixLen); }) |
-  //                      to_vector(),
-  //                  options.kinds, lhsEntriesSorted.size()};
-  //
-  //    auto logger =
-  //        ProgressLogger{lhsEntriesSorted.size() * lhsEntriesSorted.size() * options.kinds.size(),
-  //                       lhsEntriesSorted | fold_left(int{}, [](auto acc, auto &e) {
-  //                         return std::max(acc, static_cast<int>(e.file.size()));
-  //                       })};
-  //
-  //    P3MD_COUT << "# Single model mode: comparing model against itself with "
-  //              << (lhsEntriesSorted.size() * lhsEntriesSorted.size()) << " entries total."
-  //              << std::endl;
-  //    par_for(lhsEntriesSorted, [&](auto &lhs, auto lhsIdx) {
-  //      par_for(options.kinds, [&](auto kind, auto) {
-  //        model.set(lhsIdx, kind, lhs.file.substr(commonPrefixLen));
-  //        par_for(lhsEntriesSorted, [&, state = DiffState{kind, lhs}](auto &rhs, auto rhsIdx) {
-  //          model.set(lhsIdx, rhsIdx, kind, rhs.fileName(), state.diff(DiffState{kind, rhs}));
-  //          logger.log(rhs.file);
-  //        });
-  //        logger.log(lhs.file, false);
-  //      });
-  //    });
-  //    P3MD_COUT << std::endl;
-  //    model.dump(outputPrefix);
-  //  } else {
-  //    // XXX insert a null model after the reference model
-  //    models.insert(std::next(models.begin()), Model::makeEmpty());
-  //
-  //    auto commonPrefixLen = (models                                      //
-  //                            | map([](auto &m) { return m.dir; })        //
-  //                            | filter([](auto x) { return !x.empty(); }) //
-  //                            | to_vector()) ^
-  //                           and_then(&longestCommonPrefixLen);
-  //
-  //    auto model = DiffModel{models ^ map([&](auto &m) {
-  //                             return m.dir.empty() ? "(max)" : m.dir.substr(commonPrefixLen);
-  //                           }),
-  //                           options.kinds, lhsEntriesSorted.size()};
-  //
-  //    auto globPairs = options.matches ^ map([](auto &m) {
-  //                       return std::pair{globToRegex(m.sourceGlob), globToRegex(m.targetGlob)};
-  //                     });
-  //    auto logger = ProgressLogger{lhsEntriesSorted.size() * models.size() * options.kinds.size(),
-  //                                 lhsEntriesSorted | fold_left(int{}, [](auto acc, auto &e) {
-  //                                   return std::max(acc, static_cast<int>(e.file.size()));
-  //                                 })};
-  //    par_for(lhsEntriesSorted, [&](auto &lhs, auto lhsIdx) {
-  //      auto lhsFileName = lhs.fileName();
-  //      auto diffGlob = globPairs ^ find([&](auto &baseGlob, auto &) {
-  //                        return std::regex_match(lhsFileName, baseGlob);
-  //                      });
-  //      par_for(options.kinds, [&](auto kind, auto) {
-  //        model.set(lhsIdx, kind, lhsFileName);
-  //        par_for(models, [&, state = DiffState(kind, lhs)](auto &rhsRef, auto rhsIdx) {
-  //          if (rhsRef.dir.empty()) {         // null model, set upper bounds
-  //            model.set(lhsIdx, rhsIdx, kind, //
-  //                      lhsFileName, state.max());
-  //          } else {
-  //            auto rhs = //
-  //                rhsRef.entries ^ find([&](auto &rhs) {
-  //                  return diffGlob ^
-  //                         fold([&](auto &,
-  //                                  auto &glob) { return std::regex_match(rhs.fileName(), glob);
-  //                                  },
-  //                              [&]() { return rhs.fileName() == lhsFileName; });
-  //                });
-  //            model.set(lhsIdx, rhsIdx, kind, //
-  //                      rhs ? rhs->fileName() : "?",
-  //                      rhs ? state.diff(DiffState{kind, *rhs})
-  //                          : std::numeric_limits<double>::infinity());
-  //          }
-  //          logger.log(lhsFileName);
-  //        });
-  //      });
-  //    });
-  //    P3MD_COUT << std::endl;
-  //    model.dump(outputPrefix);
-  //  }
 
   return EXIT_SUCCESS;
 }

@@ -4,10 +4,12 @@
 #include <iosfwd>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <ostream>
 #include <string>
 #include <utility>
 #include <vector>
+#include <chrono>
 
 #include "glob.h"
 #include "lua.h"
@@ -21,8 +23,47 @@ namespace sv {
 
 template <typename T> struct Memoized {
   mutable std::optional<T> value{};
+  mutable std::once_flag flag{};
+  Memoized() = default;
+  ~Memoized() = default;
+  Memoized(const Memoized &that) {
+    std::call_once(that.flag, [&] { value = that.value; });
+  }
+  Memoized &operator=(const Memoized &that) {
+    if (this != &that) std::call_once(that.flag, [&] { value = that.value; });
+    return *this;
+  }
+  Memoized(Memoized &&that) noexcept {
+    std::call_once(that.flag, [&] { value = std::move(that.value); });
+  }
+  Memoized &operator=(Memoized &&that) noexcept {
+    if (this != &that) std::call_once(that.flag, [&] { value = std::move(that.value); });
+    return *this;
+  }
   template <typename F> [[nodiscard]] const T &operator()(F f) const {
-    if (!value) value = std::move(f());
+    std::call_once(flag, [&]() { value = std::move(f()); });
+    return *value;
+  }
+};
+
+template <typename T> class Cached {
+  mutable std::optional<T> value{};
+  std::chrono::milliseconds timeout;
+  mutable std::chrono::steady_clock::time_point expiration{};
+  mutable std::mutex mutex_;
+
+public:
+  explicit Cached(std::chrono::milliseconds timeout) : timeout(timeout) {}
+
+  template <typename F> [[nodiscard]] const T &operator()(F f) const {
+    auto now = std::chrono::steady_clock::now();
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (!value || now >= expiration) {
+        value = std::move(f());
+        expiration = now + timeout;
+      }
+    }
     return *value;
   }
 };

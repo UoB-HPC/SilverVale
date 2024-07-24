@@ -18,28 +18,30 @@
 using namespace aspartame;
 
 TEST_CASE("structure") {
-//  auto out = std::filesystem::path( FIXTURE_TMP_DIR) / "dummy_db";
+  auto out = std::filesystem::path( FIXTURE_TMP_DIR) / "dummy_db";
+
+
+  auto [name, compiler, model, dir] = FIXTURE_DUMMY_CLANG__EXPR;
+  int code = sv::index::run(sv::index::Options{
+      .buildDir = dir,
+      .sourceGlobs = {"*"},
+      .outDir = out,
+      .clearOutDir = true,
+      .verbose = true,
+      .maxThreads = static_cast<int>(std::thread::hardware_concurrency()),
+
+  });
+  REQUIRE(code == 0);
+
+  auto db = sv::Codebase::loadDB(out);
+  auto cb = sv::Codebase::load(db, std::cout, true , {}, [](auto &) { return true; });
 //
-//  FIXTURE_DUMMY_GCC__DIR
+  REQUIRE(cb.units.size() == 1);
 //
-//  int code = sv::index::run(sv::index::Options{
-//      .buildDir = ,
-//      .sourceGlobs = {"*"},
-//      .outDir = out,
-//      .clearOutDir = true,
-//      .verbose = true,
-//      .maxThreads = static_cast<int>(std::thread::hardware_concurrency()),
+  auto main = cb.units[0];
 //
-//  });
-//  REQUIRE(code == 0);
-//
-//  auto db = sv::Codebase::loadDB(out);
-//  auto cb = sv::Codebase::load(db, std::cout, false, out, {}, [](auto &) { return true; });
-////
-//  REQUIRE(cb.units.size() == 1);
-////
-//  auto main = cb.units[0];
-////
-////  std::cout << main->irTree().prettyPrint() << std::endl;
-//  std::cout << main->writtenSource(true).tsTree().prettyPrint() << std::endl;
+//  std::cout << main->irTree().prettyPrint() << std::endl;
+  std::cout << main->writtenSource(true).tsTree().prettyPrint() << std::endl;
+
+  std::cout << main->irTree().prettyPrint() << std::endl;
 }

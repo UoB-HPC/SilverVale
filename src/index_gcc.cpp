@@ -77,7 +77,7 @@ bool sv::detectGccAndIndex(bool verbose,
   for (const auto &[env, v] : envs)
     setenv(env, v.c_str(), true);
   setenv("CCACHE_DISABLE", "1", true);
-  sv::par_for(std::vector{treeArgs, iiArgs}, [&](auto args, auto idx) {
+  sv::par_for(std::vector{treeArgs, iiArgs}, [&](auto args, auto ) {
     auto line = args ^ mk_string(" ");
     if (verbose) AGV_COUT << line << std::endl;
     if (auto code = sv::exec(line, std::cout); code) {

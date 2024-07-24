@@ -213,7 +213,9 @@ bool sv::detectClangAndIndex(bool verbose,
                              const std::unordered_map<std::string, std::string> &programLUT) {
 
   auto programAndVersion = sv::resolveProgramAndDetect(
-      cmd.command[0], [](auto &x) { return x ^ starts_with("clang "); }, programLUT);
+      cmd.command[0], [](auto &x) {
+        return x ^ starts_with("clang ") || x ^ starts_with("Intel(R) oneAPI DPC++/C++");
+      }, programLUT);
   if (!programAndVersion) return false;
 
   const auto &[program, version] = *programAndVersion;
@@ -240,7 +242,7 @@ bool sv::detectClangAndIndex(bool verbose,
                                "-E", "-o" + iiName, "--offload-host-only"}                //
       | concat(args) | to_vector();
 
-  sv::par_for(std::vector{bcArgs, pchArgs, iiArgs}, [&](auto args, auto idx) {
+  sv::par_for(std::vector{bcArgs, pchArgs, iiArgs}, [&](auto args, auto) {
     auto line = args ^ mk_string(" ");
     if (verbose) AGV_COUT << line << std::endl;
     if (auto code = sv::exec(line, std::cout); code) {
