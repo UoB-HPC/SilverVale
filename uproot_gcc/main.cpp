@@ -167,8 +167,6 @@ class GimpleUprootPass : public gimple_opt_pass, sv::SemanticTreeVisitor<Node, v
       0,                  /* todo_flags_start */
       0                   /* todo_flags_finish */
   };
-#pragma omp
-
   std::atomic_long nameCounter{};
   sv::SemanticTree<Node> root;
   std::string basename, afterPass, kind;

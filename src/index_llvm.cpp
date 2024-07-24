@@ -228,7 +228,7 @@ bool sv::detectClangAndIndex(bool verbose,
     return !isOMP || !(arg ^ starts_with("--offload-arch"));
   };
 
-  const auto args = sv::stripDashOArgs(cmd.command);
+  const auto args = sv::stripHeadAndOArgs(cmd.command);
   const auto bcArgs =
       std::vector<std::string>{program, "-emit-llvm"} | concat(args) | to_vector();       //
   const auto pchArgs =                                                                    //
@@ -248,8 +248,19 @@ bool sv::detectClangAndIndex(bool verbose,
     } else AGV_WARNF("popen failed for `{}`: ", line);
   });
 
+  // For Clang, we set an initial language guess determined by the driver, then select the correct
+  // one at codebase load time
+  std::string language;
+  if (auto driver = std::filesystem::path(program).filename(); driver == "clang") language = "c";
+  else if (driver == "clang++") language = "cpp";
+  else {
+    AGV_WARNF("cannot determine language from driver ({}) for command: {}", driver,
+              cmd.command ^ mk_string(" "));
+    language = fmt::format("unknown ({})", driver);
+  }
+
   sv::ClangEntry result{.kind = "clang",
-                        .language = "cpp",
+                        .language = language,
                         .file = std::filesystem::path(cmd.file).filename(),
                         .command = cmd.command ^ mk_string(" "),
                         .preprocessed = readFile(wd / iiName),

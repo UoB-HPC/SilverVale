@@ -9,6 +9,7 @@
 #include "sv/semantic_llvm.h"
 #include "sv/semantic_ts.h"
 
+#include "clang/Basic/SourceManager.h"
 #include "clang/Frontend/ASTUnit.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/TextDiagnosticBuffer.h"
@@ -16,7 +17,12 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 
+#include "tree_sitter_c/api.h"
 #include "tree_sitter_cpp/api.h"
+#include "tree_sitter_cuda/api.h"
+#include "tree_sitter_fortran/api.h"
+#include "tree_sitter_julia/api.h"
+#include "tree_sitter_rust/api.h"
 
 #include "aspartame/map.hpp"
 #include "aspartame/optional.hpp"
@@ -257,12 +263,26 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
 
   const auto select = [](auto x, auto f) { return std::visit([&](auto &&x) { return f(x); }, x); };
 
-  const auto extractPreprocessedTsRoot = [](auto iiLines) {
+  const auto createTsParser = [](const std::string &language) -> TSLanguage * {
+    if (language == "c") return tree_sitter_c();
+    else if (language == "cpp") return tree_sitter_cpp();
+    else if (language == "fortran") return tree_sitter_fortran();
+    else if (language == "cuda") return tree_sitter_cuda();
+    else if (language == "julia") return tree_sitter_julia();
+    else if (language == "rust") return tree_sitter_rust();
+    else {
+      AGV_WARNF("Language {} is not supported by any included tree sitter parsers", language);
+      return nullptr;
+    }
+  };
+
+  const auto extractPreprocessedTsRoot = [&](const std::string &iiLines,
+                                             const std::string &language) {
     const auto [witnessed, contents] = sv::parseCPPLineMarkers(iiLines);
     sv::TsTree tree{};
     if (!witnessed.empty()) {
       contents ^ get(witnessed.front()) ^
-          for_each([&](auto &s) { tree = sv::TsTree(s, tree_sitter_cpp()); });
+          for_each([&](auto &s) { tree = sv::TsTree(s, createTsParser(language)); });
     }
     return tree;
   };
@@ -300,13 +320,25 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
           sv::SemanticTree<std::string> sTree{"root", {}};
           sv::SemanticTree<std::string> sTreeInlined{"root", {}};
           sv::TsTree sourceRoot{};
-          auto &sm = ast->getSourceManager();
-          if (auto data = sm.getBufferDataOrNone(sm.getMainFileID()); data) {
-            sourceRoot = sv::TsTree(data->str(), tree_sitter_cpp());
-          } else {
+          clang::SourceManager &sm = ast->getSourceManager();
+
+          clang::LangOptions o = ast->getLangOpts();
+
+          auto language = x.language;
+          // we consider HIP/CUDA the same, but HIP also sets CUDA and not the other way around
+          if (o.HIP || o.CUDA) language = "cuda";
+          else if (o.CPlusPlus) language = "cpp";
+          else if (o.C99 || o.C11 || o.C17 || o.C2x) language = "c";
+          else
+            AGV_WARNF("Cannot determine precise language from PCH for {}, using driver-based "
+                      "language: {}",
+                      x.file, language);
+
+          if (auto data = sm.getBufferDataOrNone(sm.getMainFileID()); data)
+            sourceRoot = sv::TsTree(data->str(), createTsParser(language));
+          else
             AGV_WARNF("Failed to load original source for entry {}, main file ID missing", x.file);
-            return {};
-          }
+
           for (clang::Decl *decl :
                sv::topLevelDeclsInMainFile(*ast) ^ sort_by([&](clang::Decl *decl) {
                  return std::pair{sm.getDecomposedExpansionLoc(decl->getBeginLoc()).second,
@@ -334,8 +366,8 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
           }
           auto unit = std::make_shared<Unit>( //
               ast->getMainFileName().str(), sTree, sTreeInlined, irTreeRoot, sourceRoot,
-              extractPreprocessedTsRoot(x.preprocessed));
-          out << "# Loaded " << std::left << std::setw(maxFileLen) << x << "\r";
+              extractPreprocessedTsRoot(x.preprocessed, x.language));
+          out << "# Loaded " << std::left << std::setw(maxFileLen) << x.file << "\r";
           return unit;
         } catch (const std::exception &e) {
           AGV_WARNF("Failed to load entry {}: {}", x.file, e);
@@ -361,16 +393,17 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
       auto stree = loadTree(
           fmt::format("{}/{}", db.root, normalise ? x.unnamedSTreeFile : x.namedSTreeFile));
 
-      auto source = x.dependencies |
-                    collect([&](auto &path, auto &dep) -> std::optional<std::string> {
-                      if (std::filesystem::path(path).filename() == x.file) return dep.content;
-                      return std::nullopt;
-                    }) |
-                    head_maybe();
+      auto source = x.dependencies                                                       //
+                    | collect([&](auto &path, auto &dep) -> std::optional<std::string> { //
+                        if (std::filesystem::path(path).filename() == x.file) return dep.content;
+                        return std::nullopt;
+                      }) //
+                    | head_maybe();
 
-      auto unit = std::make_unique<Unit>(x.file, stree, sv::SemanticTree<std::string>{}, irtree,
-                                         sv::TsTree(source.value_or(""), tree_sitter_cpp()),
-                                         extractPreprocessedTsRoot(x.preprocessed));
+      auto unit =
+          std::make_unique<Unit>(x.file, stree, sv::SemanticTree<std::string>{}, irtree,
+                                 sv::TsTree(source.value_or(""), createTsParser(x.language)),
+                                 extractPreprocessedTsRoot(x.preprocessed, x.language));
       out << "# Loaded " << std::left << std::setw(maxFileLen) << x.file << "\r";
       return unit;
     } catch (const std::exception &e) {

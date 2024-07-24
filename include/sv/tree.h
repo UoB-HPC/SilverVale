@@ -41,17 +41,17 @@ void printTree(const N &node,                                                  /
 
 template <typename T> struct SemanticTree;
 template <typename T> class SemanticTreeIterator {
-  std::stack<SemanticTree<T> *> stack{};
+  std::stack<const SemanticTree<T> *> stack{};
 
 public:
   using iterator_category = std::forward_iterator_tag;
-  using value_type = SemanticTree<T>;
+  using value_type = const SemanticTree<T>;
   using difference_type = std::ptrdiff_t;
   using pointer = value_type *;
   using reference = value_type &;
 
   SemanticTreeIterator() = default;
-  explicit SemanticTreeIterator(SemanticTree<T> *node) {
+  explicit SemanticTreeIterator(const SemanticTree<T> *node) {
     if (node) stack.push(node);
   }
 

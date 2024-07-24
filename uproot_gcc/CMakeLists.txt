@@ -47,9 +47,13 @@ list(APPEND UPROOT_GCC_COMPILE_FLAGS
 )
 list(APPEND UPROOT_GCC_LINK_FLAGS "$<$<CONFIG:Debug>:${UPROOT_GCC_LINK_DEBUG_FLAGS}>")
 
+
+set(UPROOT_ASAN_FLAGS
+        "$<$<AND:$<CXX_COMPILER_ID:Clang>,$<CONFIG:Debug>>:-shared-libasan>"
+)
 target_include_directories(uproot_gcc PUBLIC ${GCC_PLUGIN_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/include)
-target_compile_options(uproot_gcc PRIVATE ${UPROOT_GCC_COMPILE_FLAGS} -fno-rtti "$<$<CONFIG:Debug>:-shared-libasan>")
-target_link_options(uproot_gcc PRIVATE ${UPROOT_GCC_LINK_FLAGS} "$<$<CONFIG:Debug>:-shared-libasan>")
+target_compile_options(uproot_gcc PRIVATE ${UPROOT_GCC_COMPILE_FLAGS} -fno-rtti "${UPROOT_ASAN_FLAGS}")
+target_link_options(uproot_gcc PRIVATE ${UPROOT_GCC_LINK_FLAGS} "${UPROOT_ASAN_FLAGS}")
 target_link_libraries(uproot_gcc PRIVATE Aspartame::Aspartame fmt::fmt nlohmann_json::nlohmann_json)
 
 

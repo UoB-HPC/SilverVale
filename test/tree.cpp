@@ -4,9 +4,6 @@
 #include "clang/Tooling/CompilationDatabase.h"
 #include "clang/Tooling/Tooling.h"
 
-#include "tree_sitter_cpp/api.h"
-#include "tree_sitter_fortran//api.h"
-
 #include "aspartame/optional.hpp"
 #include "aspartame/set.hpp"
 #include "aspartame/vector.hpp"
@@ -14,6 +11,13 @@
 
 #include "sv/semantic_llvm.h"
 #include "sv/semantic_ts.h"
+
+#ifdef SKIP // XXX catch2 introduces a SKIP macro which collides with one in tree_sitter_cpp
+  #undef SKIP
+#endif
+
+#include "tree_sitter_cpp/api.h"
+#include "tree_sitter_fortran/api.h"
 
 using namespace clang;
 using namespace clang::tooling;

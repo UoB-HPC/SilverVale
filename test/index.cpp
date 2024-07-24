@@ -6,14 +6,14 @@
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/generators/catch_generators.hpp"
 
+#include "fixture.h"
+#include "fmt/core.h"
 #include "sv/diff.h"
 #include "sv/glob.h"
 #include "sv/model.h"
 #include "sv/tool_index.h"
 #include "sv/tool_inspect.h"
 #include "sv/tool_script.h"
-#include "fixture.h"
-#include "fmt/core.h"
 
 #include "aspartame/string.hpp"
 #include "aspartame/vector.hpp"
@@ -79,7 +79,7 @@ TEST_CASE("microstream") {
   auto outDir = fmt::format("{}/{}_{}_{}_db", FIXTURE_TMP_DIR, name, compiler, model);
   INFO(outDir);
 
-  DYNAMIC_SECTION(compiler << " " << model) {
+  DYNAMIC_SECTION(compiler << "-" << model) {
 
     DYNAMIC_SECTION("index-" << model) {
       int code = sv::index::run(sv::index::Options{
@@ -130,6 +130,13 @@ TEST_CASE("microstream") {
       REQUIRE(!cb.units.empty());
       CHECK(cb.units[0]->name() ^ starts_with("main."));
       CHECK(sv::Diff::apted(cb.units[0]->sTree(), cb.units[0]->sTree()) == 0);
+
+      // make sure processed TS is successful
+      auto nodes = cb.units[0]->preprocessedSource(false).tsTree().root //
+                   | map([](auto &n) { return n.value; })               //
+                   | to_vector();
+      CHECK(!nodes.empty());
+      CHECK(!(nodes ^ contains("ERROR")));
     }
 
     DYNAMIC_SECTION("script-" << model) {
@@ -156,10 +163,10 @@ print(Diff.apted(cb:units()[1]:sTree(), cb:units()[1]:sTree()))
       std::cout.rdbuf(captured.rdbuf());
       int code = sv::script::run(
           sv::script::Options{.roots = {},
-                               .defs = false,
-                               .noBuffer = false,
-                               .maxThreads = static_cast<int>(std::thread::hardware_concurrency()),
-                               .args = {scriptPath, outDir}});
+                              .defs = false,
+                              .noBuffer = false,
+                              .maxThreads = static_cast<int>(std::thread::hardware_concurrency()),
+                              .args = {scriptPath, outDir}});
       std::cout.rdbuf(buffer);
 
       CHECK(code == 0);

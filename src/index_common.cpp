@@ -27,7 +27,7 @@ sv::resolveProgramAndDetect(const std::filesystem::path &program,
   std::stringstream output;
   if (auto code = sv::exec(fmt::format("{} --version", program), output); !code || *code != 0)
     return {};
-  return (output.str() ^ lines()                                                             //
+  return ((output.str() ^ lines())                                                           //
           | collect([&](auto &l) { return predicate(l) ? std::optional{l} : std::nullopt; }) //
           | head_maybe())                                                                    //
          ^ map([&](auto &version) { return std::pair{resolved, version}; });
@@ -41,7 +41,7 @@ std::string sv::readFile(const std::filesystem::path &file) {
   return buffer.str();
 }
 
-std::vector<std::string> sv::stripDashOArgs(const std::vector<std::string> &args) {
+std::vector<std::string> sv::stripHeadAndOArgs(const std::vector<std::string> &args) {
   return args                                                                               //
          | zip_with_index()                                                                 //
          | bind([](auto &s, auto idx) {                                                     //

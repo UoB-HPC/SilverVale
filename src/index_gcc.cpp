@@ -57,7 +57,7 @@ bool sv::detectGccAndIndex(bool verbose,
                std::pair{"UPROOT_NAMED_IRTREE_PATH", dest / namedIRTreeFile},
                std::pair{"UPROOT_UNNAMED_IRTREE_PATH", dest / unnamedIRTreeFile},
   // TODO don't hard code LD_PRELOAD
-#if !defined(NDEBUG)
+#if !defined(NDEBUG) //&& !defined(__GNUG__)
                std::pair{"LD_PRELOAD",
                          std::filesystem::path(
                              "/usr/lib/clang/17/lib/x86_64-redhat-linux-gnu/libclang_rt.asan.so")}
@@ -66,12 +66,13 @@ bool sv::detectGccAndIndex(bool verbose,
 
   auto execParent = std::filesystem::canonical("/proc/self/exe").parent_path();
 
-  const auto treeArgs =
+  const auto treeArgs = //
       std::vector<std::string>{program,
                                fmt::format("-fplugin={}", execParent / "libuproot_gcc.so")} |
       concat(cmd.command | drop(1)) | to_vector();
-  const auto iiArgs = std::vector<std::string>{program, "-E", "-o" + iiName, "-MD"} |
-                      concat(sv::stripDashOArgs(cmd.command)) | to_vector();
+  const auto iiArgs = //
+      std::vector<std::string>{program, "-E", "-o" + iiName, "-MD"} |
+      concat(sv::stripHeadAndOArgs(cmd.command)) | to_vector();
 
   for (const auto &[env, v] : envs)
     setenv(env, v.c_str(), true);
@@ -86,8 +87,19 @@ bool sv::detectGccAndIndex(bool verbose,
   for (const auto &[env, _] : envs)
     unsetenv(env);
 
+  // For GCC, we only support Fortran and C/C++, which uses a different driver
+  std::string language;
+  if (auto driver = std::filesystem::path(program).filename(); driver == "gcc") language = "c";
+  else if (driver == "g++") language = "cpp";
+  else if (driver == "gfortran") language = "fortran";
+  else {
+    AGV_WARNF("cannot determine language from driver ({}) for command: {}", driver,
+              cmd.command ^ mk_string(" "));
+    language = fmt::format("unknown ({})", driver);
+  }
+
   sv::FlatEntry //
-      result{.language = "cpp",
+      result{.language = language,
              .file = std::filesystem::path(cmd.file).filename(),
              .command = cmd.command ^ mk_string(" "),
              .preprocessed = readFile(wd / iiName),

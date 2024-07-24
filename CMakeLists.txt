@@ -116,6 +116,7 @@ add_tree_sitter_lang(tree-sitter c TAG v0.20.7)
 add_tree_sitter_lang(tree-sitter cpp TAG v0.20.5)
 add_tree_sitter_lang(tree-sitter julia TAG v0.22.0)
 add_tree_sitter_lang(tree-sitter rust TAG v0.21.2)
+add_tree_sitter_lang(tree-sitter-grammars cuda TAG v0.20.5)
 add_tree_sitter_lang(stadelmanma fortran HASH dde9829)
 
 
@@ -178,6 +179,7 @@ target_link_libraries(SilverVale
         tree-sitter
         tree-sitter-c
         tree-sitter-cpp
+        tree-sitter-cuda # cpp gives ERROR tokens for __$space__, <<<>>>, etc
         tree-sitter-julia
         tree-sitter-rust
         tree-sitter-fortran

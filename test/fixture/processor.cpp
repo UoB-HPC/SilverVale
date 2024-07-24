@@ -17,6 +17,7 @@ int main() { return FOO + BAR + BAZ; }
 
 #define FUNC f1
 #include "processor_incl_c.h"
+#undef FUNC
 #define FUNC f2
 #include "processor_incl_c.h"
 

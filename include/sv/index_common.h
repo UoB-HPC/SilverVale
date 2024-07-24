@@ -16,7 +16,7 @@ resolveProgramAndDetect(const std::filesystem::path &program,
 
 [[nodiscard]] std::string readFile(const std::filesystem::path &file);
 
-[[nodiscard]] std::vector<std::string> stripDashOArgs(const std::vector<std::string> &args);
+[[nodiscard]] std::vector<std::string> stripHeadAndOArgs(const std::vector<std::string> &args);
 
 [[nodiscard]] std::map<std::string, sv::Dependency>
 readDepFile(const std::filesystem::path &depFile, const std::string &source);
