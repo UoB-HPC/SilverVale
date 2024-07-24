@@ -143,7 +143,8 @@ list(APPEND SV_COMPILE_FLAGS
 )
 list(APPEND SV_LINK_FLAGS "$<$<CONFIG:Debug>:${SV_LINK_DEBUG_FLAGS}>")
 
-add_library(SilverVale
+add_library(SilverVale STATIC
+
         src/semantic_llvm.cpp
         src/semantic_ts.cpp
 
@@ -230,8 +231,6 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
             <unordered_map>
     )
 endif ()
-
-add_executable(wrapper src/wrapper.cpp)
 
 add_executable(driver src/driver.cpp)
 add_executable(tests test/tree.cpp test/index.cpp test/structure.cpp test/preprocessor.cpp)

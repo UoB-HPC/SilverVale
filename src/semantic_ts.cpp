@@ -155,7 +155,8 @@ std::set<uint32_t> sv::TsTree::slocLines(const std::optional<TSNode> &node) cons
         }
 
         if (type.starts_with("preproc_")) {
-          // preproc adds a trailing newline, so we just parse what's actually inside
+          // preproc adds a *trailing* newline, so we just parse what's actually inside
+          slocLines.emplace(ts_node_start_point(x).row); // trailing, so the start is still correct
           return true;
         }
 
@@ -178,7 +179,7 @@ std::set<std::pair<uint32_t, uint32_t>>
 sv::TsTree::llocRanges(const std::optional<TSNode> &node) const {
   std::set<std::pair<uint32_t, uint32_t>> llocRanges;
   walk(
-      [&](auto x) {
+      [&](auto &x) {
         std::string type = ts_node_type(x);
         // don't count compound stmt as it contains children
         if (type == "compound_statement") return true;
@@ -189,15 +190,24 @@ sv::TsTree::llocRanges(const std::optional<TSNode> &node) const {
           return true;
         }
 
+        if (type ^ ends_with("directive")) {
+          // preproc_directive is enclosed by a preproc_call which is the logical part,
+          // but it may contain excessive new lines, so we take the min and max of the children
+          const auto parent = ts_node_parent(x);
+          auto start = ts_node_start_byte(ts_node_child(parent, 0));
+          auto end = ts_node_end_byte(ts_node_child(parent, ts_node_child_count(parent) - 1));
+          llocRanges.emplace(start, end);
+          return true;
+        }
+
         if (type ^ ends_with("declaration") || //
-            type ^ ends_with("statement") ||   //
-            type ^ ends_with("directive")      //
+            type ^ ends_with("statement")      //
         ) {
           llocRanges.emplace(ts_node_start_byte(x), ts_node_end_byte(x));
         }
         return true;
       },
-      node);
+      node, true);
   return llocRanges;
 }
 

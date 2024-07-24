@@ -42,7 +42,7 @@ inline std::string_view to_string(const Kind &kind) {
 }
 
 struct DatabaseSpec {
-  std::string path;
+  std::filesystem::path path;
   std::vector<std::string> roots;
 };
 

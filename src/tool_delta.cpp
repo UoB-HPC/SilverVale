@@ -35,8 +35,8 @@ using Units = std::vector<std::shared_ptr<Unit>>;
 using DeltaFn = std::function<double(const Units &, const Units &)>;
 using MaxFn = std::function<std::optional<double>(const Units &)>;
 
-auto treeSelect = [](delta::Kind kind,
-                     auto f) -> std::pair<delta::Kind, std::pair<DeltaFn, MaxFn>> {
+template <typename F>
+std::pair<delta::Kind, std::pair<DeltaFn, MaxFn>> treeSelect(delta::Kind kind, F f) {
   return {kind,
           std::pair{
               [&](const Units &lhs, const Units &rhs) -> double {
@@ -49,6 +49,18 @@ auto treeSelect = [](delta::Kind kind,
           }};
 };
 
+double minDiff(std::vector<std::string> &&ls, std::vector<std::string> &&rs) {
+  auto value = std::numeric_limits<double>::max();
+  do {
+    auto lhsSrc = ls ^ fold_left(std::string{}, [](auto &&acc, auto &x) { return acc += x; });
+    do {
+      auto rhsSrc = rs ^ fold_left(std::string{}, [](auto &&acc, auto &x) { return acc += x; });
+      value = std::fmin(value, static_cast<double>(Diff::diff(lhsSrc, rhsSrc)));
+    } while (std::next_permutation(rs.begin(), rs.end()));
+  } while (std::next_permutation(ls.begin(), ls.end()));
+  return value;
+}
+
 std::unordered_map<delta::Kind, std::pair<DeltaFn, MaxFn>> fns = {
     {delta::Kind::SLOCRawAbs, std::pair{
                                   [](const Units &, const Units &rhs) -> double {
@@ -58,6 +70,15 @@ std::unordered_map<delta::Kind, std::pair<DeltaFn, MaxFn>> fns = {
                                   },
                                   [](const Units &) -> std::optional<double> { return {}; },
                               }},
+    {delta::Kind::SLOCAbs, std::pair{
+                               [](const Units &, const Units &rhs) -> double {
+                                 return rhs ^ fold_left(0, [](auto acc, auto &u) {
+                                          return acc + u->preprocessedSource(true).sloc();
+                                        });
+                               },
+                               [](const Units &) -> std::optional<double> { return {}; },
+                           }},
+
     {delta::Kind::LLOCRawAbs, std::pair{
                                   [](const Units &, const Units &rhs) -> double {
                                     return rhs ^ fold_left(0, [](auto acc, auto &u) {
@@ -66,33 +87,45 @@ std::unordered_map<delta::Kind, std::pair<DeltaFn, MaxFn>> fns = {
                                   },
                                   [](const Units &) -> std::optional<double> { return {}; },
                               }},
+    {delta::Kind::LLOCAbs, std::pair{
+                               [](const Units &, const Units &rhs) -> double {
+                                 return rhs ^ fold_left(0, [](auto acc, auto &u) {
+                                          return acc + u->preprocessedSource(true).lloc();
+                                        });
+                               },
+                               [](const Units &) -> std::optional<double> { return {}; },
+                           }},
+
     {delta::Kind::SourceRawRel,
      std::pair{
          [](const Units &lhs, const Units &rhs) -> double {
-           auto value = std::numeric_limits<double>::max();
-           auto ls = lhs ^ map([](auto &x) { return x->writtenSource(true).content(); });
-           do {
-             auto lhsSrc =
-                 ls ^ fold_left(std::string{}, [](auto &&acc, auto &x) { return acc += x; });
-             auto rs = lhs ^ map([](auto &x) { return x->writtenSource(true).content(); });
-             do {
-               auto rhsSrc =
-                   rs ^ fold_left(std::string{}, [](auto &&acc, auto &x) { return acc += x; });
-               value = std::fmin(value, static_cast<double>(Diff::diff(lhsSrc, rhsSrc)));
-             } while (std::next_permutation(rs.begin(), rs.end()));
-           } while (std::next_permutation(ls.begin(), ls.end()));
-           return value;
+           return minDiff(lhs ^ map([](auto &x) { return x->writtenSource(true).content(); }),
+                          rhs ^ map([](auto &x) { return x->writtenSource(true).content(); }));
          },
          [](const Units &xs) -> std::optional<double> {
-           return (xs ^ fold_left(std::string{},
-                                  [](auto &&acc, auto &x) {
-                                    return acc += x->writtenSource(true).content();
-                                  }))
-               .size();
+           return (xs                                                                     //
+                   | map([](auto &u) { return u->writtenSource(true).content().size(); }) //
+                   | reduce(std::plus<>()))
+               .value_or(0); //
          },
      }},
-    treeSelect(delta::Kind::TSTreeRel, [](auto &u) { return u->writtenSource(true).tsTree(); }),
+    {delta::Kind::SourceRel,
+     std::pair{
+         [](const Units &lhs, const Units &rhs) -> double {
+           return minDiff(lhs ^ map([](auto &x) { return x->preprocessedSource(true).content(); }),
+                          rhs ^ map([](auto &x) { return x->preprocessedSource(true).content(); }));
+         },
+         [](const Units &xs) -> std::optional<double> {
+           return (xs                                                                          //
+                   | map([](auto &u) { return u->preprocessedSource(true).content().size(); }) //
+                   | reduce(std::plus<>()))
+               .value_or(0); //
+         },
+     }},
+
     treeSelect(delta::Kind::TSTreeRawRel, [](auto &u) { return u->writtenSource(true).tsTree(); }),
+    treeSelect(delta::Kind::TSTreeRel,
+               [](auto &u) { return u->preprocessedSource(true).tsTree(); }),
 
     treeSelect(delta::Kind::STreeRel, [](auto &u) { return u->sTree(); }),
     treeSelect(delta::Kind::STreeInlineRel, [](auto &u) { return u->sTreeInlined(); }),
@@ -107,22 +140,29 @@ Expected<delta::Options> parseOpts(int argc, const char **argv) {
       cl::desc("Comma separated kinds of metric to use for diff operation. Defaults to all "
                "supported kinds."),
       cl::values(
-          clEnumValN(delta::Kind::SLOCRawAbs, "sloc", "Source Lines of Code"),
-          clEnumValN(delta::Kind::LLOCRawAbs, "lloc", "Logical Lines of Code"),
-          clEnumValN(delta::Kind::SourceRawRel, "source", "Source code (edit difference)"),
-          clEnumValN(delta::Kind::TSTreeRawRel, "tstree", "Tree-sitter tree"),
+          clEnumValN(delta::Kind::SLOCRawAbs, "sloc", //
+                     "Source Lines of Code"),
+          clEnumValN(delta::Kind::LLOCRawAbs, "lloc", //
+                     "Logical Lines of Code"),
+          clEnumValN(delta::Kind::SourceRawRel, "source", //
+                     "Source code (edit difference)"),
+          clEnumValN(delta::Kind::TSTreeRawRel, "tstree", //
+                     "Tree-sitter tree"),
 
-          clEnumValN(delta::Kind::SLOCAbs, "sloc+p", "Source Lines of Code (after preprocessor)"),
-          clEnumValN(delta::Kind::LLOCAbs, "lloc+p", "Logical Lines of Code (after preprocessor)"),
-          clEnumValN(delta::Kind::SourceRel, "source+p",
+          clEnumValN(delta::Kind::SLOCAbs, "sloc+p", //
+                     "Source Lines of Code (after preprocessor)"),
+          clEnumValN(delta::Kind::LLOCAbs, "lloc+p", //
+                     "Logical Lines of Code (after preprocessor)"),
+          clEnumValN(delta::Kind::SourceRel, "source+p", //
                      "Source code (edit difference, after preprocessor)"),
-          clEnumValN(delta::Kind::TSTreeRel, "tstree+p", "Tree-sitter tree (after preprocessor)"),
+          clEnumValN(delta::Kind::TSTreeRel, "tstree+p", //
+                     "Tree-sitter tree (after preprocessor)"),
 
-          clEnumValN(delta::Kind::STreeRel, "stree",
+          clEnumValN(delta::Kind::STreeRel, "stree", //
                      "AST based semantic tree with symbols normalised."),
-          clEnumValN(delta::Kind::STreeInlineRel, "stree+i",
+          clEnumValN(delta::Kind::STreeInlineRel, "stree+i", //
                      "ClangAST based semantic tree with symbols normalised and calls inlined."),
-          clEnumValN(delta::Kind::IRTreeRel, "irtree",
+          clEnumValN(delta::Kind::IRTreeRel, "irtree", //
                      "ClangAST based semantic tree with symbols normalised and calls inlined.")));
 
   static cl::opt<std::string> root(
@@ -193,26 +233,26 @@ Expected<delta::Options> parseOpts(int argc, const char **argv) {
       }) |
       to_vector();
 
-  return Options{.databases = mappedDbs,
-                 .base = base.empty()
-                             ? mappedDbs ^ head_maybe() ^
-                                   fold([](auto &d) { return d.path; }, []() { return ""; })
-                             : base,
-                 .kinds = kinds, //
-                 .excludes = excludes | map([](auto &s) { return ExcludeFilter{s}; }) | to_vector(),
-                 .merges = merges | collect([&](auto &s) {
-                             return pairPattern(s, ':') ^ map([&](auto &glob, auto &name) {
-                                      return EntryMerge{.glob = glob, .name = name};
-                                    });
-                           }) |
-                           to_vector(),
-                 .matches = matches | collect([&](auto &p) { return pairPattern(p, ':'); }) |
-                            map([](auto &source, auto &target) { //
-                              return EntryMatch{.sourceGlob = source, .targetGlob = target};
-                            }) |
-                            to_vector(),
-                 .outputPrefix = outputPrefix.getValue(),
-                 .maxThreads = maxThreads};
+  return Options{
+      .databases = mappedDbs,
+      .base = base.empty() ? mappedDbs ^ head_maybe() ^
+                                 fold([](auto &d) { return d.path.string(); }, []() { return ""; })
+                           : base,
+      .kinds = kinds, //
+      .excludes = excludes | map([](auto &s) { return ExcludeFilter{s}; }) | to_vector(),
+      .merges = merges | collect([&](auto &s) {
+                  return pairPattern(s, ':') ^ map([&](auto &glob, auto &name) {
+                           return EntryMerge{.glob = glob, .name = name};
+                         });
+                }) |
+                to_vector(),
+      .matches = matches | collect([&](auto &p) { return pairPattern(p, ':'); }) |
+                 map([](auto &source, auto &target) { //
+                   return EntryMatch{.sourceGlob = source, .targetGlob = target};
+                 }) |
+                 to_vector(),
+      .outputPrefix = outputPrefix.getValue(),
+      .maxThreads = maxThreads};
 }
 
 int delta::main(int argc, const char **argv) { return parseAndRun(argc, argv, &parseOpts, &run); }
@@ -244,8 +284,7 @@ int delta::run(const delta::Options &options) {
 
   std::vector<Model> models(options.databases.size());
   par_for(options.databases, [&](auto &spec, auto idx) {
-    auto dbFile = spec.path + "/db.json"; // TODO fix this
-    const auto db = Codebase::loadDB(dbFile);
+    const auto db = Codebase::loadDB(spec.path);
     const auto excludes = options.excludes ^ map([](auto &f) { return globToRegex(f.glob); });
     const auto cb = Codebase::load(db, std::cout, true, {}, [&](auto &path) {
       return excludes ^ forall([&](auto &r) { return !std::regex_match(path, r); });

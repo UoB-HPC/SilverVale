@@ -55,6 +55,7 @@ TEST_CASE("cpp-source-loc") {
 //*Foo*/
 int main(/**/)/* a */{
 // a
+#pragma omp
 return 0 /**/ + 1;// b
 }//
 //
@@ -66,19 +67,20 @@ return 0 /**/ + 1;// b
 
 int main(){
 
+#pragma omp
 return 0  + 1;
 }
 
 
 )");
   SECTION("SLOC") {
-    CHECK(tree.sloc() == 3);
-    CHECK(tree.slocLines() == std::set<uint32_t>{2, 4, 5});
+    CHECK(tree.sloc() == 4);
+    CHECK(tree.slocLines() == std::set<uint32_t>{2, 4, 5, 6});
   }
   SECTION("LLOC") {
-    CHECK(tree.lloc() == 1);
+    CHECK(tree.lloc() == 2);
     CHECK((tree.llocRanges() ^ map([&](auto s, auto e) { return tree.source.substr(s, e - s); })) ==
-          std::set<std::string>{"return 0  + 1;"});
+          std::set<std::string>{"#pragma omp", "return 0  + 1;"});
   }
 }
 
