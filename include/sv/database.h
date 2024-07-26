@@ -129,6 +129,37 @@ struct ClangSBCCProfile {
   NLOHMANN_DEFINE_TYPE_INTRUSIVE(ClangSBCCProfile, type, version, data);
 };
 
+struct CountBasedCoverage {
+  struct Count {
+    size_t lineStart, lineEnd;
+    size_t colStart, colEnd;
+    size_t count;
+
+  private:
+    DEF_SOL_UT_ACCESSOR(lineStart);
+    DEF_SOL_UT_ACCESSOR(lineEnd);
+    DEF_SOL_UT_ACCESSOR(colStart);
+    DEF_SOL_UT_ACCESSOR(colEnd);
+    DEF_SOL_UT_ACCESSOR(count);
+
+  public:
+    DEF_TEAL_SOL_UT(Count,                           //
+                    SOL_UT_FN_ACC(Count, lineStart), //
+                    SOL_UT_FN_ACC(Count, lineEnd),   //
+                    SOL_UT_FN_ACC(Count, colStart),  //
+                    SOL_UT_FN_ACC(Count, colEnd),    //
+                    SOL_UT_FN_ACC(Count, count));
+  };
+
+  std::map<std::string, std::vector<Count>> functions{};
+
+private:
+  DEF_SOL_UT_ACCESSOR(functions);
+
+public:
+  DEF_TEAL_SOL_UT(CountBasedCoverage, SOL_UT_FN_ACC(CountBasedCoverage, functions));
+};
+
 struct CompilationDatabase {
   struct Entry {
     std::string directory;
@@ -349,7 +380,9 @@ public:
 
 struct Database {
   std::string root{};
-  std::vector<std::variant<ClangEntry, FlatEntry>> entries{};
+  std::vector<std::variant<std::shared_ptr<ClangEntry>, std::shared_ptr<FlatEntry>>> entries{};
+
+  std::shared_ptr<CountBasedCoverage> coverage{};
 
 private:
   DEF_SOL_UT_ACCESSOR(root);
@@ -364,7 +397,7 @@ public:
     os << "sv::Database{"              //
        << ".root=" << db.root << ", "; //
     for (auto &e : db.entries)
-      std::visit([&](auto &&e) { os << ".entries[" << e.file << "]=" << e << ", "; }, e);
+      std::visit([&](auto &&e) { os << ".entries[" << e->file << "]=" << e << ", "; }, e);
     os << "}";
     return os;
   }

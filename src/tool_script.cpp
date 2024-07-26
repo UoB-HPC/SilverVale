@@ -69,18 +69,20 @@ int sv::script::main(int argc, const char **argv) {
   return sv::parseAndRun(argc, argv, &parseOpts, &run);
 }
 
-constexpr sv::lua::TypeList< //
-    sv::Dependency,          //
-    sv::FlatEntry,           //
-    sv::ClangEntry,          //
-    sv::LLVMBitcode,         //
-    sv::Tree,                //
-    sv::Source,              //
-    sv::Unit,                //
-    sv::Codebase,            //
-    sv::Database,            //
-    sv::Diff,                //
-    sv::Glob                 //
+constexpr sv::lua::TypeList<       //
+    sv::Dependency,                //
+    sv::FlatEntry,                 //
+    sv::ClangEntry,                //
+    sv::LLVMBitcode,               //
+    sv::Tree,                      //
+    sv::Source,                    //
+    sv::Unit,                      //
+    sv::Codebase,                  //
+    sv::CountBasedCoverage,        //
+    sv::CountBasedCoverage::Count, //
+    sv::Database,                  //
+    sv::Diff,                      //
+    sv::Glob                       //
     >
     Types;
 

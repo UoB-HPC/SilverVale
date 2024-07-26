@@ -232,9 +232,13 @@ bool sv::detectClangAndIndex(bool verbose,
     return !isOMP || !(arg ^ starts_with("--offload-arch"));
   };
 
-  const auto args = sv::stripHeadAndOArgs(cmd.command);
-  const auto bcArgs =
-      std::vector<std::string>{program, "-emit-llvm"} | concat(args) | to_vector();       //
+  const auto coverageFlags = std::unordered_set{"-fprofile-instr-generate"s, "-fcoverage-mapping"s};
+  // delete SBCC coverage flags as those alter the IR for coverage accuracy
+  const auto args = sv::stripHeadAndOArgs(cmd.command) ^
+                    filter([&](auto &x) { return !coverageFlags.contains(x); });
+
+  const auto bcArgs = std::vector<std::string>{program, "-emit-llvm"} | concat(args) |
+                      append("-fno-discard-value-names") | append("-g") | to_vector();    //
   const auto pchArgs =                                                                    //
       std::vector<std::string>{program,                                                   //
                                "-emit-ast", "-o" + pchName, "--offload-host-only", "-MD"} //

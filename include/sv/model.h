@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <ctime>
 #include <iosfwd>
 #include <map>
@@ -9,7 +10,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-#include <chrono>
 
 #include "glob.h"
 #include "lua.h"
@@ -174,13 +174,16 @@ public:
   friend std::ostream &operator<<(std::ostream &os, const Unit &unit);
 };
 
+
 struct Codebase {
   std::string root;
   std::vector<std::shared_ptr<Unit>> units;
+  std::shared_ptr<CountBasedCoverage> coverage;
 
 private:
   DEF_SOL_UT_ACCESSOR(root);
   DEF_SOL_UT_ACCESSOR(units);
+  DEF_SOL_UT_ACCESSOR(coverage);
 
 public:
   [[nodiscard]] static Database loadDB(const std::string &dir);
@@ -200,9 +203,10 @@ public:
 
   friend std::ostream &operator<<(std::ostream &os, const Codebase &codebase);
 
-  DEF_TEAL_SOL_UT(Codebase,                       //
-                  SOL_UT_FN_ACC(Codebase, root),  //
-                  SOL_UT_FN_ACC(Codebase, units), //
+  DEF_TEAL_SOL_UT(Codebase,                          //
+                  SOL_UT_FN_ACC(Codebase, root),     //
+                  SOL_UT_FN_ACC(Codebase, units),    //
+                  SOL_UT_FN_ACC(Codebase, coverage), //
                   SOL_UT_FN(Codebase, loadDB),
                   SOL_UT_FN0(Codebase, load,                                                   //
                              Codebase (*)(const Database &,                                    //

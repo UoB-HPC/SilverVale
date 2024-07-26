@@ -71,30 +71,34 @@ bool sv::ClangASTSemanticTreeVisitor::TraverseStmt(clang::Stmt *stmt) { // NOLIN
 
   return visitDyn<bool>(
              stmt,
-             [&](CompoundStmt *compound) {
-               return compound->body() | forall([&](auto s) { return TraverseStmt(s); });
+             [&](CompoundStmt *compound) {                    // NOLINT(*-no-recursion)
+               return compound->body() | forall([&](auto s) { // NOLINT(*-no-recursion)
+                        return TraverseStmt(s);
+                      });
              },
-             [&](DeclStmt *decl) {
-               return decl->decls() | forall([&](auto s) { return TraverseDecl(s); });
+             [&](DeclStmt *decl) {                         // NOLINT(*-no-recursion)
+               return decl->decls() | forall([&](auto s) { // NOLINT(*-no-recursion)
+                        return TraverseDecl(s);
+                      });
              },
-             [&](IntegerLiteral *lit) {
+             [&](IntegerLiteral *lit) { // NOLINT(*-no-recursion)
                return single(std::string(stmt->getStmtClassName()) + ": " +
                              std::to_string(lit->getValue().getLimitedValue()));
              },
-             [&](FloatingLiteral *lit) {
+             [&](FloatingLiteral *lit) { // NOLINT(*-no-recursion)
                return single(std::string(stmt->getStmtClassName()) + ": " +
                              std::to_string(lit->getValue().convertToDouble()));
              },
-             [&](StringLiteral *lit) {
+             [&](StringLiteral *lit) { // NOLINT(*-no-recursion)
                return single(std::string(stmt->getStmtClassName()) + ": \"" +
                              (lit->getString().str() ^ replace_all("\n", "\\n")) + "\"");
              }) ^
-         fold([&]() {
+         fold([&]() { // NOLINT(*-no-recursion)
            auto name = std::string(stmt->getStmtClassName());
            auto &sm = Context.getSourceManager();
 
            // Try to inline calls
-           auto handleFn = [&](CallExpr *call, FunctionDecl *direct) {
+           auto handleFn = [&](CallExpr *call, FunctionDecl *direct) { // NOLINT(*-no-recursion)
              name += +": " + direct->getDeclName().getAsString();
 
              bool projectSymbol = option.roots | exists([&](auto root) {
@@ -115,8 +119,8 @@ bool sv::ClangASTSemanticTreeVisitor::TraverseStmt(clang::Stmt *stmt) { // NOLIN
                       //                                           " @ " +
                //                                           sm.getFilename(direct->getLocation()).str());
                return scoped(
-                   [&]() {
-                     return call->arguments() | forall([&](Expr *arg) {
+                   [&]() {                                              // NOLINT(*-no-recursion)
+                     return call->arguments() | forall([&](Expr *arg) { // NOLINT(*-no-recursion)
                               // for DeclRefs to a lambda in a no-inline case, expand the body here
                               if (auto lambdaApply = extractLambdaCallMethodFromDeclRefTpe(arg);
                                   lambdaApply) {
@@ -160,7 +164,7 @@ bool sv::ClangASTSemanticTreeVisitor::TraverseStmt(clang::Stmt *stmt) { // NOLIN
                });
 
            return scoped(
-               [&]() {
+               [&]() { // NOLINT(*-no-recursion)
                  return RecursiveASTVisitor<ClangASTSemanticTreeVisitor>::TraverseStmt(stmt);
                },
                suffix ^ map([&](auto s) { return name + ": " + s; }) ^ get_or_else(name));
@@ -179,7 +183,9 @@ bool sv::ClangASTSemanticTreeVisitor::TraverseDecl(clang::Decl *decl) { // NOLIN
       });
   std::string name = decl->getDeclKindName();
   return scoped(
-      [&]() { return RecursiveASTVisitor<ClangASTSemanticTreeVisitor>::TraverseDecl(decl); },
+      [&]() { // NOLINT(*-no-recursion)
+        return RecursiveASTVisitor<ClangASTSemanticTreeVisitor>::TraverseDecl(decl);
+      },
       suffix ^ map([&](auto s) { return name + ": " + s; }) ^ get_or_else(name));
 }
 

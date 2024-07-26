@@ -27,10 +27,11 @@ int sv::inspect::main(int argc, const char **argv) {
 int sv::inspect::run(const Options &options) {
   auto database = Codebase::loadDB(options.dbDir);
   std::cout << "entry,deps\n";
-  database.entries                                                                                //
-      ^ map([](auto &e) {                                                                         //
-          return std::visit([](auto &x) { return std::pair{x.file, x.dependencies.size()}; }, e); //
-        })                                                                                        //
+  database.entries //
+      ^
+      map([](auto &e) {                                                                           //
+        return std::visit([](auto &x) { return std::pair{x->file, x->dependencies.size()}; }, e); //
+      })                                                                                          //
       ^ sort_by([](auto &, auto deps) { return deps; })                                           //
       ^ for_each([](auto &file, auto deps) { std::cout << file << "," << deps << "\n"; });        //
   return EXIT_SUCCESS;

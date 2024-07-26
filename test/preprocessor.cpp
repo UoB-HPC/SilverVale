@@ -4,6 +4,7 @@
 
 #include "catch2/catch_test_macros.hpp"
 #include "fixture.h"
+#include "fmt/core.h"
 #include "sv/index_common.h"
 #include "sv/semantic_ts.h"
 
@@ -33,17 +34,16 @@ TEST_CASE("parse-CPP-linemarkers") {
   CHECK(((actual ^ filter([&](auto f) { return rest ^ contains(f); })) == rest));
 
   for (auto [name, expected] : {
-           std::pair{"processor.cpp", "int main() { return 1 + 1 + 1; }\n"
-                                      "void end() {}"},
-           std::pair{"processor.h", "#pragma foo\n"
-                                    "#pragma bar\n"
-                                    "#pragma baz\n"
-                                    "#pragma omp \"a\"\n"
-                                    "void baz() {}"},
-           std::pair{"processor_incl_a.h", "void foo() {}"},
-           std::pair{"processor_incl_b.h", "void bar() {}"},
-           std::pair{"processor_incl_c.h", "void f1();\n"
-                                           "void f2();"},
+           std::pair{"processor.cpp", std::vector{std::pair{16, "int main() { return 1 + 1 + 1; }"},
+                                                  std::pair{24, "void end() {}"}}},
+           std::pair{"processor.h",
+                     std::vector{std::pair{8, "#pragma foo"}, std::pair{9, "#pragma bar"},
+                                 std::pair{10, "#pragma baz"}, std::pair{11, "#pragma omp \"a\""},
+                                 std::pair{12, "void baz() {}"}}},
+           std::pair{"processor_incl_a.h", std::vector{std::pair{4, "void foo() {}"}}},
+           std::pair{"processor_incl_b.h", std::vector{std::pair{4, "void bar() {}"}}},
+           std::pair{"processor_incl_c.h",
+                     std::vector{std::pair{1, "void f1();"}, std::pair{2, "void f2();"}}},
        }) {
 
     auto entry = contents ^ find([&](auto x, auto) {
@@ -51,10 +51,14 @@ TEST_CASE("parse-CPP-linemarkers") {
                  });
     REQUIRE(entry);
 
-    auto normalised = entry->second                                       //
-                      ^ lines()                                           //
-                      ^ filter([](auto &l) { return !(l ^ is_blank()); }) //
-                      ^ mk_string("\n");
-    CHECK(normalised == expected);
+    auto actualLines = (entry->second ^ lines()) | zip_with_index(1) |
+                       map([](auto l, auto idx) { return std::pair{idx, l}; }) | to_vector();
+    INFO((actualLines ^
+          mk_string("\n", [](auto idx, auto l) { return fmt::format("[{}]{}", idx, l); })));
+    for (auto [num, line] : expected) {
+      INFO(num);
+      INFO(line);
+      CHECK((actualLines ^ contains(std::pair{num, std::string(line)})));
+    }
   }
 }

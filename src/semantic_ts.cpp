@@ -3,6 +3,7 @@
 #include "sv/semantic_ts.h"
 
 #include "aspartame/string.hpp"
+#include "aspartame/unordered_map.hpp"
 #include "aspartame/vector.hpp"
 
 using namespace aspartame;
@@ -11,10 +12,11 @@ std::pair<std::vector<std::string>, std::unordered_map<std::string, std::string>
 sv::parseCPPLineMarkers(const std::string &iiContent) {
   // see https://gcc.gnu.org/onlinedocs/cpp/Preprocessor-Output.html
   const static std::string prefix = "# ";
-  std::unordered_map<std::string, std::string> files;
+  std::unordered_map<std::string, std::pair<size_t, std::string>> files;
   std::vector<std::string> encountered;
   std::unordered_set<std::string> witnessed;
   std::string currentFile;
+  size_t currentLine;
 
   auto push = [&](auto next) {
     currentFile = next;
@@ -24,9 +26,11 @@ sv::parseCPPLineMarkers(const std::string &iiContent) {
   for (const auto &line : iiContent ^ lines()) {
     if (line.starts_with(prefix)) { // # linenum "filename" flags
       auto marker = line.substr(prefix.length());
-      auto validLineNum = marker ^ take_while([](auto c) { return c != ' '; }) ^
-                          forall([](auto x) { return std::isdigit(x); });
-      if (validLineNum) { // line marker started with a number first, keep going
+      std::optional<size_t> lineNum;
+      try {
+        lineNum = std::stoul(marker ^ take_while([](auto c) { return c != ' '; }));
+      } catch (...) {}
+      if (lineNum) { // line marker started with a number first, keep going
         // the path may be quoted with spaces in between, so match up the quotes
         auto quoteIndices = marker                                                    //
                             | zip_with_index()                                        //
@@ -42,14 +46,20 @@ sv::parseCPPLineMarkers(const std::string &iiContent) {
           auto len = quoteIndices.back() - start;
           push(marker.substr(start, len)); // pop the quotes
         }
+        currentLine = *lineNum - 1;
         continue; // eat the line even on parse failure as we are sure it's a line marker
       }
     }
-    auto &content = files[currentFile];
+    auto &[lines, content] = files[currentFile];
+    if (lines < currentLine) {
+      content.append(currentLine - lines, '\n');
+      lines = currentLine;
+    }
     content += line;
-    content += "\n";
+    content += '\n';
+    lines++;
   }
-  return {encountered, files};
+  return {encountered, files ^ map_values([](auto, auto l) { return l; })};
 }
 
 sv::TsTree::TsTree() = default;

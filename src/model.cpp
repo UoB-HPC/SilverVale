@@ -105,10 +105,11 @@ class ClangContext {
 
 public:
   std::map<std::string, EntryType> units;
-  explicit ClangContext(const std::vector<sv::ClangEntry> &entries, const std::string &baseDir)
+  explicit ClangContext(const std::vector<std::shared_ptr<sv::ClangEntry>> &entries,
+                        const std::string &baseDir)
       : context(),
         units(entries ^ map([&](auto &tu) { //
-                return std::pair{tu.file, mkEntry(context, astBackingBuffer, baseDir, tu)};
+                return std::pair{tu->file, mkEntry(context, astBackingBuffer, baseDir, *tu)};
               }) //
               ^ and_then([](auto &xs) { return std::map{xs.begin(), xs.end()}; })) {}
 };
@@ -218,36 +219,62 @@ sv::Source sv::Unit::preprocessedSource(bool normalise) const {
 // === Database ===
 
 sv::Database sv::Codebase::loadDB(const std::string &root) {
-  std::vector<std::variant<ClangEntry, FlatEntry>> entries;
-
+  std::vector<std::variant<std::shared_ptr<ClangEntry>, std::shared_ptr<FlatEntry>>> entries;
+  auto coverage = std::make_shared<sv::CountBasedCoverage>();
   auto parseJSON = [](auto path) {
     std::ifstream s(path);
     s.exceptions(std::ios::failbit | std::ios::badbit);
     return nlohmann::json::parse(s);
   };
   try {
-
-    auto sbcc = std::filesystem::path(root) / sv::EntryClangSBCCName;
-
-    for (auto &e : std::filesystem::directory_iterator(root)) {
-      if (auto path = e.path(); path.string() ^ ends_with(sv::EntrySuffix)) {
-
+    for (auto &entry : std::filesystem::directory_iterator(root)) {
+      if (auto path = entry.path(); path.string() ^ ends_with(sv::EntrySuffix)) {
         if (path.filename() == sv::EntryClangSBCCName) {
-          auto prof = parseJSON(path);
           ClangSBCCProfile p;
-          nlohmann::from_json(prof, p);
+          nlohmann::from_json(parseJSON(path), p);
+
+          for (auto &e : p.data) {
+            for (auto &f : e.functions) {
+              auto ys = f.regions ^ map([](auto &r) {
+                          return sv::CountBasedCoverage::Count{.lineStart = r.LineStart,
+                                                               .lineEnd = r.LineEnd,
+                                                               .colStart = r.ColumnStart,
+                                                               .colEnd = r.ColumnEnd,
+                                                               .count = r.ExecutionCount};
+                        });
+              if (auto it = coverage->functions.find(f.name); it != coverage->functions.end())
+                it->second.insert(it->second.end(), ys.begin(), ys.end());
+              else coverage->functions.emplace(f.name, ys);
+            }
+          }
         } else if (path.filename() ^ ends_with(sv::EntryGCCGCovName)) {
-          auto prof = parseJSON(path);
+          // GCov is cumulative: it generates one profile per TU. We need to fold it into one.
           GCCGCovProfile p;
-          nlohmann::from_json(prof, p);
+          nlohmann::from_json(parseJSON(path), p);
+          for (auto &f : p.files) {
+            for (auto &l : f.lines) {
+              (coverage->functions ^=
+               get_or_emplace(l.function_name,
+                              [](auto) { return std::vector<sv::CountBasedCoverage::Count>{}; }))
+                  .emplace_back(sv::CountBasedCoverage::Count{.lineStart = l.line_number,
+                                                              .lineEnd = l.line_number,
+                                                              .colStart = 0,
+                                                              .colEnd = 0,
+                                                              .count = l.count});
+            }
+          }
         } else {
           try {
-            auto entry = parseJSON(path);
-            auto kind = entry.at("kind").get<std::string>();
+            auto e = parseJSON(path);
+            auto kind = e.at("kind").get<std::string>();
             if (kind == "clang") {
-              entries.emplace_back(entry.get<ClangEntry>());
+              auto p = std::make_shared<ClangEntry>();
+              e.get_to(*p);
+              entries.emplace_back(p);
             } else if (kind == "flat") {
-              entries.emplace_back(entry.get<FlatEntry>());
+              auto p = std::make_shared<FlatEntry>();
+              e.get_to(*p);
+              entries.emplace_back(p);
             } else {
               AGV_WARNF("Unknown entry kind {} from {}", kind, path);
             }
@@ -256,7 +283,7 @@ sv::Database sv::Codebase::loadDB(const std::string &root) {
       }
     }
   } catch (const std::exception &e) { AGV_WARNF("Cannot list directory {}: {}", root, e); }
-  return {root, entries};
+  return {root, entries, coverage};
 }
 
 sv::Codebase sv::Codebase::load(const Database &db,                    //
@@ -265,7 +292,7 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
                                 const std::vector<std::string> &roots, //
                                 const std::function<bool(const std::string &)> &predicate) {
 
-  const auto select = [](auto x, auto f) { return std::visit([&](auto &&x) { return f(x); }, x); };
+  const auto select = [](auto x, auto f) { return std::visit([&](auto &&x) { return f(*x); }, x); };
 
   const auto createTsParser = [](const std::string &language) -> TSLanguage * {
     if (language == "c") return tree_sitter_c();
@@ -312,14 +339,15 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
       | fold_left(int{}, [](auto l, auto r) { return std::max(l, r); });                       //
 
   // Load clang entries first
-  const auto clangEntries = selected ^ collect([](auto &x) { return x ^ get<ClangEntry>(); });
+  const auto clangEntries =
+      selected ^ collect([](auto &x) { return x ^ get<std::shared_ptr<ClangEntry>>(); });
   const auto clangUnits = sv::par_map(
       clangEntries,
       [&, clangCtx = ClangContext(clangEntries, db.root)](const auto &x) -> std::shared_ptr<Unit> {
         try {
-          auto unitCtx = clangCtx.units ^ get(x.file);
+          auto unitCtx = clangCtx.units ^ get(x->file);
           if (!unitCtx) {
-            AGV_WARNF("Failed to load entry {}: cannot find context", x.file);
+            AGV_WARNF("Failed to load entry {}: cannot find context", x->file);
             return {};
           };
           auto &[ast, modules] = *unitCtx;
@@ -337,7 +365,7 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
           if (ast) {
             clang::SourceManager &sm = ast->getSourceManager();
             clang::LangOptions o = ast->getLangOpts();
-            auto language = x.language;
+            auto language = x->language;
             // we consider HIP/CUDA the same, but HIP also sets CUDA and not the other way around
             if (o.HIP || o.CUDA) language = "cuda";
             else if (o.CPlusPlus) language = "cpp";
@@ -345,13 +373,13 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
             else
               AGV_WARNF("Cannot determine precise language from PCH for {}, using driver-based "
                         "language: {}",
-                        x.file, language);
+                        x->file, language);
 
             if (auto data = sm.getBufferDataOrNone(sm.getMainFileID()); data)
               sourceRoot = sv::TsTree(data->str(), createTsParser(language));
             else
               AGV_WARNF("Failed to load original source for entry {}, main file ID missing",
-                        x.file);
+                        x->file);
 
             for (clang::Decl *decl :
                  sv::topLevelDeclsInMainFile(*ast) ^ sort_by([&](clang::Decl *decl) {
@@ -379,24 +407,25 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
               }));
             }
           } else {
-            AGV_WARNF("Failed to load AST for entry {}", x.file);
-            auto source = findSourceInDeps(x.dependencies, x.file);
-            sourceRoot = sv::TsTree(source.value_or(""), createTsParser(x.language));
+            AGV_WARNF("Failed to load AST for entry {}", x->file);
+            auto source = findSourceInDeps(x->dependencies, x->file);
+            sourceRoot = sv::TsTree(source.value_or(""), createTsParser(x->language));
           }
 
           auto unit = std::make_shared<Unit>( //
-              ast ? ast->getMainFileName().str() : x.file, sTree, sTreeInlined, irTreeRoot,
-              sourceRoot, extractPreprocessedTsRoot(x.preprocessed, x.language));
-          out << "# Loaded " << std::left << std::setw(maxFileLen) << x.file << "\r";
+              ast ? ast->getMainFileName().str() : x->file, sTree, sTreeInlined, irTreeRoot,
+              sourceRoot, extractPreprocessedTsRoot(x->preprocessed, x->language));
+          out << "# Loaded " << std::left << std::setw(maxFileLen) << x->file << "\r";
           return unit;
         } catch (const std::exception &e) {
-          AGV_WARNF("Failed to load entry {}: {}", x.file, e);
+          AGV_WARNF("Failed to load entry {}: {}", x->file, e);
           return {};
         }
       });
 
   // Then flat entries
-  const auto flatEntries = selected ^ collect([](auto &x) { return x ^ get<FlatEntry>(); });
+  const auto flatEntries =
+      selected ^ collect([](auto &x) { return x ^ get<std::shared_ptr<FlatEntry>>(); });
   auto flatUnits = sv::par_map(flatEntries, [&](const auto &x) -> std::shared_ptr<Unit> {
     try {
       auto loadTree = [](const std::filesystem::path &path) {
@@ -409,24 +438,24 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
       };
 
       auto irtree = loadTree(
-          fmt::format("{}/{}", db.root, normalise ? x.unnamedIRTreeFile : x.namedIRTreeFile));
+          fmt::format("{}/{}", db.root, normalise ? x->unnamedIRTreeFile : x->namedIRTreeFile));
       auto stree = loadTree(
-          fmt::format("{}/{}", db.root, normalise ? x.unnamedSTreeFile : x.namedSTreeFile));
+          fmt::format("{}/{}", db.root, normalise ? x->unnamedSTreeFile : x->namedSTreeFile));
 
-      auto source = findSourceInDeps(x.dependencies, x.file);
+      auto source = findSourceInDeps(x->dependencies, x->file);
       auto unit =
-          std::make_unique<Unit>(x.file, stree, sv::SemanticTree<std::string>{}, irtree,
-                                 sv::TsTree(source.value_or(""), createTsParser(x.language)),
-                                 extractPreprocessedTsRoot(x.preprocessed, x.language));
-      out << "# Loaded " << std::left << std::setw(maxFileLen) << x.file << "\r";
+          std::make_unique<Unit>(x->file, stree, sv::SemanticTree<std::string>{}, irtree,
+                                 sv::TsTree(source.value_or(""), createTsParser(x->language)),
+                                 extractPreprocessedTsRoot(x->preprocessed, x->language));
+      out << "# Loaded " << std::left << std::setw(maxFileLen) << x->file << "\r";
       return unit;
     } catch (const std::exception &e) {
-      AGV_WARNF("Failed to load entry {}: {}", x.file, e);
+      AGV_WARNF("Failed to load entry {}: {}", x->file, e);
       return {};
     }
   });
   out << std::endl;
-  return sv::Codebase(db.root, clangUnits ^ concat(flatUnits));
+  return sv::Codebase(db.root, clangUnits ^ concat(flatUnits), db.coverage);
 }
 
 namespace sv {
