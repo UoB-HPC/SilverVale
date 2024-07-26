@@ -213,9 +213,11 @@ bool sv::detectClangAndIndex(bool verbose,
                              const std::unordered_map<std::string, std::string> &programLUT) {
 
   auto programAndVersion = sv::resolveProgramAndDetect(
-      cmd.command[0], [](auto &x) {
+      cmd.command[0],
+      [](auto &x) {
         return x ^ starts_with("clang ") || x ^ starts_with("Intel(R) oneAPI DPC++/C++");
-      }, programLUT);
+      },
+      programLUT);
   if (!programAndVersion) return false;
 
   const auto &[program, version] = *programAndVersion;

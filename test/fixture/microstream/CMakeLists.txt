@@ -12,10 +12,10 @@ endif ()
 
 
 if (USE_FORTRAN)
-    add_executable(microstream main.F90)
+    add_executable(microstream main.F90 consume.F90)
     set(LANG "Fortran")
 else ()
-    add_executable(microstream main.cpp)
+    add_executable(microstream main.cpp consume.cpp)
     set(LANG "CXX")
 endif ()
 
@@ -41,6 +41,7 @@ elseif (USE_HIP)
     target_compile_definitions(microstream PUBLIC USE_HIP)
     target_compile_options(microstream PUBLIC -std=c++17 --offload-arch=${USE_HIP} -xhip)
     target_link_options(microstream PUBLIC -std=c++17 --offload-arch=${USE_HIP})
+    target_link_libraries(microstream PUBLIC amdhip64)
 endif ()
 
 

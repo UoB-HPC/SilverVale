@@ -63,6 +63,8 @@ bool sv::detectGccAndIndex(bool verbose,
                              "/usr/lib/clang/17/lib/x86_64-redhat-linux-gnu/libclang_rt.asan.so")}
 #endif
   };
+  auto envLine =
+      envs | mk_string("env ", " ", "", [](auto k, auto v) { return fmt::format("{}={}", k, v); });
 
   auto execParent = std::filesystem::canonical("/proc/self/exe").parent_path();
 
@@ -74,18 +76,13 @@ bool sv::detectGccAndIndex(bool verbose,
       std::vector<std::string>{program, "-E", "-o" + iiName, "-MD"} |
       concat(sv::stripHeadAndOArgs(cmd.command)) | to_vector();
 
-  for (const auto &[env, v] : envs)
-    setenv(env, v.c_str(), true);
-  setenv("CCACHE_DISABLE", "1", true);
-  sv::par_for(std::vector{treeArgs, iiArgs}, [&](auto args, auto ) {
-    auto line = args ^ mk_string(" ");
+  sv::par_for(std::vector{treeArgs, iiArgs}, [&](auto args, auto) {
+    auto line = args | prepend(envLine) | mk_string(" ");
     if (verbose) AGV_COUT << line << std::endl;
     if (auto code = sv::exec(line, std::cout); code) {
       if (*code != 0) AGV_WARNF("non-zero return for `{}`", line);
     } else AGV_WARNF("popen failed for `{}`: ", line);
   });
-  for (const auto &[env, _] : envs)
-    unsetenv(env);
 
   // For GCC, we only support Fortran and C/C++, which uses a different driver
   std::string language;

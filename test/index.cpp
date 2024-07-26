@@ -17,6 +17,7 @@
 
 #include "aspartame/string.hpp"
 #include "aspartame/vector.hpp"
+#include "sv/exec.h"
 
 using namespace aspartame;
 
@@ -81,11 +82,31 @@ TEST_CASE("microstream") {
 
   DYNAMIC_SECTION(compiler << "-" << model) {
 
+    DYNAMIC_SECTION("exec-" << model) {
+      auto wd = std::filesystem::current_path();
+      std::filesystem::current_path(dir);
+
+      for (const auto &entry : std::filesystem::recursive_directory_iterator(dir)) {
+        if (entry.path().extension() == ".gcda") {
+          std::cout << "Deleting residual GCov profile: " << entry.path() << std::endl;
+          std::filesystem::remove(entry);
+        }
+      }
+
+      auto code = sv::exec(fmt::format("{}/{} 8192 10", dir, name), std::cout);
+      REQUIRE(code);
+      CHECK(*code == 0);
+      std::filesystem::current_path(wd);
+    }
+
     DYNAMIC_SECTION("index-" << model) {
       int code = sv::index::run(sv::index::Options{
           .buildDir = dir,
           .sourceGlobs = {"*"},
           .outDir = outDir,
+          .coverageBin = fmt::format("{}/{}", dir, name),
+          .coverageRawDir = "",
+          .coverageKind = sv::index::CoverageKind::AutoDetect,
           .clearOutDir = true,
           .verbose = true,
           .maxThreads = static_cast<int>(std::thread::hardware_concurrency()),
@@ -117,26 +138,34 @@ TEST_CASE("microstream") {
       std::cout.rdbuf(buffer);
       CHECK(code == 0);
       auto actual = ss.str() ^ lines();
-      REQUIRE(actual.size() == 2);
+      REQUIRE(actual.size() == (1 + 2));
       CHECK(actual[0] == "entry,deps");
-      CHECK(actual[1] ^ contains_slice(fmt::format("main{},", ext)));
+
+      for (auto file : {fmt::format("main{},", ext), fmt::format("consume{},", ext)}) {
+        CHECK(actual ^ exists([&](auto s) { return s ^ contains_slice(file); }));
+      }
     }
 
     DYNAMIC_SECTION("load-" << model) {
       auto db = sv::Codebase::loadDB(outDir);
-      CHECK(db.entries.size() == 1);
+      CHECK(db.entries.size() == 2);
       auto cb = sv::Codebase::load(db, true, {}, [](auto) { return true; });
 
       REQUIRE(!cb.units.empty());
-      CHECK(cb.units[0]->name() ^ starts_with("main."));
-      CHECK(sv::Diff::apted(cb.units[0]->sTree(), cb.units[0]->sTree()) == 0);
 
-      // make sure processed TS is successful
-      auto nodes = cb.units[0]->preprocessedSource(false).tsTree().root //
-                   | map([](auto &n) { return n.value; })               //
-                   | to_vector();
-      CHECK(!nodes.empty());
-      CHECK(!(nodes ^ contains("ERROR")));
+      for (auto file : {"main.", "consume."}) {
+        CHECK(cb.units ^ exists([&](auto n) { return n->name() ^ starts_with(file); }));
+      }
+
+      for (auto &unit : cb.units) {
+        CHECK(sv::Diff::apted(unit->sTree(), unit->sTree()) == 0);
+        // make sure processed TS is successful
+        auto nodes = unit->preprocessedSource(false).tsTree().root //
+                     | map([](auto &n) { return n.value; })        //
+                     | to_vector();
+        CHECK(!nodes.empty());
+        CHECK(!(nodes ^ contains("ERROR")));
+      }
     }
 
     DYNAMIC_SECTION("script-" << model) {
@@ -154,8 +183,10 @@ for _ in pairs(db:entries()) do n = n + 1 end
 print(n)
 
 local cb = Codebase.load(db, true, {}, function(s) return true end)
-print(cb:units()[1]:name())
-print(Diff.apted(cb:units()[1]:sTree(), cb:units()[1]:sTree()))
+for _, x in ipairs(cb:units()) do
+  print(Diff.apted(x:sTree(), x:sTree()) .. "," .. x:name())
+end
+
 )";
       }
       auto buffer = std::cout.rdbuf();
@@ -177,9 +208,11 @@ print(Diff.apted(cb:units()[1]:sTree(), cb:units()[1]:sTree()))
       REQUIRE(actual.size() == 5);
       CHECK(actual[0] == "1");
       CHECK(actual[1] == outDir);
-      CHECK(actual[2] == "1");
-      CHECK(actual[3] ^ starts_with("main.")); // either main.cpp or main.ii
-      CHECK(actual[4] == "0.0");
+      CHECK(actual[2] == "2");
+      for (auto file : {"main.", "consume."}) {
+        CHECK(actual ^
+              exists([&](auto x) { return x ^ starts_with(fmt::format("0.0,{}", file)); }));
+      }
     }
   }
 }

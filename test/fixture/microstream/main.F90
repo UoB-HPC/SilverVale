@@ -3,6 +3,8 @@
 
 module stream
     use, intrinsic :: ISO_Fortran_env, only : REAL64, REAL32, INT64, INT32
+    use, intrinsic :: ISO_C_binding, only : c_loc
+    use consume_module
     implicit none
 
     real(kind = DATA_KIND), parameter :: startA = 0.1
@@ -151,7 +153,7 @@ contains
         integer, intent(in) :: arrSize, times
         real(kind = REAL64) :: bytes
         real(kind = DATA_KIND) :: dotSum
-        real(kind = DATA_KIND), dimension(:), allocatable :: h_a, h_b, h_c, a, b, c
+        real(kind = DATA_KIND), dimension(:), allocatable, target :: h_a, h_b, h_c, a, b, c
         real(kind = REAL64), dimension(:, :), allocatable :: timings
 
         allocate(a(arrSize), b(arrSize), c(arrSize))
@@ -166,6 +168,11 @@ contains
         write(*, "(a,f8.1,a,f8.1,a)")  "Total size: ", 3.0 * bytes * 1.0E-6, " MB (=", 3.0 * bytes * 1.0E-9, " GB)"
 
         call runAll(a, b, c, h_a, h_b, h_c, startA, startB, startC, startScalar, dotSum, arrSize, times, timings)
+
+        call consume(c_loc(a))
+        call consume(c_loc(b))
+        call consume(c_loc(c))
+
         block
             character(20) :: buffer(8)
             integer, parameter :: sizes(5) = [2, 2, 3, 3, 2]
@@ -234,5 +241,21 @@ program main
     use iso_fortran_env
     use stream
     implicit none
-    call run(33554432, 100)
+    integer :: argc, size, times
+    character(len = 12), dimension(:), allocatable :: argv
+    size = 33554432
+    times = 100
+    argc = command_argument_count()
+    if (argc > 0) then
+        allocate(character(len = 12) :: argv(argc))
+    end if
+    if (argc >= 1) then
+        call get_command_argument(1, argv(1))
+        read(argv(1), "(i4)") size
+    endif
+    if (argc >= 2) then
+        call get_command_argument(2, argv(2))
+        read(argv(2), "(i4)") times
+    endif
+    call run(size, times)
 end program main

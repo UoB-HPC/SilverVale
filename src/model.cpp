@@ -217,42 +217,42 @@ sv::Source sv::Unit::preprocessedSource(bool normalise) const {
 
 // === Database ===
 
-template <typename T> static std::vector<T> loadAll(const std::string &root) {
-  std::vector<T> entries;
-  try {
-    for (auto &e : std::filesystem::directory_iterator(root)) {
-      if (auto path = e.path(); path.string() ^ ends_with("sv.json")) {
-        try {
-          std::ifstream s(path);
-          s.exceptions(std::ios::failbit | std::ios::badbit);
-          T entry;
-          nlohmann::from_json(nlohmann::json::parse(s), entry);
-          entries.emplace_back(entry);
-        } catch (const std::exception &e) { AGV_WARNF("Cannot load entry {}: {}", path, e); }
-      }
-    }
-  } catch (const std::exception &e) { AGV_WARNF("Cannot list directory {}: {}", root, e); }
-  return entries;
-}
-
 sv::Database sv::Codebase::loadDB(const std::string &root) {
   std::vector<std::variant<ClangEntry, FlatEntry>> entries;
+
+  auto parseJSON = [](auto path) {
+    std::ifstream s(path);
+    s.exceptions(std::ios::failbit | std::ios::badbit);
+    return nlohmann::json::parse(s);
+  };
   try {
+
+    auto sbcc = std::filesystem::path(root) / sv::EntryClangSBCCName;
+
     for (auto &e : std::filesystem::directory_iterator(root)) {
-      if (auto path = e.path(); path.string() ^ ends_with("sv.json")) {
-        try {
-          std::ifstream s(path);
-          s.exceptions(std::ios::failbit | std::ios::badbit);
-          auto entry = nlohmann::json::parse(s);
-          auto kind = entry.at("kind").get<std::string>();
-          if (kind == "clang") {
-            entries.emplace_back(entry.get<ClangEntry>());
-          } else if (kind == "flat") {
-            entries.emplace_back(entry.get<FlatEntry>());
-          } else {
-            AGV_WARNF("Unknown entry kind {} from {}", kind, path);
-          }
-        } catch (const std::exception &e) { AGV_WARNF("Cannot load entry {}: {}", path, e); }
+      if (auto path = e.path(); path.string() ^ ends_with(sv::EntrySuffix)) {
+
+        if (path.filename() == sv::EntryClangSBCCName) {
+          auto prof = parseJSON(path);
+          ClangSBCCProfile p;
+          nlohmann::from_json(prof, p);
+        } else if (path.filename() ^ ends_with(sv::EntryGCCGCovName)) {
+          auto prof = parseJSON(path);
+          GCCGCovProfile p;
+          nlohmann::from_json(prof, p);
+        } else {
+          try {
+            auto entry = parseJSON(path);
+            auto kind = entry.at("kind").get<std::string>();
+            if (kind == "clang") {
+              entries.emplace_back(entry.get<ClangEntry>());
+            } else if (kind == "flat") {
+              entries.emplace_back(entry.get<FlatEntry>());
+            } else {
+              AGV_WARNF("Unknown entry kind {} from {}", kind, path);
+            }
+          } catch (const std::exception &e) { AGV_WARNF("Cannot load entry {}: {}", path, e); }
+        }
       }
     }
   } catch (const std::exception &e) { AGV_WARNF("Cannot list directory {}: {}", root, e); }

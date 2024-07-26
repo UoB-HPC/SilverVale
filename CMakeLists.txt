@@ -25,6 +25,7 @@ message(STATUS "Using ClangConfig.cmake in: ${Clang_DIR}")
 include(${LLVM_DIR}/AddLLVM.cmake)
 include(${Clang_DIR}/AddClang.cmake)
 
+CPMAddPackage("gh:madler/zlib@1.3.1")
 CPMAddPackage("gh:nlohmann/json@3.11.3")
 CPMAddPackage("gh:fmtlib/fmt#11.0.1")
 CPMAddPackage("gh:catchorg/Catch2@3.6.0")
@@ -175,6 +176,7 @@ target_link_libraries(SilverVale
         lua
         fmt::fmt
         xxHash::xxhash
+        zlibstatic
 
         PUBLIC
         tree-sitter
@@ -252,14 +254,13 @@ function(setup_fixture name cc cxx fc suffix)
     add_custom_command(
             TARGET tests
             PRE_BUILD
-            COMMAND ${CMAKE_COMMAND} -E env CC=${cc} CXX=${cxx} FC=${fc} ${CMAKE_COMMAND}
+            COMMAND ${CMAKE_COMMAND} -E env CCACHE_DISABLE=1 CC=${cc} CXX=${cxx} FC=${fc} ${CMAKE_COMMAND}
             -S "${CMAKE_SOURCE_DIR}/test/fixture/${name}"
             -B "${build_dir}"
             ${ARGN}
             -DCMAKE_BUILD_TYPE=Release
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
             -DCMAKE_VERBOSE_MAKEFILE=ON
-            -DCMAKE_CXX_LINK_EXECUTABLE='echo "" '
             COMMAND ${CMAKE_COMMAND} --build "${build_dir}"
             BYPRODUCTS "${build_dir}/CMakeCache.txt"
             WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
@@ -271,21 +272,24 @@ add_library(processor_fixture OBJECT test/fixture/processor.cpp)
 target_compile_options(processor_fixture PRIVATE -E)
 set(FIXTURE_PROCESSOR_FILE "$<TARGET_OBJECTS:processor_fixture>")
 
-setup_fixture(dummy clang clang++ flang-new "")
-setup_fixture(dummy gcc g++ gfortran "")
+set(GCC_COVERAGE_FLAGS "-fprofile-arcs;-ftest-coverage")
+set(CLANG_COVERAGE_FLAGS "-fprofile-instr-generate;-fcoverage-mapping")
 
-setup_fixture(microstream gcc g++ gfortran serial_f90 -DUSE_SERIAL=ON -DUSE_FORTRAN=ON)
-setup_fixture(microstream gcc g++ gfortran omp_f90 -DUSE_OMP=ON -DUSE_FORTRAN=ON)
+setup_fixture(dummy clang clang++ flang-new "" -DCMAKE_CXX_FLAGS="${CLANG_COVERAGE_FLAGS}")
+setup_fixture(dummy gcc g++ gfortran "" -DCMAKE_CXX_FLAGS="${GCC_COVERAGE_FLAGS}")
 
-setup_fixture(microstream clang clang++ flang-new serial -DUSE_SERIAL=ON)
-setup_fixture(microstream gcc g++ gfortran serial -DUSE_SERIAL=ON)
+setup_fixture(microstream gcc g++ gfortran serial_f90 -DUSE_SERIAL=ON -DUSE_FORTRAN=ON -DCMAKE_Fortran_FLAGS="${GCC_COVERAGE_FLAGS}")
+setup_fixture(microstream gcc g++ gfortran omp_f90 -DUSE_OMP=ON -DUSE_FORTRAN=ON -DCMAKE_Fortran_FLAGS="${GCC_COVERAGE_FLAGS}")
 
-setup_fixture(microstream clang clang++ flang-new omp -DUSE_OMP=ON)
-setup_fixture(microstream gcc g++ gfortran omp -DUSE_OMP=ON)
+setup_fixture(microstream clang clang++ flang-new serial -DUSE_SERIAL=ON -DCMAKE_CXX_FLAGS="${CLANG_COVERAGE_FLAGS}")
+setup_fixture(microstream gcc g++ gfortran serial -DUSE_SERIAL=ON -DCMAKE_CXX_FLAGS="${GCC_COVERAGE_FLAGS}")
 
-setup_fixture(microstream clang clang++ flang-new omp_target -DUSE_OMP_TARGET=sm_60)
-setup_fixture(microstream clang clang++ flang-new cuda -DUSE_CUDA=sm_60 -DCMAKE_CUDA_COMPILER=clang++)
-setup_fixture(microstream clang clang++ flang-new hip -DUSE_HIP=gfx1036)
+setup_fixture(microstream clang clang++ flang-new omp -DUSE_OMP=ON -DCMAKE_CXX_FLAGS="${CLANG_COVERAGE_FLAGS}")
+setup_fixture(microstream gcc g++ gfortran omp -DUSE_OMP=ON -DCMAKE_CXX_FLAGS="${GCC_COVERAGE_FLAGS}")
+
+setup_fixture(microstream clang clang++ flang-new omp_target -DUSE_OMP_TARGET=sm_60 -DCMAKE_CXX_FLAGS="${CLANG_COVERAGE_FLAGS}")
+setup_fixture(microstream clang clang++ flang-new cuda -DUSE_CUDA=sm_60 -DCMAKE_CUDA_COMPILER=clang++ -DCMAKE_CXX_FLAGS="${CLANG_COVERAGE_FLAGS}")
+setup_fixture(microstream clang clang++ flang-new hip -DUSE_HIP=gfx1036 -DCMAKE_CXX_FLAGS="${CLANG_COVERAGE_FLAGS}")
 set(FIXTURE_TMP_DIR ${CMAKE_CURRENT_BINARY_DIR})
 
 

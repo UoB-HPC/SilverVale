@@ -4,7 +4,7 @@
 #include <thread>
 
 #include "sv/cli.h"
-#include "sv/compress.h"
+#include "sv/exec.h"
 #include "sv/glob.h"
 #include "sv/index_gcc.h"
 #include "sv/index_llvm.h"
@@ -15,9 +15,10 @@
 
 #include "llvm/Support/Program.h"
 
+#include "aspartame/string.hpp"
 #include "aspartame/variant.hpp"
 #include "aspartame/vector.hpp"
-#include "aspartame/view.hpp"
+#include "zlib.h"
 
 using namespace std::string_literals;
 using namespace aspartame;
@@ -43,24 +44,177 @@ static int clearAndCreateDir(bool clear, const std::filesystem::path &outDir) {
     if (clear) {
       for (const auto &entry : std::filesystem::directory_iterator(outDir))
         std::filesystem::remove_all(entry.path());
-    } else if (!std::filesystem::is_empty(outDir)) {
-      AGV_ERRF("Output directory {} not empty, use --clear to clear output directory", outDir);
-      return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;
   } catch (const std::exception &e) {
-    AGV_ERRF("Cannot determine output directory ({}) state:", outDir, e);
+    AGV_ERRF("Cannot determine output directory ({}) state: {}", outDir, e);
     return EXIT_FAILURE;
+  }
+}
+
+static void runCoverageTask(const std::filesystem::path &coverageBin,
+                            const std::filesystem::path &coverageRawDir,
+                            sv::index::CoverageKind kind, const std::filesystem::path &outDir,
+                            bool verbose) {
+
+  if (coverageBin.empty()) return;
+  auto absCoverageBin = std::filesystem::absolute(coverageBin);
+  if (absCoverageBin.empty()) {
+    AGV_INFOF("No coverage binary specified, no coverage data will be included");
+    if (!coverageRawDir.empty()) {
+      AGV_WARNF("Ignoring coverage directory {} as no binary was specified", coverageRawDir);
+    }
+    return;
+  }
+
+  if (!std::filesystem::is_regular_file(absCoverageBin)) {
+    AGV_WARNF("Coverage binary {} not found or is not a file", absCoverageBin);
+    return;
+  }
+
+  const auto exec = [&](const std::string &args, std::ostream &out) {
+    if (verbose) AGV_INFOF("{}", args);
+    //    std::stringstream buffer;
+    if (auto code = sv::exec(args, out); code) {
+      if (*code != 0) AGV_WARNF("non-zero return for `{}`", args);
+    } else AGV_WARNF("popen failed for `{}`: ", args);
+    //    return buffer.str();
+  };
+
+  const auto clangSBCC = [&](auto profrawFiles) {
+    for (auto &p : profrawFiles)
+      AGV_INFOF("adding Clang SBCC coverage data: {}", p);
+
+    auto profdataFile = std::filesystem::absolute(outDir / "default.profdata");
+    exec(fmt::format("llvm-profdata merge -sparse {} -o {}", profrawFiles ^ mk_string(" "),
+                     profdataFile),
+         std::cout);
+
+    auto output = outDir / sv::EntryClangSBCCName;
+    {
+      std::ofstream stream(output);
+      exec(fmt::format("llvm-cov export {} -instr-profile={}", absCoverageBin, profdataFile),
+           stream);
+    }
+    AGV_INFOF("exported Clang SBCC coverage: {}", output);
+  };
+
+  const auto gcov = [&](auto gcovFiles) {
+    std::error_code wdEC;
+    auto currentPath = std::filesystem::current_path(wdEC);
+    if (wdEC) {
+      AGV_ERRF("Cannot get current working directory ({}), gcov cannot proceed", wdEC);
+      return;
+    }
+
+    for (auto &gcovFile : gcovFiles) {
+      AGV_INFOF("adding GCC GCov coverage data: {}", gcovFile);
+
+      auto gcovWd = gcovFile.parent_path();
+      try {
+        std::filesystem::current_path(gcovWd);
+      } catch (const std::exception &e) {
+        AGV_WARNF("Cannot set current directory to {} for gcov file {}, skipping coverage...",
+                  gcovWd, gcovFile);
+        return;
+      }
+
+      std::stringstream gcovOutcome;
+      exec(fmt::format("gcov {} --json-format", gcovFile.filename()), gcovOutcome);
+
+      if (gcovOutcome.str() ^ contains_slice("stamp mismatch with notes file")) {
+        // this means the GCDA file didn't match up with GCNO and all coverage will be 0%
+        AGV_WARNF("stamp mismatch between gcov notes (*.gcda) and profile (*.gcda), please rerun "
+                  "binary, skipping coverage...");
+        return;
+      }
+      std::cout <<gcovOutcome .str()<<std::endl;
+
+      auto output = outDir / fmt::format("{}.{}", gcovFile.stem(), sv::EntryGCCGCovName);
+
+      {
+        auto gcovOutput = fmt::format("{}.gcov.json.gz", gcovFile.stem());
+        gzFile gzFile = gzopen(gcovOutput.c_str(), "rb");
+        if (!gzFile) {
+          AGV_WARNF("cannot open {} for decompression, did gcov succeed?", gcovOutput);
+          return;
+        }
+        std::ofstream stream(output);
+        if (!stream) {
+          AGV_WARNF("cannot open {} for writing", output);
+          gzclose(gzFile);
+          return;
+        }
+        const int bufferSize = 4096;
+        std::vector<char> buffer(bufferSize);
+        int bytesRead{};
+        while ((bytesRead = gzread(gzFile, buffer.data(), bufferSize)) > 0)
+          stream.write(buffer.data(), bytesRead);
+
+        gzclose(gzFile);
+      }
+      AGV_INFOF("exported GCC GCov coverage: {}", output);
+    }
+
+    try {
+      std::filesystem::current_path(currentPath);
+    } catch (const std::exception &e) {
+      AGV_ERRF("Cannot restore current working directory to {}: {}", currentPath, e);
+      return;
+    }
+  };
+
+  std::vector<std::filesystem::path> covFiles;
+  auto collectCovFiles = [&](auto root) {
+    if (verbose) AGV_INFOF("searching for coverage data in {}", root);
+    for (const auto &entry : std::filesystem::recursive_directory_iterator(root)) {
+      covFiles.emplace_back(std::filesystem::absolute(entry.path()));
+    }
+  };
+
+  collectCovFiles(absCoverageBin.parent_path());
+  if (!coverageRawDir.empty()) collectCovFiles(coverageRawDir);
+  covFiles = covFiles ^ distinct();
+
+  auto profRawFiles = covFiles ^ filter([](auto &p) { return p.extension() == ".profraw"; });
+  auto gcovFiles = covFiles ^ filter([](auto &p) { return p.extension() == ".gcda"; });
+
+  if (profRawFiles.empty() && gcovFiles.empty()) {
+    AGV_WARNF("not coverage data found");
+    return;
+  }
+
+  switch (kind) {
+    case sv::index::CoverageKind::AutoDetect:
+      if (!profRawFiles.empty() && !gcovFiles.empty()) {
+        AGV_WARNF("Detected both Clang *.profraw and GCC *.gcda files [{},{}], please "
+                  "specify with format should be used, skipping coverage... ",
+                  profRawFiles ^ mk_string(","), gcovFiles ^ mk_string(","));
+      }
+      if (!profRawFiles.empty()) clangSBCC(profRawFiles);
+      if (!gcovFiles.empty()) gcov(gcovFiles);
+      break;
+    case sv::index::CoverageKind::ClangSBCC: clangSBCC(profRawFiles); break;
+    case sv::index::CoverageKind::GCov: gcov(gcovFiles); break;
   }
 }
 
 static void runIndexTasks(const std::vector<sv::CompilationDatabase::Entry> &commands,
                           const std::filesystem::path &outDir, bool verbose) {
 
+  setenv("CCACHE_DISABLE", "1", true);
+
+  std::error_code outEC;
+  auto absOutDir = std::filesystem::absolute(outDir, outEC);
+  if (outEC) {
+    AGV_ERRF("Cannot resolve absolute path for output dir {}: {}", outDir, outEC);
+    return;
+  }
+
   std::error_code wdEC;
   auto currentPath = std::filesystem::current_path(wdEC);
   if (wdEC) {
-    AGV_WARNF("cannot get current working directory ({}), index cannot proceed", wdEC);
+    AGV_ERRF("Cannot get current working directory ({}), index cannot proceed", wdEC);
     return;
   }
 
@@ -98,8 +252,9 @@ static void runIndexTasks(const std::vector<sv::CompilationDatabase::Entry> &com
         return;
       }
       logger.log(cmd.file);
-      if (!sv::detectClangAndIndex(verbose, cmd, wd, outDir, programLUT)) {
-        if (!sv::detectGccAndIndex(verbose, cmd, wd, outDir, programLUT)) {
+
+      if (!sv::detectClangAndIndex(verbose, cmd, wd, absOutDir, programLUT)) {
+        if (!sv::detectGccAndIndex(verbose, cmd, wd, absOutDir, programLUT)) {
           AGV_WARNF("unsupported compiler in command `{}`", cmd.command ^ mk_string(" "));
         }
       }
@@ -119,7 +274,7 @@ static Expected<sv::index::Options> parseOpts(int argc, const char **argv) {
   static cl::OptionCategory category("Build options");
 
   static cl::opt<std::string> buildDir(
-      "build", cl::desc("The build directory containing compile_command.json."), //
+      "build", cl::desc("The build directory containing compile_command.json. "), //
       cl::cat(category));
 
   static cl::list<std::string> sourceGlobs( //
@@ -127,11 +282,34 @@ static Expected<sv::index::Options> parseOpts(int argc, const char **argv) {
       cl::desc("<glob patterns for file to include in the database, defaults to *>"),
       cl::list_init<std::string>({"*"}), cl::cat(category));
 
-  static cl::opt<std::string> outDir(
-      "out",
-      cl::desc("The output directory for storing database files, "
-               "defaults to the last 2 segments of the build directory joined with full stop."), //
+  static cl::opt<std::string> outDir( //
+      "out", cl::Required,
+      cl::desc("The output directory for storing database files"), //
+      cl::cat(category));
+
+  static cl::opt<std::string> coverageBin(
+      "cov-bin",
+      cl::desc("Path to the binary compiled with coverage enabled. Profile data (*.profraw) files "
+               "will be searched in the directory containing the binary; all discovered raw "
+               "profiles will be merged."), //
       cl::init(""), cl::cat(category));
+
+  static cl::opt<std::string> coverageRawDir(
+      "cov-raw",
+      cl::desc("Additional path to directory containing profile data (*.profraw) files; all "
+               "discovered raw profiles will be merged."), //
+      cl::init(""), cl::cat(category));
+
+  static cl::opt<sv::index::CoverageKind> coverageKind(
+      "cov-kind",
+      cl::desc("Coverage data format, defaults to auto detect based on extension."), //
+      cl::values(
+          clEnumValN(sv::index::CoverageKind::AutoDetect, "auto", "Detect based on extension."),
+          clEnumValN(sv::index::CoverageKind::GCov, "gcov",
+                     "GCC GCov (*.gcno;*.gcda, -fprofile-arcs -ftest-coverage)"),
+          clEnumValN(sv::index::CoverageKind::ClangSBCC, "sbcc",
+                     "Clang SBCC (*.profraw, -fprofile-instr-generate -fcoverage-mapping)")),
+      cl::init(sv::index::CoverageKind::AutoDetect), cl::cat(category));
 
   static cl::opt<bool> clearOutDir( //
       "clear", cl::desc("Clear database output directory even if non-empty."), cl::cat(category));
@@ -148,17 +326,17 @@ static Expected<sv::index::Options> parseOpts(int argc, const char **argv) {
 
   sv::index::Options options;
   options.buildDir = buildDir.getValue();
+  options.outDir = outDir.getValue();
+  options.coverageBin = coverageBin.getValue();
+  options.coverageRawDir = coverageRawDir.getValue();
+  options.coverageKind = coverageKind;
+
   options.sourceGlobs = sourceGlobs;
 
   options.clearOutDir = clearOutDir.getValue();
   options.maxThreads = maxThreads.getValue();
   options.verbose = verbose.getValue();
 
-  if (outDir.empty()) {
-    auto lastSegment = options.buildDir.filename();
-    auto oneBeforeLastSegment = options.buildDir.parent_path().filename();
-    options.outDir = fmt::format("{}.{}", oneBeforeLastSegment, lastSegment);
-  } else options.outDir = outDir.getValue();
   return options;
 }
 
@@ -170,7 +348,9 @@ int sv::index::run(const sv::index::Options &options) {
 
   AGV_COUT //
       << "Build:\n"
-      << " - Build:        " << options.buildDir << " (compile_commands.json, ...)\n"
+      << " - Build:        " << options.buildDir << " (/compile_commands.json, ...)\n"
+      << " - Coverage:     " << options.coverageBin << " (bin, bin/../*.profraw, ...)\n"
+      << "   - Dir:        " << options.coverageRawDir << " (/*.profraw, ...)\n"
       << " - Output:       " << options.outDir << "\n"
       << " - Clear output: " << (options.clearOutDir ? "true" : "false") << "\n"
       << " - Max threads:  " << options.maxThreads << "\n";
@@ -206,12 +386,9 @@ int sv::index::run(const sv::index::Options &options) {
     return result;
   }
 
-  std::error_code ec;
-  if (auto abs = std::filesystem::absolute(options.outDir, ec); ec) {
-    AGV_ERRF("Cannot resolve absolute path for output dir {}: {}", options.outDir, ec);
-  } else {
-    runIndexTasks(commands, abs, options.verbose);
-  }
+  runCoverageTask(options.coverageBin, options.coverageRawDir, options.coverageKind, options.outDir,
+                  options.verbose);
+  runIndexTasks(commands, options.outDir, options.verbose);
 
   return EXIT_SUCCESS;
 }

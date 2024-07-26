@@ -11,13 +11,130 @@
 
 namespace sv {
 
+constexpr std::string_view EntrySuffix = "sv.json";
+constexpr std::string_view EntryClangSBCCName = "coverage.clang_sbcc.sv.json";
+constexpr std::string_view EntryGCCGCovName = "coverage.gcc_gcov.sv.json";
+
+struct GCCGCovProfile {
+
+  struct Line {
+    size_t line_number;
+    std::string function_name;
+    size_t count;
+    bool unexecuted_block;
+    // XXX `branches` not implemented
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Line, line_number, function_name, count, unexecuted_block);
+  };
+
+  struct Function {
+    std::string name{};
+    std::string demangled_name{};
+    size_t start_line{};
+    size_t start_column{};
+    size_t end_line{};
+    size_t end_column{};
+    size_t blocks{};
+    size_t blocks_executed{};
+    size_t execution_count{};
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Function, name, demangled_name, start_line, start_column,
+                                   end_line, end_column, blocks, blocks_executed, execution_count);
+  };
+
+  struct Entry {
+    std::string file{};
+    std::vector<Function> functions{};
+    std::vector<Line> lines{};
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Entry, file, functions);
+  };
+
+  std::string format_version{};
+  std::string gcc_version{};
+  std::string current_working_directory{};
+  std::string data_file{};
+  std::vector<Entry> files{};
+
+  NLOHMANN_DEFINE_TYPE_INTRUSIVE(GCCGCovProfile, format_version, gcc_version,
+                                 current_working_directory, data_file, files);
+};
+
+struct ClangSBCCProfile {
+
+  struct Region {
+    size_t LineStart, ColumnStart, LineEnd, ColumnEnd, //
+        ExecutionCount,                                //
+        FileID, ExpandedFileID, Kind;
+    friend void from_json(const nlohmann::json &json, Region &entry) {
+      json.at(0).get_to(entry.LineStart);
+      json.at(1).get_to(entry.ColumnStart);
+      json.at(2).get_to(entry.LineEnd);
+      json.at(3).get_to(entry.ColumnEnd);
+      json.at(4).get_to(entry.ExecutionCount);
+      json.at(5).get_to(entry.FileID);
+      json.at(6).get_to(entry.ExpandedFileID);
+      json.at(7).get_to(entry.Kind);
+    }
+    friend void to_json(nlohmann::json &json, const Region &entry) {
+      json = std::vector{
+          entry.LineStart,      entry.ColumnStart, entry.LineEnd,        entry.ColumnEnd,
+          entry.ExecutionCount, entry.FileID,      entry.ExpandedFileID, entry.Kind};
+    }
+  };
+
+  struct Branch {
+    size_t LineStart, ColumnStart, LineEnd, ColumnEnd, //
+        ExecutionCount, FalseExecutionCount,           //
+        FileID, ExpandedFileID, Kind;                  //
+    friend void from_json(const nlohmann::json &json, Branch &entry) {
+      json.at(0).get_to(entry.LineStart);
+      json.at(1).get_to(entry.ColumnStart);
+      json.at(2).get_to(entry.LineEnd);
+      json.at(3).get_to(entry.ColumnEnd);
+      json.at(4).get_to(entry.ExecutionCount);
+      json.at(5).get_to(entry.FalseExecutionCount);
+      json.at(6).get_to(entry.FileID);
+      json.at(7).get_to(entry.ExpandedFileID);
+      json.at(8).get_to(entry.Kind);
+    }
+    friend void to_json(nlohmann::json &json, const Branch &entry) {
+      json = std::vector{entry.LineStart, entry.ColumnStart,    entry.LineEnd,
+                         entry.ColumnEnd, entry.ExecutionCount, entry.FalseExecutionCount,
+                         entry.FileID,    entry.ExpandedFileID, entry.Kind};
+    }
+  };
+
+  struct Function {
+    std::string name{};
+    std::vector<std::string> filenames{};
+    std::vector<Region> regions{};
+    std::vector<Branch> branches{};
+    size_t count{};
+
+    // XXX `mdmc_records` not implemented
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Function, name, filenames, regions, branches, count);
+  };
+
+  struct Entry {
+    // XXX `files` (expansions) not implemented
+    std::vector<Function> functions{};
+    std::map<std::string, std::map<std::string, int>> totals{};
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Entry, functions, totals);
+  };
+
+  std::string type{};
+  std::string version{};
+  std::vector<Entry> data{};
+
+  NLOHMANN_DEFINE_TYPE_INTRUSIVE(ClangSBCCProfile, type, version, data);
+};
+
 struct CompilationDatabase {
   struct Entry {
     std::string directory;
     std::vector<std::string> command;
     std::string file;
     std::string output;
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_ONLY_SERIALIZE(Entry, directory, command, file, output);
 
     friend void from_json(const nlohmann::json &json, Entry &entry) {
       // see https://clang.llvm.org/docs/JSONCompilationDatabase.html
@@ -49,7 +166,6 @@ struct CompilationDatabase {
   };
 
   std::vector<Entry> entries;
-  friend void to_json(nlohmann::json &json, const CompilationDatabase &db) { json = db.entries; }
   friend void from_json(const nlohmann::json &json, CompilationDatabase &db) {
     json.get_to(db.entries);
   }

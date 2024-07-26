@@ -26,6 +26,9 @@ TEST_CASE("structure") {
       .buildDir = dir,
       .sourceGlobs = {"*"},
       .outDir = out,
+      .coverageBin = "",
+      .coverageRawDir = "",
+      .coverageKind = sv::index::CoverageKind::AutoDetect,
       .clearOutDir = true,
       .verbose = true,
       .maxThreads = static_cast<int>(std::thread::hardware_concurrency()),
@@ -36,7 +39,7 @@ TEST_CASE("structure") {
   auto db = sv::Codebase::loadDB(out);
   auto cb = sv::Codebase::load(db, std::cout, true , {}, [](auto &) { return true; });
 //
-  REQUIRE(cb.units.size() == 1);
+  REQUIRE(cb.units.size() == 2);
 //
   auto main = cb.units[0];
 //

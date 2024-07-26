@@ -8,6 +8,8 @@
 #include <numeric>
 #include <vector>
 
+#include "consume.h"
+
 #ifdef USE_HIP
   #include <hip/hip_runtime.h>
 #endif
@@ -285,6 +287,11 @@ template <typename T> auto run(int size, int times) {
 
   auto timings = runAll<T>(a, b, c, h_a.data(), h_b.data(), h_c.data(), //
                            startA, startB, startC, startScalar, sum, size, times);
+
+  consume(a);
+  consume(b);
+  consume(c);
+
   std::free(a);
   std::free(b);
   std::free(c);
@@ -345,4 +352,10 @@ template <typename T> auto run(int size, int times) {
   return !err(h_a, goldA, "a[]") && !err(h_b, goldB, "b[]") && !err(h_c, goldC, "b[]") && !sumErr;
 }
 
-int main() { return run<double>(33554432, 100) ? EXIT_SUCCESS : EXIT_FAILURE; }
+int main(int argc, const char *argv[]) {
+  int size = 33554432;
+  int times = 100;
+  if (argc - 1 >= 1) size = std::stoi(argv[1]);
+  if (argc - 1 >= 2) times = std::stoi(argv[2]);
+  return run<double>(size, times) ? EXIT_SUCCESS : EXIT_FAILURE;
+}
