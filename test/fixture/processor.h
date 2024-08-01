@@ -3,7 +3,8 @@
 #include "processor_incl_a.h"
 #include "processor_incl_b.h"
 
-#define BAZ 1
+#define BAZ \
+  1 // foo
 
 # pragma foo
 #    pragma bar

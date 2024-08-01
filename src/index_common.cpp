@@ -6,7 +6,6 @@
 #include "sv/database.h"
 #include "sv/exec.h"
 #include "sv/index_common.h"
-#include "llvm/Support/Program.h"
 
 #include "aspartame/optional.hpp"
 #include "aspartame/string.hpp"

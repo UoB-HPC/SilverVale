@@ -75,18 +75,16 @@ struct MemInfo {
   }
 };
 
-template <typename F>
-std::pair<delta::Kind, std::pair<DiffFn, MaxFn>> treeSelect(delta::Kind kind, F f) {
-  return {kind,
-          std::pair{
-              [&](const Units &lhs, const Units &rhs) -> double {
-                return Diff::apted(Tree::combine("root", lhs ^ map([&](auto &x) { return f(x); })),
-                                   Tree::combine("root", rhs ^ map([&](auto &x) { return f(x); })));
-              },
-              [&](const Units &xs) -> std::optional<double> {
-                return Tree::combine("root", xs ^ map([&](auto &x) { return f(x); })).nodes();
-              },
-          }};
+template <typename F> std::pair<DiffFn, MaxFn> treeSelect(F f) {
+  return {
+      [=](const Units &lhs, const Units &rhs) -> double {
+        return Diff::apted(Tree::combine("root", lhs ^ map([&](auto &x) { return f(x); })),
+                           Tree::combine("root", rhs ^ map([&](auto &x) { return f(x); })));
+      },
+      [=](const Units &xs) -> std::optional<double> {
+        return Tree::combine("root", xs ^ map([&](auto &x) { return f(x); })).nodes();
+      },
+  };
 };
 
 double minDiff(std::vector<std::string> &&ls, std::vector<std::string> &&rs) {
@@ -101,109 +99,143 @@ double minDiff(std::vector<std::string> &&ls, std::vector<std::string> &&rs) {
   return value;
 }
 
-std::unordered_map<delta::Kind, std::pair<DiffFn, MaxFn>> fns = {
-    {delta::Kind::SLOCRawAbs, std::pair{
-                                  [](const Units &, const Units &rhs) -> double {
-                                    return rhs ^ fold_left(0, [](auto acc, auto &u) {
-                                             return acc + u->writtenSource(true).sloc();
-                                           });
-                                  },
-                                  [](const Units &) -> std::optional<double> { return {}; },
-                              }},
-    {delta::Kind::SLOCAbs, std::pair{
-                               [](const Units &, const Units &rhs) -> double {
-                                 return rhs ^ fold_left(0, [](auto acc, auto &u) {
-                                          return acc + u->preprocessedSource(true).sloc();
-                                        });
-                               },
-                               [](const Units &) -> std::optional<double> { return {}; },
-                           }},
-
-    {delta::Kind::LLOCRawAbs, std::pair{
-                                  [](const Units &, const Units &rhs) -> double {
-                                    return rhs ^ fold_left(0, [](auto acc, auto &u) {
-                                             return acc + u->writtenSource(true).lloc();
-                                           });
-                                  },
-                                  [](const Units &) -> std::optional<double> { return {}; },
-                              }},
-    {delta::Kind::LLOCAbs, std::pair{
-                               [](const Units &, const Units &rhs) -> double {
-                                 return rhs ^ fold_left(0, [](auto acc, auto &u) {
-                                          return acc + u->preprocessedSource(true).lloc();
-                                        });
-                               },
-                               [](const Units &) -> std::optional<double> { return {}; },
-                           }},
-
-    {delta::Kind::SourceRawRel,
-     std::pair{
-         [](const Units &lhs, const Units &rhs) -> double {
-           return minDiff(lhs ^ map([](auto &x) { return x->writtenSource(true).content(); }),
-                          rhs ^ map([](auto &x) { return x->writtenSource(true).content(); }));
-         },
-         [](const Units &xs) -> std::optional<double> {
-           return (xs                                                                     //
-                   | map([](auto &u) { return u->writtenSource(true).content().size(); }) //
-                   | reduce(std::plus<>()))
-               .value_or(0); //
-         },
-     }},
-    {delta::Kind::SourceRel,
-     std::pair{
-         [](const Units &lhs, const Units &rhs) -> double {
-           return minDiff(lhs ^ map([](auto &x) { return x->preprocessedSource(true).content(); }),
-                          rhs ^ map([](auto &x) { return x->preprocessedSource(true).content(); }));
-         },
-         [](const Units &xs) -> std::optional<double> {
-           return (xs                                                                          //
-                   | map([](auto &u) { return u->preprocessedSource(true).content().size(); }) //
-                   | reduce(std::plus<>()))
-               .value_or(0); //
-         },
-     }},
-
-    treeSelect(delta::Kind::TSTreeRawRel, [](auto &u) { return u->writtenSource(true).tsTree(); }),
-    treeSelect(delta::Kind::TSTreeRel,
-               [](auto &u) { return u->preprocessedSource(true).tsTree(); }),
-
-    treeSelect(delta::Kind::STreeRel, [](auto &u) { return u->sTree(); }),
-    treeSelect(delta::Kind::STreeInlineRel, [](auto &u) { return u->sTreeInlined(); }),
-    treeSelect(delta::Kind::IRTreeRel, [](auto &u) { return u->irTree(); })};
+std::pair<DiffFn, MaxFn> createTask(delta::TaskDesc desc) {
+  switch (desc.kind) {
+    // source cases
+    case delta::Kind::SLOCAbs:
+      return {
+          [=](const Units &, const Units &rhs) -> double {
+            return rhs ^ fold_left(0, [&](auto acc, auto &u) {
+                     switch (desc.mod) {
+                       case delta::Modifier::Raw: return acc + u->sourceAsWritten().sloc();
+                       case delta::Modifier::CPP: return acc + u->sourcePreprocessed().sloc();
+                       case delta::Modifier::Cov: return acc + u->sourceWithCoverage().sloc();
+                     }
+                   });
+          },
+          [](const Units &) -> std::optional<double> { return {}; },
+      };
+    case delta::Kind::LLOCAbs:
+      return {
+          [=](const Units &, const Units &rhs) -> double {
+            return rhs ^ fold_left(0, [&](auto acc, auto &u) {
+                     switch (desc.mod) {
+                       case delta::Modifier::Raw: return acc + u->sourceAsWritten().lloc();
+                       case delta::Modifier::CPP: return acc + u->sourcePreprocessed().lloc();
+                       case delta::Modifier::Cov: return acc + u->sourceWithCoverage().lloc();
+                     }
+                   });
+          },
+          [](const Units &) -> std::optional<double> { return {}; },
+      };
+    case delta::Kind::SrcLenAbs: {
+      return {
+          [=](const Units &, const Units &rhs) -> double {
+            return rhs ^ fold_left(0, [&](auto acc, auto &u) {
+                     switch (desc.mod) {
+                       case delta::Modifier::Raw:
+                         return acc + u->sourceAsWritten().contentWhitespaceNormalised().size();
+                       case delta::Modifier::CPP:
+                         return acc + u->sourcePreprocessed().contentWhitespaceNormalised().size();
+                       case delta::Modifier::Cov:
+                         return acc + u->sourceWithCoverage().contentWhitespaceNormalised().size();
+                     }
+                   });
+          },
+          [](const Units &) -> std::optional<double> { return {}; },
+      };
+    }
+    case delta::Kind::SrcRel: {
+      auto extract = [](delta::Modifier m, const Units &xs) {
+        return xs ^ map([=](auto &x) {
+                 switch (m) {
+                   case delta::Modifier::Raw:
+                     return x->sourceAsWritten().contentWhitespaceNormalised();
+                   case delta::Modifier::CPP:
+                     return x->sourcePreprocessed().contentWhitespaceNormalised();
+                   case delta::Modifier::Cov:
+                     return x->sourceWithCoverage().contentWhitespaceNormalised();
+                 }
+               });
+      };
+      return {
+          [=](const Units &lhs, const Units &rhs) -> double {
+            return minDiff(extract(desc.mod, lhs), extract(desc.mod, rhs));
+          },
+          [=](const Units &xs) -> std::optional<double> {
+            return (extract(desc.mod, xs)                    //
+                    | map([](auto &&x) { return x.size(); }) //
+                    | reduce(std::plus<>()))                 //
+                .value_or(0);                                //
+          },
+      };
+    }
+    case delta::Kind::TSTreeRel:
+      return treeSelect([=](auto &u) {
+        switch (desc.mod) {
+          case delta::Modifier::Raw: return u->sourceAsWritten().tsTree();
+          case delta::Modifier::CPP: return u->sourcePreprocessed().tsTree();
+          case delta::Modifier::Cov: return u->sourceWithCoverage().tsTree();
+        }
+      });
+    // semantic cases
+    case delta::Kind::STreeRel:
+      return treeSelect([=](auto &u) {
+        switch (desc.mod) {
+          case delta::Modifier::Raw: [[fallthrough]];
+          case delta::Modifier::CPP: return u->sTree(Unit::View::AsIs);
+          case delta::Modifier::Cov: return u->sTree(Unit::View::WithCoverage);
+        }
+      });
+    case delta::Kind::STreeInlineRel:
+      return treeSelect([=](auto &u) {
+        switch (desc.mod) {
+          case delta::Modifier::Raw: [[fallthrough]];
+          case delta::Modifier::CPP: return u->sTreeInlined(Unit::View::AsIs);
+          case delta::Modifier::Cov: return u->sTreeInlined(Unit::View::WithCoverage);
+        }
+      });
+    case delta::Kind::IRTreeRel:
+      return treeSelect([=](auto &u) {
+        switch (desc.mod) {
+          case delta::Modifier::Raw: [[fallthrough]];
+          case delta::Modifier::CPP: return u->irTree(Unit::View::AsIs);
+          case delta::Modifier::Cov: return u->irTree(Unit::View::WithCoverage);
+        }
+      });
+  }
+}
 
 Expected<delta::Options> parseOpts(int argc, const char **argv) {
   using namespace delta;
   static cl::OptionCategory category("Diff options");
 
-  static cl::list<delta::Kind> kinds(
+  // streeRel, streeInlinedRel, irtreeRel (+raw, +cov)
+  // slocAbs, llocAbs, tstreeRel, sourceRel (modifiers=(+raw, +cpp, +cov)
+
+  static cl::list<std::string> kinds(
       "kinds", cl::CommaSeparated, cl::OneOrMore,
-      cl::desc("Comma separated kinds of metric to use for diff operation. Defaults to all "
-               "supported kinds."),
-      cl::values(
-          clEnumValN(delta::Kind::SLOCRawAbs, "sloc", //
-                     "Source Lines of Code"),
-          clEnumValN(delta::Kind::LLOCRawAbs, "lloc", //
-                     "Logical Lines of Code"),
-          clEnumValN(delta::Kind::SourceRawRel, "source", //
-                     "Source code (edit difference)"),
-          clEnumValN(delta::Kind::TSTreeRawRel, "tstree", //
-                     "Tree-sitter tree"),
-
-          clEnumValN(delta::Kind::SLOCAbs, "sloc+p", //
-                     "Source Lines of Code (after preprocessor)"),
-          clEnumValN(delta::Kind::LLOCAbs, "lloc+p", //
-                     "Logical Lines of Code (after preprocessor)"),
-          clEnumValN(delta::Kind::SourceRel, "source+p", //
-                     "Source code (edit difference, after preprocessor)"),
-          clEnumValN(delta::Kind::TSTreeRel, "tstree+p", //
-                     "Tree-sitter tree (after preprocessor)"),
-
-          clEnumValN(delta::Kind::STreeRel, "stree", //
-                     "AST based semantic tree with symbols normalised."),
-          clEnumValN(delta::Kind::STreeInlineRel, "stree+i", //
-                     "ClangAST based semantic tree with symbols normalised and calls inlined."),
-          clEnumValN(delta::Kind::IRTreeRel, "irtree", //
-                     "ClangAST based semantic tree with symbols normalised and calls inlined.")));
+      cl::desc(
+          "Comma separated kinds of metric to use for diff operation. Defaults to all "
+          "supported kinds.\n"
+          "Source-based:\n"
+          "  sloc         - Source Lines of Code (Absolute measure).\n"
+          "  lloc         - Logical Lines of Code (Absolute measure).\n"
+          "  source       - Source code (whitespace normalised edit difference).\n"
+          "  tstree       - Tree-sitter tree.\n"
+          "Semantic-based:\n"
+          "  stree        - AST based (e.g ClangAST/High GIMPLE, etc) semantic tree with "
+          "  symbols normalised.\n"
+          "  streeinlined - AST based semantic tree with symbols normalised and calls inlined.\n"
+          "  irtree       - IR based (e.g LLVM IR/Low GIMPLE) semantic tree with symbols "
+          "normalised.\n"
+          "\nBy default the metric uses the source code or semantic as written, the following "
+          "modifiers for each kind are supported:"
+          "  +raw - Source code or semantic as written, no effect\n"
+          "  +cpp - Run the diff after the preprocessor has finished execution (source based kinds "
+          "only)\n"
+          "  +cov - Run the diff after pruning out code that was not covered if coverage is "
+          "available in the database\n"));
 
   static cl::opt<std::string> root(
       "root",
@@ -278,7 +310,23 @@ Expected<delta::Options> parseOpts(int argc, const char **argv) {
       .base = base.empty() ? mappedDbs ^ head_maybe() ^
                                  fold([](auto &d) { return d.path.string(); }, []() { return ""; })
                            : base,
-      .kinds = kinds, //
+      .kinds = kinds | collect([](auto &spec) -> std::optional<TaskDesc> {
+                 auto parts = spec ^ split("+");
+                 if (parts.size() == 1) {
+                   if (auto k = delta::parseKind(parts[0]); k)
+                     return TaskDesc{*k, delta::Modifier::Raw};
+
+                 } else if (parts.size() == 2) {
+                   auto k = delta::parseKind(parts[0]);
+                   auto m = delta::parseModifier(parts[1]);
+                   if (k && m) return TaskDesc{*k, *m};
+                 }
+
+                 AGV_WARNF("Ignoring malformed kind: {} (parsed as [{}])", spec,
+                           parts ^ mk_string(","));
+                 return std::nullopt;
+               }) //
+               | to_vector(),
       .excludes = excludes | map([](auto &s) { return ExcludeFilter{s}; }) | to_vector(),
       .merges = merges | collect([&](auto &s) {
                   return pairPattern(s, ':') ^ map([&](auto &glob, auto &name) {
@@ -323,11 +371,54 @@ int delta::run(const delta::Options &options) {
   };
 
   std::vector<Model> models = par_map(options.databases, [&](auto &spec) {
-    const auto db = Codebase::loadDB(spec.path);
     const auto excludes = options.excludes ^ map([](auto &f) { return globToRegex(f.glob); });
-    const auto cb = Codebase::load(db, std::cout, true, {}, [&](auto &path) {
+    const Database db = Codebase::loadDB(spec.path);
+    const Codebase cb = Codebase::load(db, std::cout, true, {}, [&](auto &path) {
       return excludes ^ forall([&](auto &r) { return !std::regex_match(path, r); });
     });
+
+    std::cout << "> " << cb.root << std::endl;
+    auto root = std::filesystem::current_path() /
+                fmt::format("debug_{}", std::filesystem::path(cb.root).filename());
+    std::filesystem::create_directories(root);
+
+    {
+      std::ofstream out(root / "cov.all.txt");
+      auto xss = (cb.coverage->entries | to_vector())                                            //
+                 ^ map([](auto &p, auto count) { return std::tuple{p.first, p.second, count}; }) //
+                 ^ sort();
+      for (auto &[name, line, count] : xss)
+        out << name << ":" << line << "=" << count << "\n";
+    }
+    for (auto &u : cb.units) {
+      auto path = std::filesystem::path(u->name());
+      auto stem = path.stem(), ext = path.extension();
+      {
+        std::ofstream out(root / fmt::format("{}.raw{}", stem, ext));
+        out << u->sourceAsWritten().contentWhitespaceNormalised();
+      }
+      {
+        std::ofstream out(root / fmt::format("{}.cpp{}", stem, ext));
+        out << u->sourcePreprocessed().contentWhitespaceNormalised();
+      }
+      {
+        std::ofstream out(root / fmt::format("{}.cov{}", stem, ext));
+        out << u->sourceWithCoverage().contentWhitespaceNormalised();
+      }
+      {
+        std::ofstream out(root / fmt::format("{}.raw.txt", stem));
+        out << u->sourceAsWritten().tsTree().prettyPrint();
+      }
+      {
+        std::ofstream out(root / fmt::format("{}.cpp.txt", stem));
+        out << u->sourcePreprocessed().tsTree().prettyPrint();
+      }
+      {
+        std::ofstream out(root / fmt::format("{}.cov.txt", stem));
+        out << u->sourceWithCoverage().tsTree().prettyPrint();
+      }
+    }
+
     const auto merges =
         options.merges ^ map([](auto &m) { return std::pair{globToRegex(m.glob), m.name}; });
     Model model{
@@ -344,7 +435,7 @@ int delta::run(const delta::Options &options) {
         ^ to_vector() ^ sort_by([](auto &name, auto &us) {                                    //
             return std::pair{name,                                                            //
                              us ^ fold_left(0, [](auto acc, auto &u) {
-                               return acc + u->writtenSource(true).sloc();
+                               return acc + u->sourceAsWritten().sloc();
                              })};
           })};
     std::cout << "# [ " << model.path << " ]" << std::endl;
@@ -358,26 +449,27 @@ int delta::run(const delta::Options &options) {
   AGV_INFOF("All models loaded");
 
   struct Key {
-    delta::Kind kind{};
+    delta::TaskDesc desc{};
     std::string name{};
     size_t modelIdx{};
   };
 
-  using Task =
+  using DiffTask =
       std::pair<Key, std::variant<std::tuple<DiffFn, Units, Units>, std::tuple<MaxFn, Units>>>;
 
   if (auto ls = models ^ head_maybe(); ls) {
-    std::vector<Task> deltaTasks;
-    fns | filter([&](auto &k, auto) { return options.kinds ^ contains(k); }) //
-        | for_each([&](auto &k, auto &p) {
+    std::vector<DiffTask> deltaTasks;
+    options.kinds                                                           //
+        | map([](auto &desc) { return std::pair{desc, createTask(desc)}; }) //
+        | for_each([&](auto &desc, auto &p) {
             auto [delta, max] = p;
             ls->entries | for_each([&](auto &lhsName, const Units &l) {
               auto addTask = [&](size_t idx, auto fn) {
                 deltaTasks.emplace_back(
-                    std::pair{Key{.kind = k, .name = lhsName, .modelIdx = idx}, fn});
+                    std::pair{Key{.desc = desc, .name = lhsName, .modelIdx = idx}, fn});
               };
               models | zip_with_index() | for_each([&](auto &r, size_t idx) { //
-                Key key{.kind = k, .name = lhsName, .modelIdx = idx};
+                Key key{.desc = desc, .name = lhsName, .modelIdx = idx};
                 r.entries                                                               //
                     | filter([&](auto &rhsName, auto &) { return lhsName == rhsName; }) //
                     | for_each([&](auto &, const Units &r) {                            //
@@ -392,10 +484,10 @@ int delta::run(const delta::Options &options) {
 
     auto cost = [](auto &&xs) {
       return xs | fold_left(0, [](auto acc, auto &u) {
-               return acc                         //
-                      + u->sTree().nodes()        //
-                      + u->sTreeInlined().nodes() //
-                      + u->irTree().nodes();      //
+               return acc                                         //
+                      + u->sTree(Unit::View::AsIs).nodes()        //
+                      + u->sTreeInlined(Unit::View::AsIs).nodes() //
+                      + u->irTree(Unit::View::AsIs).nodes();      //
              });
     };
     auto taskReverseSizes = deltaTasks ^ sort_by([&](auto &, auto v) {
@@ -441,25 +533,28 @@ int delta::run(const delta::Options &options) {
     auto tabulate = [&]<typename T>(const std::vector<std::pair<Key, T>> &xs, auto f) {
       size_t prefixLen = longestCommonPrefixLen(models ^ map([&](auto &m) { return m.path; }));
       return (xs ^ group_map([](auto &k, auto) { return k.modelIdx; },                       //
-                             [](auto &k, auto v) { return std::tuple{k.kind, k.name, v}; })) //
+                             [](auto &k, auto v) { return std::tuple{k.desc, k.name, v}; })) //
              ^ to_vector()                                                                   //
              ^ sort_by([](auto &modelIdx, auto) { return modelIdx; })                        //
-             ^
-             bind([&](auto &modelIdx, auto &xs) { //
-               auto modelName = models[modelIdx].path.substr(prefixLen);
-               return xs //
-                      ^
-                      sort_by([](auto &kind, auto &name, auto) { return std::pair{kind, name}; }) //
-                      ^ map([&](auto &kind, auto &name, auto &value) {
-                          return modelIdx == 0 ? std::vector{std::string(to_string(kind)), name, //
-                                                             f(value)}                           //
-                                               : std::vector{f(value)};                          //
-                        })                                                                       //
-                      ^ prepend(modelIdx == 0                                                    //
-                                    ? std::vector<std::string>{"kind", "name", modelName}        //
-                                    : std::vector{modelName})                                    //
-                      ^ transpose();
-             }) //
+             ^ bind([&](auto &modelIdx, auto &xs) {                                          //
+                 auto modelName = models[modelIdx].path.substr(prefixLen);
+                 return xs //
+                        ^ sort_by([](auto &desc, auto &name, auto) {
+                            return std::tuple{desc.kind, desc.mod, name};
+                          }) //
+                        ^ map([&](auto &desc, auto &name, auto &value) {
+                            auto category =
+                                fmt::format("{}+{}", to_string(desc.kind), to_string(desc.mod));
+
+                            return modelIdx == 0 ? std::vector{category, name,              //
+                                                               f(value)}                    //
+                                                 : std::vector{f(value)};                   //
+                          })                                                                //
+                        ^ prepend(modelIdx == 0                                             //
+                                      ? std::vector<std::string>{"kind", "name", modelName} //
+                                      : std::vector{modelName})                             //
+                        ^ transpose();
+               }) //
              ^ transpose();
     };
 
@@ -472,11 +567,12 @@ int delta::run(const delta::Options &options) {
           return v ^ get<std::optional<double>>() ^ map([&](auto v) { return std::pair{k, v}; });
         });
 
+    std::cout << "\n#max\n";
     auto m = tabulate(maxes, [](auto v) { return std::to_string(v.value_or(-1)); });
     for (auto row : m) {
       AGV_COUT << (row ^ mk_string(", ")) << std::endl;
     }
-    std::cout << "\n";
+    std::cout << "\n#delta\n";
     auto d = tabulate(diffs, [](auto v) { return std::to_string(v); });
     for (auto row : d) {
       AGV_COUT << (row ^ mk_string(", ")) << std::endl;

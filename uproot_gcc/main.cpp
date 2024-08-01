@@ -24,7 +24,6 @@
 #include "gimple-pretty-print.h"
 
 #include "opts.h"
-#include "toplev.h"
 
 #include "aspartame/optional.hpp"
 #include "aspartame/variant.hpp"
@@ -36,8 +35,9 @@
 using namespace aspartame;
 using namespace std::string_literals;
 
-template <typename Node, typename... Fs> void visitDyn0(Node n, Fs... fs) {
-  [[maybe_unused]] auto _ = ([&]() -> bool {
+template <typename Node, typename... Fs>
+void visitDyn0(Node n, Fs... fs) {           // NOLINT(*-no-recursion)
+  [[maybe_unused]] auto _ = ([&]() -> bool { // NOLINT(*-no-recursion)
     if constexpr (std::is_same_v<sv::arg0_t<Fs>, Node>) {
       fs(n);
       return true;
@@ -108,6 +108,7 @@ struct Node {
 
   Any kind;
   std::string comment{};
+  sv::Location location;
 
   [[nodiscard]] static std::string to_string(const LHS &lhs,           // NOLINT(*-no-recursion)
                                              const RenameFn &f) {      // NOLINT(*-no-recursion)
@@ -151,11 +152,40 @@ struct Node {
   };
 
   [[nodiscard]] std::string to_string(const RenameFn &f, bool comments = true) const {
-    return to_string(kind, f) + (!comments || comment.empty() ? "" : " # " + comment);
+    return fmt::format("{} {}", to_string(kind, f),
+                       (!comments || comment.empty() ? "" : "# " + comment));
   };
 };
 
-class GimpleUprootPass : public gimple_opt_pass, sv::SemanticTreeVisitor<Node, void> {
+[[nodiscard]] static sv::Location resolveLocation(location_t loc) {
+  if (loc == UNKNOWN_LOCATION) return {};
+  auto el = expand_location(loc);
+  return {.filename = el.file ? el.file : "",
+          .line = static_cast<size_t>(el.line),
+          .col = static_cast<size_t>(el.column)};
+}
+
+[[nodiscard]] static sv::Location resolveLocation(tree node) {
+  if (DECL_P(node)) {
+    return resolveLocation(DECL_SOURCE_LOCATION(node));
+  } else if (EXPR_P(node)) {
+    return resolveLocation(EXPR_LOCATION(node));
+  } else {
+    return resolveLocation(UNKNOWN_LOCATION);
+  }
+}
+
+[[nodiscard]] static sv::Location resolveLocation(gimple *gimple) {
+  if (auto gloc = gimple_location(gimple); gloc != UNKNOWN_LOCATION) {
+    auto el = expand_location(gloc);
+    return {.filename = el.file ? el.file : "",
+            .line = static_cast<size_t>(el.line),
+            .col = static_cast<size_t>(el.column)};
+  }
+  return {};
+}
+
+class GimpleUprootPass : public gimple_opt_pass, sv::NTreeVisitor<Node, void> {
   static constexpr pass_data data = {
       GIMPLE_PASS,        /* type */
       "GimpleUprootPass", /* name */
@@ -168,15 +198,15 @@ class GimpleUprootPass : public gimple_opt_pass, sv::SemanticTreeVisitor<Node, v
       0                   /* todo_flags_finish */
   };
   std::atomic_long nameCounter{};
-  sv::SemanticTree<Node> root;
+  sv::NTree<Node> root;
   std::string basename, afterPass, kind;
 
 public:
   explicit GimpleUprootPass(gcc::context *ctx, std::string basename, std::string afterPass,
                             std::string kind)
-      : gimple_opt_pass(data, ctx), sv::SemanticTreeVisitor<Node, void>(&root),
+      : gimple_opt_pass(data, ctx), sv::NTreeVisitor<Node, void>(&root),
         basename(std::move(basename)), afterPass(std::move(afterPass)), kind(std::move(kind)) {
-    root.value = Node{r<Ref>(Name{this->basename})};
+    root.value = Node{r<Ref>(Name{this->basename}), {}, sv::Location{}};
   }
 
   static std::string to_string(tree tree) { return print_generic_expr_to_str(tree); }
@@ -224,9 +254,8 @@ public:
         auto select = r<Select>();
         for (int i = 0; i < TREE_OPERAND_LENGTH(tree); ++i) {
           if (auto path = TREE_OPERAND(tree, i); path) {
-            //            select->chain.emplace_back(reprLHS(path).value_or(
-            //                Ref::illegal(fmt::format("Chain: {}({})", to_string(tree) ,
-            //                                         get_tree_code_name(TREE_CODE(tree)))))) ;
+            select->chain.emplace_back(reprLHS(path).value_or(r<Ref>(Ref::illegal(fmt::format(
+                "Chain: {}({})", to_string(tree), get_tree_code_name(TREE_CODE(tree)))))));
           }
         }
         return select;
@@ -237,16 +266,18 @@ public:
 
   Name mkName() { return {fmt::format("_uproot_syth_{}_", nameCounter++)}; }
 
-  void repr(internal_fn fn) { single(Node{r<Verbatim>(fmt::format("#{}", internal_fn_name(fn)))}); }
+  void repr(internal_fn fn) {
+    single(Node{r<Verbatim>(fmt::format("#{}", internal_fn_name(fn))), {}, resolveLocation(fn)});
+  }
 
   void repr(tree tree, const std::string &comment = "") { // NOLINT(*-no-recursion)
     if (!tree) {
-      single(Node{r<Verbatim>("<NULL>"), comment});
+      single(Node{r<Verbatim>("<NULL>"), comment, sv::Location{}});
       return;
     }
-
+    auto loc = resolveLocation(tree);
     if (auto lhs = reprLHS(tree); lhs) {
-      single(std::visit([&](auto &&x) { return Node{x, comment}; }, *lhs));
+      single(std::visit([&](auto &&x) { return Node{x, comment, loc}; }, *lhs));
       return;
     }
 
@@ -254,18 +285,18 @@ public:
       case ARRAY_REF:
         single(
             Node{r<Set>(reprLHSStrict(TREE_OPERAND(tree, 0)), to_string((TREE_OPERAND(tree, 1)))),
-                 fmt::format("array {}", comment)});
+                 fmt::format("array {}", comment), loc});
         break;
-      case CONSTRUCTOR: single(Node{r<Verbatim>("Ctor"), comment}); break;
+      case CONSTRUCTOR: single(Node{r<Verbatim>("Ctor"), comment, loc}); break;
       case OBJ_TYPE_REF:
         scoped(
             [&]() {
               auto lhs = TREE_OPERAND(tree, 1), offset = TREE_OPERAND(tree, 2);
               single(Node{
                   r<Select>(std::vector<LHS>{r<MemRef>(reprLHSStrict(lhs), reprLHSStrict(offset))}),
-                  "type ref"});
+                  "type ref", loc});
             },
-            Node{r<Call>(r<Ref>(Name{to_string(TREE_OPERAND(tree, 0))})), comment});
+            Node{r<Call>(r<Ref>(Name{to_string(TREE_OPERAND(tree, 0))})), comment, loc});
         break;
 
         // the following three appear as gimple_assign <*_expr, ?, *OP <$0>, {}, {}>
@@ -279,7 +310,7 @@ public:
               repr(TREE_OPERAND(tree, 1));
               repr(TREE_OPERAND(tree, 2));
             },
-            std::visit([&](auto &&x) { return Node{x, fmt::format("bitfield {}", comment)}; },
+            std::visit([&](auto &&x) { return Node{x, fmt::format("bitfield {}", comment), loc}; },
                        reprLHSStrict(TREE_OPERAND(tree, 0))));
         break;
       default: {
@@ -287,25 +318,50 @@ public:
             fmt::format("UNEXPECTED {}: {} ({} x{})", to_string(tree), get_tree_code_name(code),
                         TREE_CODE_CLASS_STRING(TREE_CODE_CLASS(code)), TREE_OPERAND_LENGTH(tree));
         if (auto nOperands = TREE_OPERAND_LENGTH(tree); nOperands == 0)
-          single(Node{r<Verbatim>(desc), comment});
+          single(Node{r<Verbatim>(desc), comment, loc});
         else
           scoped(
               [&]() { // NOLINT(*-no-recursion)
                 for (int i = 0; i < nOperands; ++i)
                   repr(TREE_OPERAND(tree, i));
               },
-              Node{r<Verbatim>(desc), comment});
+              Node{r<Verbatim>(desc), comment, loc});
 
       } break;
     };
   }
 
-  void repr(gimple *expr, const std::string &comment = "") {
+  void repr(gimple *expr, const std::string &comment = "") { // NOLINT(*-no-recursion)
+    if (!expr) {
+      single(Node{r<Verbatim>("<NULL>"), comment, sv::Location{}});
+      return;
+    }
+
+    auto loc = resolveLocation(expr);
+
     visitDyn0(
-        expr,
+        expr, //
+        [&](gdebug *debug) { /*discard*/ },
+        [&](gbind *bind) { // NOLINT(*-no-recursion)
+          repr(gimple_bind_vars(bind));
+          //          repr(gimple_bind_block(bind));
+          repr(gimple_bind_body(bind));
+        },
+        [&](gtry *gtry) { // NOLINT(*-no-recursion)
+          scoped(
+              [&]() { // NOLINT(*-no-recursion)
+                repr(gimple_try_eval(gtry));
+                auto cleanup = gimple_try_cleanup(gtry);
+                scoped(
+                    [&]() { // NOLINT(*-no-recursion)
+                      repr(cleanup);
+                    },
+                    Node{r<Verbatim>("FINALLY"), {}, resolveLocation(cleanup)});
+              },
+              Node{r<Verbatim>("TRY"), "", loc});
+        },
         [&](gphi *expr) {
           if (virtual_operand_p(gimple_phi_result(expr))) return;
-
           scoped(
               [&]() {
                 for (size_t i = 0; i < gimple_phi_num_args(expr); ++i) {
@@ -315,15 +371,17 @@ public:
                            fmt::format("from L{}", gimple_phi_arg_edge(expr, i)->src->index)));
                 }
               },
-              Node{r<Set>(reprLHSStrict(gimple_phi_result(expr)), fmt::format("phi {}", comment))});
+              Node{r<Set>(reprLHSStrict(gimple_phi_result(expr)), fmt::format("phi {}", comment)),
+                   {},
+                   loc});
         },
         [&](ggoto *expr) {
           single(Node{r<Verbatim>(fmt::format("GOTO {}", to_string((gimple_goto_dest(expr))))),
-                      comment});
+                      comment, loc});
         },
         [&](glabel *expr) {
           single(Node{r<Verbatim>(fmt::format("{} = LABEL", to_string((gimple_label_label(expr))))),
-                      comment});
+                      comment, loc});
         },
         [&](gcond *expr) {
           auto name = mkName();
@@ -333,9 +391,9 @@ public:
                 repr(gimple_cond_rhs(expr));
               },
               Node{r<Set>(r<Ref>(name), get_tree_code_name(gimple_cond_code(expr))),
-                   fmt::format("cond {}", comment)});
+                   fmt::format("cond {}", comment), loc});
           // XXX keep the last node as cond, so we can string up the successors
-          single(Node{r<Cond>(name), comment});
+          single(Node{r<Cond>(name), comment, loc});
         },
         [&](gcall *call) {
           scoped(
@@ -345,7 +403,7 @@ public:
                 for (size_t i = 0; i < gimple_call_num_args(call); ++i)
                   repr(gimple_call_arg(call, i));
               },
-              Node{r<Call>(reprLHSStrict(gimple_call_lhs(call))), comment});
+              Node{r<Call>(reprLHSStrict(gimple_call_lhs(call))), comment, loc});
         },
         [&](gassign *expr) {
           std::vector<tree> operands;
@@ -373,77 +431,88 @@ public:
               },
               Node{r<Set>(reprLHSStrict(gimple_assign_lhs(expr)),
                           get_tree_code_name(gimple_assign_rhs_code(expr))),
-                   fmt::format("assign {}", comment)});
+                   fmt::format("assign {}", comment), loc});
         },
         [&](greturn *expr) {
           scoped([&]() { repr(gimple_return_retval(expr)); },
-                 Node{r<Verbatim>(fmt::format("RETURN")), comment});
+                 Node{r<Verbatim>(fmt::format("RETURN")), comment, loc});
         },
 
-        [&](gimple *expr) {
-          switch (expr->code) {
-              //  case GIMPLE_ERROR_MARK: break;
-              //  case GIMPLE_OMP_SECTIONS_SWITCH:break;
-            case GIMPLE_PREDICT: [[fallthrough]];
-            case GIMPLE_NOP: // ignore
-              break;
-            default:
-              print_gimple_stmt(stdout, expr, 0, TDF_SLIM);
-              single(Node{
-                  r<Verbatim>(fmt::format("UNEXPECTED GIMPLE {}", gimple_code_name[expr->code])),
-                  comment});
+        [&](gimple *expr) { // NOLINT(*-no-recursion)
+          if (!gimple_seq_singleton_p(expr)) {
+            for (auto gsi = gsi_start(expr); !gsi_end_p(gsi); gsi_next(&gsi))
+              repr(gsi_stmt(gsi));
+          } else {
+            switch (expr->code) {
+                //  case GIMPLE_ERROR_MARK: break;
+                //  case GIMPLE_OMP_SECTIONS_SWITCH:break;
+              case GIMPLE_PREDICT: [[fallthrough]];
+              case GIMPLE_NOP: // ignore
+                break;
+              default:
+                print_gimple_stmt(stderr, expr, 0, TDF_SLIM);
+                single(Node{
+                    r<Verbatim>(fmt::format("UNEXPECTED GIMPLE {}", gimple_code_name[expr->code])),
+                    comment, loc});
+            }
           }
-        }
-
-    );
+        });
   }
 
   unsigned int execute(function *f) override {
     std::cout << "# [uproot] Witnessed: " << function_name(f) << std::endl;
     //  Keep a record of all the BB indices first #so we can know if we see a dead edge later
-    std::unordered_set<int> bbIndices;
-    basic_block bb;
-    FOR_EACH_BB_FN(bb, f) { bbIndices.emplace(bb->index); }
-    scoped(
-        [&]() {
-          basic_block bb;
-          FOR_EACH_BB_FN(bb, f) {
-            scoped(
-                [&]() {
-                  for (auto pi = gsi_start_phis(bb); !gsi_end_p(pi); gsi_next(&pi))
-                    repr(pi.phi());
-                  for (auto gsi = gsi_start_bb(bb); !gsi_end_p(gsi); gsi_next(&gsi))
-                    repr(gsi_stmt(gsi));
-                  auto insertGoto = [&](auto &target) {
-                    for (auto s : bb->succs) {
-                      target.children.emplace_back(
-                          bbIndices.contains(s->dest->index)
-                              ? Node{r<Verbatim>(fmt::format("GOTO <L{}>", s->dest->index)),
-                                     fmt::format(" terminal for L{}", bb->index)}
-                              : Node{r<Verbatim>(fmt::format("GOTO END <L{}>", s->dest->index)),
-                                     fmt::format(" terminal for L{} to unknown", bb->index)});
+
+    if (f->cfg) { // low gimple after CFG contans BBs and not gimple_body
+      std::unordered_set<int> bbIndices;
+      basic_block bb;
+      FOR_EACH_BB_FN(bb, f) { bbIndices.emplace(bb->index); }
+      scoped(
+          [&]() {
+            basic_block bb;
+            FOR_EACH_BB_FN(bb, f) {
+              scoped(
+                  [&]() {
+                    for (auto pi = gsi_start_phis(bb); !gsi_end_p(pi); gsi_next(&pi))
+                      repr(pi.phi());
+                    for (auto gsi = gsi_start_bb(bb); !gsi_end_p(gsi); gsi_next(&gsi))
+                      repr(gsi_stmt(gsi));
+                    auto insertGoto = [&](auto &target) {
+                      for (auto s : bb->succs) {
+                        target.children.emplace_back(
+                            bbIndices.contains(s->dest->index)
+                                ? Node{r<Verbatim>(fmt::format("GOTO <L{}>", s->dest->index)),
+                                       fmt::format(" terminal for L{}", bb->index), sv::Location{}}
+                                : Node{r<Verbatim>(fmt::format("GOTO END <L{}>", s->dest->index)),
+                                       fmt::format(" terminal for L{} to unknown", bb->index),
+                                       sv::Location{}});
+                      }
+                    };
+                    if (!node->children.empty()) {
+                      auto &last = node->children.back();
+                      insertGoto(std::holds_alternative<R<Cond>>(last.value.kind) ? last : *node);
+                    } else {
+                      for (auto s : bb->succs) {
+                        node->children.emplace_back(
+                            Node{r<Verbatim>(fmt::format("GOTO <L{}>", s->dest->index)),
+                                 fmt::format(" terminal for L{}", bb->index), sv::Location{}});
+                      }
                     }
-                  };
-                  if (!node->children.empty()) {
-                    auto &last = node->children.back();
-                    insertGoto(std::holds_alternative<R<Cond>>(last.value.kind) ? last : *node);
-                  } else {
-                    for (auto s : bb->succs) {
-                      node->children.emplace_back(
-                          Node{r<Verbatim>(fmt::format("GOTO <L{}>", s->dest->index)),
-                               fmt::format(" terminal for L{}", bb->index)});
-                    }
-                  }
-                },
-                Node{r<Verbatim>(fmt::format("BB <L{}>", bb->index))});
-          }
-        },
-        Node{r<Ref>(Name{function_name(f)})});
+                  },
+                  Node{r<Verbatim>(fmt::format("BB <L{}>", bb->index)), {}, sv::Location{}});
+            }
+          },
+          Node{r<Ref>(Name{function_name(f)}), {}, resolveLocation(f->decl)});
+    } else {
+
+      scoped([&]() { repr(f->gimple_body); },
+             Node{r<Ref>(Name{function_name(f)}), {}, resolveLocation(f->decl)});
+    }
     return 0;
   }
 
   static std::string to_lower(const std::string &xs) {
-    std::string ys(0, xs.size());
+    std::string ys(xs.size(), '\0');
     std::transform(xs.begin(), xs.end(), ys.begin(),
                    [](auto c) { return TOLOWER(c); }); // GCC's nonsense
     return ys;
@@ -461,12 +530,9 @@ public:
 
   void flush() {
     size_t nodes{};
-    root.walk([&](auto, auto) {
-      nodes++;
-      return true;
-    });
+    root.postOrderWalk([&](auto, auto) { nodes++; });
     auto dump = [&](auto variant, auto f) {
-      auto tree = root.map<std::string>(f);
+      auto tree = root.map<sv::SNode>(f);
       if (hasEnv(fmt::format("UPROOT_SHOW_{}_{}", variant, kind))) tree.print(std::cout);
       auto pathEnv = fmt::format("UPROOT_{}_{}_PATH", variant, kind);
       if (auto path = std::getenv(pathEnv.c_str())) {
@@ -480,35 +546,14 @@ public:
         std::cout << "# [uproot] " << pathEnv << " not set, tree with " << nodes
                   << " nodes discarded" << std::endl;
     };
-    dump("UNNAMED", [](auto &r) { return r.to_string([](auto x) { return ""; }, false); });
-    dump("NAMED", [](auto &r) { return r.to_string([](auto x) { return x; }, true); });
+    dump("UNNAMED", [](auto &r) {
+      return sv::SNode{r.to_string([](auto x) { return ""; }, false), r.location};
+    });
+    dump("NAMED", [](auto &r) {
+      return sv::SNode{r.to_string([](auto x) { return x; }, true), r.location};
+    });
   }
 };
-
-std::vector<std::string> collectArgs() {
-  std::vector<std::string> args;
-  for (size_t i = 0; i < save_decoded_options_count; ++i)
-    args.emplace_back(save_decoded_options[i].orig_option_with_args_text);
-  return args;
-}
-
-std::string createEArgs(const std::string &pluginName, const std::vector<std::string> &args) {
-  auto dropIndices =
-      args | zip_with_index() | bind([&](auto &arg, auto idx) -> std::vector<size_t> { //
-        if (arg.find("-fplugin") == 0 && arg.find(pluginName) != std::string::npos) return {idx};
-        if (arg.find("-o") == 0) return {idx, idx + 1};
-        //              if (arg == "-o") return {idx, idx + 1};
-        return {};
-      }) | //
-      and_then([&](auto xs) { return std::unordered_set<size_t>(xs.begin(), xs.end()); });
-
-  return args | zip_with_index()                                                    //
-         | collect([&](auto &arg, auto idx) {                                       //
-             return !dropIndices.contains(idx) ? std::optional{arg} : std::nullopt; //
-           })                                                                       //
-         | append("-E")                                                             //
-         | mk_string(" ");                                                          //
-}
 
 [[maybe_unused]] int plugin_is_GPL_compatible{};
 [[maybe_unused]] int plugin_init(plugin_name_args *args, plugin_gcc_version *version) {
@@ -528,21 +573,9 @@ std::string createEArgs(const std::string &pluginName, const std::vector<std::st
       [](void *, void *data) {
         const auto name = reinterpret_cast<const char *>(data);
         auto basename = main_input_basename;
-
-        //        std::string dest = "db";
         std::cout << "# [uproot] Starting to uproot unit " << basename << std::endl;
 
-        //        if (auto result = mkdir(dest.c_str(), S_IRWXU | S_IRWXG | S_IRWXO); result != 0) {
-        //          if (errno != EEXIST) {
-        //            perror("");
-        //            std::cout << "# [uproot] Cannot create database directory; plugin cannot
-        //            continue"
-        //                      << std::endl;
-        //            return;
-        //          }
-        //        }
-
-        for (auto [afterPass, kind] : {//                 std::pair{"original", "STREE"},
+        for (auto [afterPass, kind] : {//                 std::pair{"*warn_unused_result", "STREE"},
                                        std::pair{"optimized", "IRTREE"}}) {
           const auto pass = new GimpleUprootPass(g, basename, afterPass, kind);
           register_pass_info info{

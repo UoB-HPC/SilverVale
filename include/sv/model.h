@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <ostream>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -16,34 +17,54 @@
 #include "nlohmann/json.hpp"
 
 #include "database.h"
-#include "semantic_ts.h"
 #include "tree.h"
+
+#include "semantic_ts.h"
 
 namespace sv {
 
 template <typename T> struct Memoized {
   mutable std::optional<T> value{};
   mutable std::once_flag flag{};
+  mutable std::mutex mutex;
   Memoized() = default;
   ~Memoized() = default;
   Memoized(const Memoized &that) {
+    std::scoped_lock lock(that.mutex);
     std::call_once(that.flag, [&] { value = that.value; });
   }
   Memoized &operator=(const Memoized &that) {
-    if (this != &that) std::call_once(that.flag, [&] { value = that.value; });
+    if (this != &that) {
+      std::scoped_lock lock(mutex, that.mutex);
+      std::call_once(that.flag, [&] { value = that.value; });
+    }
     return *this;
   }
   Memoized(Memoized &&that) noexcept {
+    std::scoped_lock lock(that.mutex);
     std::call_once(that.flag, [&] { value = std::move(that.value); });
   }
   Memoized &operator=(Memoized &&that) noexcept {
-    if (this != &that) std::call_once(that.flag, [&] { value = std::move(that.value); });
+    if (this != &that) {
+      std::scoped_lock lock(mutex, that.mutex);
+      std::call_once(that.flag, [&] { value = std::move(that.value); });
+    }
     return *this;
   }
   template <typename F> [[nodiscard]] const T &operator()(F f) const {
     std::call_once(flag, [&]() { value = std::move(f()); });
+    std::scoped_lock lock(mutex);
     return *value;
   }
+
+  template <typename K> struct Parametric {
+    mutable std::mutex mutex{};
+    mutable std::unordered_map<K, Memoized<T>> xs{};
+    template <typename F> [[nodiscard]] const T &operator()(K k, F f) const {
+      std::scoped_lock lock(mutex);
+      return xs[k](f);
+    }
+  };
 };
 
 template <typename T> class Cached {
@@ -54,11 +75,10 @@ template <typename T> class Cached {
 
 public:
   explicit Cached(std::chrono::milliseconds timeout) : timeout(timeout) {}
-
   template <typename F> [[nodiscard]] const T &operator()(F f) const {
     auto now = std::chrono::steady_clock::now();
     {
-      std::lock_guard<std::mutex> lock(mutex_);
+      std::scoped_lock lock(mutex_);
       if (!value || now >= expiration) {
         value = std::move(f());
         expiration = now + timeout;
@@ -72,8 +92,8 @@ class Tree {
   Memoized<size_t> lazyNodes, lazyMaxDepth, lazyMaxWidth;
 
 public:
-  SemanticTree<std::string> root;
-  explicit Tree(const SemanticTree<std::string> &root);
+  NTree<SNode> root;
+  explicit Tree(const NTree<SNode> &root);
   [[nodiscard]] size_t nodes() const;
   [[nodiscard]] size_t maxDepth() const;
   [[nodiscard]] size_t maxWidth() const;
@@ -123,62 +143,99 @@ public:
 };
 
 class Source {
+  using Mask = std::function<bool(const std::pair<uint32_t, uint32_t> &)>;
+
   Memoized<size_t> lazySloc, lazyLloc;
   Memoized<std::set<uint32_t>> lazySlocLines;
   Memoized<std::set<Range>> lazyLlocRanges;
+  Memoized<std::string> lazyNormalisedContent;
   Memoized<Tree> lazyTsTree;
+  TsTree root_;
+  std::string content_;
+  Mask mask;
 
 public:
-  TsTree tree;
-  explicit Source(TsTree tree);
+  Source(TsTree root, std::string content, const Mask &mask);
   [[nodiscard]] const std::string &content() const;
+  [[nodiscard]] const std::string &contentWhitespaceNormalised() const;
   [[nodiscard]] size_t sloc() const;
   [[nodiscard]] size_t lloc() const;
   [[nodiscard]] std::set<uint32_t> slocLines() const;
   [[nodiscard]] std::set<Range> llocRanges() const;
   [[nodiscard]] const Tree &tsTree() const;
-  DEF_TEAL_SOL_UT(Source,                     //
-                  SOL_UT_FN(Source, content), //
-                  SOL_UT_FN(Source, sloc),    //
-                  SOL_UT_FN(Source, lloc),    //
+  DEF_TEAL_SOL_UT(Source,                                         //
+                  SOL_UT_FN(Source, content),                     //
+                  SOL_UT_FN(Source, contentWhitespaceNormalised), //
+                  SOL_UT_FN(Source, sloc),                        //
+                  SOL_UT_FN(Source, lloc),                        //
                   SOL_UT_FN(Source, tsTree));
 };
 
-class Unit {
-  std::string path_, name_;
-  Memoized<Source> lazyWrittenSourceNormalised, lazyWrittenSource;
-  Memoized<Source> lazyPreprocessedSourceNormalised, lazyPreprocessedSource;
+struct FlatCoverage {
+
+  struct EntryHash {
+    std::size_t operator()(const std::pair<std::string, size_t> &p) const {
+      auto hashFst = std::hash<std::string>{}(p.first);
+      auto hashSnd = std::hash<size_t>{}(p.second);
+      return hashFst ^ (hashSnd << 1);
+    }
+  };
+
+  std::unordered_map<std::pair<std::string, size_t>, size_t, EntryHash> entries{};
+  FlatCoverage() = default;
+  explicit FlatCoverage(const PerFileCoverage &coverage);
+
+private:
+  DEF_SOL_UT_ACCESSOR(entries);
 
 public:
-  Tree sTreeRoot, sTreeInlinedRoot, irTreeRoot;
-  TsTree sourceRoot;
-  TsTree preprocessedRoot;
-
-  Unit(std::string path, SemanticTree<std::string> sTree, SemanticTree<std::string> sTreeInlined,
-       SemanticTree<std::string> irTree, TsTree source, TsTree preprocessedSource);
-  [[nodiscard]] const std::string &path() const;
-  [[nodiscard]] const std::string &name() const;
-  [[nodiscard]] const Tree &sTree() const;
-  [[nodiscard]] const Tree &sTreeInlined() const;
-  [[nodiscard]] const Tree &irTree() const;
-  [[nodiscard]] Source writtenSource(bool normalise) const;
-  [[nodiscard]] Source preprocessedSource(bool normalise) const;
-  DEF_TEAL_SOL_UT(Unit,                           //
-                  SOL_UT_FN(Unit, path),          //
-                  SOL_UT_FN(Unit, name),          //
-                  SOL_UT_FN(Unit, sTree),         //
-                  SOL_UT_FN(Unit, sTreeInlined),  //
-                  SOL_UT_FN(Unit, irTree),        //
-                  SOL_UT_FN(Unit, writtenSource), //
-                  SOL_UT_FN(Unit, preprocessedSource));
-  friend std::ostream &operator<<(std::ostream &os, const Unit &unit);
+  DEF_TEAL_SOL_UT(FlatCoverage, SOL_UT_FN_ACC(FlatCoverage, entries));
 };
 
+class Unit {
+
+public:
+  enum class View : uint8_t { AsIs, WithCoverage };
+
+private:
+  std::string path_, name_;
+  Memoized<Source> lazySourceAsWritten{}, lazySourcePreprocessed{}, lazySourceWithCoverage{};
+  Memoized<Tree>::Parametric<View> lazySTree{}, lazySTreeInlined{}, lazyIrTree{};
+  Tree sTreeRoot, sTreeInlinedRoot, irTreeRoot;
+  TsTree sourceRoot, preprocessedRoot;
+  std::shared_ptr<FlatCoverage> coverage;
+
+  [[nodiscard]] NTree<SNode> pruneTree(const NTree<SNode> &tree) const;
+  [[nodiscard]] static TsTree normaliseTsTree(const TsTree &tree);
+
+public:
+  Unit(std::string path, const std::shared_ptr<FlatCoverage> &coverage,    //
+       NTree<SNode> sTree, NTree<SNode> sTreeInlined, NTree<SNode> irTree, //
+       TsTree source, TsTree preprocessedSource);
+  [[nodiscard]] const std::string &path() const;
+  [[nodiscard]] const std::string &name() const;
+
+  [[nodiscard]] const Tree &sTree(View view) const;
+  [[nodiscard]] const Tree &sTreeInlined(View view) const;
+  [[nodiscard]] const Tree &irTree(View view) const;
+  [[nodiscard]] const Source &sourceAsWritten() const;
+  [[nodiscard]] const Source &sourcePreprocessed() const;
+  [[nodiscard]] const Source &sourceWithCoverage() const;
+  DEF_TEAL_SOL_UT(Unit,                             //
+                  SOL_UT_FN(Unit, path),            //
+                  SOL_UT_FN(Unit, name),            //
+                  SOL_UT_FN(Unit, sTree),           //
+                  SOL_UT_FN(Unit, sTreeInlined),    //
+                  SOL_UT_FN(Unit, irTree),          //
+                  SOL_UT_FN(Unit, sourceAsWritten), //
+                  SOL_UT_FN(Unit, sourcePreprocessed));
+  friend std::ostream &operator<<(std::ostream &os, const Unit &unit);
+};
 
 struct Codebase {
   std::string root;
   std::vector<std::shared_ptr<Unit>> units;
-  std::shared_ptr<CountBasedCoverage> coverage;
+  std::shared_ptr<FlatCoverage> coverage;
 
 private:
   DEF_SOL_UT_ACCESSOR(root);
@@ -223,7 +280,7 @@ public:
   [[nodiscard]] bool matches(const std::string &string) const {
     return std::regex_match(string, regex);
   }
-  [[nodiscard]] static Glob pattern(const std::string &glob) { return Glob{sv::globToRegex(glob)}; }
+  [[nodiscard]] static Glob pattern(const std::string &glob) { return Glob{globToRegex(glob)}; }
   DEF_TEAL_SOL_UT(Glob, SOL_UT_FN(Glob, pattern), SOL_UT_FN(Glob, matches)) //
 };
 

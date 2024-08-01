@@ -18,13 +18,12 @@ constexpr std::string_view EntryGCCGCovName = "coverage.gcc_gcov.sv.json";
 struct GCCGCovProfile {
 
   struct Line {
-    size_t line_number;
-    std::string function_name;
-    size_t count;
-    bool unexecuted_block;
+    size_t line_number{};
+    // XXX not all lines have a `function_name`
+    size_t count{};
+    bool unexecuted_block{};
     // XXX `branches` not implemented
-
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Line, line_number, function_name, count, unexecuted_block);
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Line, line_number, count, unexecuted_block);
   };
 
   struct Function {
@@ -46,7 +45,7 @@ struct GCCGCovProfile {
     std::string file{};
     std::vector<Function> functions{};
     std::vector<Line> lines{};
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Entry, file, functions);
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Entry, file, functions, lines);
   };
 
   std::string format_version{};
@@ -129,13 +128,15 @@ struct ClangSBCCProfile {
   NLOHMANN_DEFINE_TYPE_INTRUSIVE(ClangSBCCProfile, type, version, data);
 };
 
-struct CountBasedCoverage {
-  struct Count {
-    size_t lineStart, lineEnd;
-    size_t colStart, colEnd;
-    size_t count;
+struct PerFileCoverage {
+  struct Instance {
+    std::string function{};
+    size_t lineStart{}, lineEnd{};
+    size_t colStart{}, colEnd{};
+    size_t count{};
 
   private:
+    DEF_SOL_UT_ACCESSOR(function);
     DEF_SOL_UT_ACCESSOR(lineStart);
     DEF_SOL_UT_ACCESSOR(lineEnd);
     DEF_SOL_UT_ACCESSOR(colStart);
@@ -143,21 +144,22 @@ struct CountBasedCoverage {
     DEF_SOL_UT_ACCESSOR(count);
 
   public:
-    DEF_TEAL_SOL_UT(Count,                           //
-                    SOL_UT_FN_ACC(Count, lineStart), //
-                    SOL_UT_FN_ACC(Count, lineEnd),   //
-                    SOL_UT_FN_ACC(Count, colStart),  //
-                    SOL_UT_FN_ACC(Count, colEnd),    //
-                    SOL_UT_FN_ACC(Count, count));
+    DEF_TEAL_SOL_UT(Instance,                           //
+                    SOL_UT_FN_ACC(Instance, function),  //
+                    SOL_UT_FN_ACC(Instance, lineStart), //
+                    SOL_UT_FN_ACC(Instance, lineEnd),   //
+                    SOL_UT_FN_ACC(Instance, colStart),  //
+                    SOL_UT_FN_ACC(Instance, colEnd),    //
+                    SOL_UT_FN_ACC(Instance, count));
   };
 
-  std::map<std::string, std::vector<Count>> functions{};
+  std::map<std::string, std::vector<Instance>> filenames{};
 
 private:
-  DEF_SOL_UT_ACCESSOR(functions);
+  DEF_SOL_UT_ACCESSOR(filenames);
 
 public:
-  DEF_TEAL_SOL_UT(CountBasedCoverage, SOL_UT_FN_ACC(CountBasedCoverage, functions));
+  DEF_TEAL_SOL_UT(PerFileCoverage, SOL_UT_FN_ACC(PerFileCoverage, filenames));
 };
 
 struct CompilationDatabase {
@@ -381,8 +383,7 @@ public:
 struct Database {
   std::string root{};
   std::vector<std::variant<std::shared_ptr<ClangEntry>, std::shared_ptr<FlatEntry>>> entries{};
-
-  std::shared_ptr<CountBasedCoverage> coverage{};
+  std::shared_ptr<PerFileCoverage> coverage{};
 
 private:
   DEF_SOL_UT_ACCESSOR(root);

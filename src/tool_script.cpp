@@ -16,16 +16,6 @@
 using namespace aspartame;
 using namespace llvm;
 
-double tsTree(const sv::Unit &l, const sv::Unit &r) {
-  return sv::Diff::apted(l.writtenSource(true).tsTree(), r.writtenSource(true).tsTree());
-}
-
-double sTree(const sv::Unit &l, const sv::Unit &r) { return sv::Diff::apted(l.sTree(), r.sTree()); }
-
-double diff(const sv::Unit &l, const sv::Unit &r) {
-  return sv::Diff::diff(l.writtenSource(true).content(), r.writtenSource(true).content());
-}
-
 static Expected<sv::script::Options> parseOpts(int argc, const char **argv) {
   static cl::OptionCategory category("Run options");
 
@@ -78,8 +68,8 @@ constexpr sv::lua::TypeList<       //
     sv::Source,                    //
     sv::Unit,                      //
     sv::Codebase,                  //
-    sv::CountBasedCoverage,        //
-    sv::CountBasedCoverage::Count, //
+    sv::PerFileCoverage,        //
+    sv::PerFileCoverage::Instance, //
     sv::Database,                  //
     sv::Diff,                      //
     sv::Glob                       //

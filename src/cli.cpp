@@ -1,9 +1,6 @@
-#include <iostream>
-
-#include "clang/Tooling/CommonOptionsParser.h"
-#include "llvm/Support/CommandLine.h"
-
 #include "sv/cli.h"
+
+#include "llvm/Support/CommandLine.h"
 
 using namespace llvm;
 using namespace clang::tooling;

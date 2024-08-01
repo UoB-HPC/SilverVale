@@ -81,7 +81,7 @@ static void runCoverageTask(const std::filesystem::path &coverageBin,
     //    return buffer.str();
   };
 
-  const auto clangSBCC = [&](auto profrawFiles) {
+  const auto clangSBCC = [&](auto &profrawFiles) {
     for (auto &p : profrawFiles)
       AGV_INFOF("adding Clang SBCC coverage data: {}", p);
 

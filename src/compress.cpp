@@ -1,8 +1,13 @@
 #include "sv/compress.h"
 
+#include <algorithm>
+#include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <string>
 
+#include "llvm/ADT/StringRef.h"
+#include "llvm/Support/ErrorOr.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 

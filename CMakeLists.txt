@@ -33,7 +33,7 @@ CPMAddPackage("gh:ThePhD/sol2@3.3.0")
 CPMAddPackage("gh:DatabaseGroup/tree-similarity#0.1.1")
 CPMAddPackage(Aspartame
         GITHUB_REPOSITORY tom91136/Aspartame
-        GIT_TAG 31a0e22298b0c89455f8edfbe48675c6858c2420)
+        GIT_TAG 8e87a5bb)
 CPMAddPackage(
         NAME zstd
         GITHUB_REPOSITORY facebook/zstd
@@ -141,6 +141,7 @@ list(APPEND SV_COMPILE_FLAGS
         -Wno-unused-function
         -Wno-unused-variable
         -Wno-unknown-warning-option
+        #        -ftime-trace
 )
 list(APPEND SV_LINK_FLAGS "$<$<CONFIG:Debug>:${SV_LINK_DEBUG_FLAGS}>")
 
@@ -187,10 +188,12 @@ target_link_libraries(SilverVale
         tree-sitter-rust
         tree-sitter-fortran
         clang-cpp
-        LLVM
-)
+        LLVM)
 target_compile_options(SilverVale PRIVATE ${SV_COMPILE_FLAGS})
 target_link_options(SilverVale PRIVATE ${SV_LINK_FLAGS})
+#set_property(TARGET SilverVale PROPERTY CXX_INCLUDE_WHAT_YOU_USE include-what-you-use)
+
+
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_precompile_headers(SilverVale PRIVATE
             [["clang/Tooling/Tooling.h"]]
@@ -212,10 +215,14 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
             [["zstd.h"]]
 
             [["aspartame/map.hpp"]]
+            [["aspartame/set.hpp"]]
+            [["aspartame/unordered_set.hpp"]]
+            [["aspartame/unordered_map.hpp"]]
             [["aspartame/optional.hpp"]]
             [["aspartame/string.hpp"]]
             [["aspartame/vector.hpp"]]
             [["aspartame/view.hpp"]]
+
 
             <map>
             <tuple>
@@ -228,14 +235,16 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
             <utility>
             <optional>
             <iostream>
+            <fstream>
             <type_traits>
             <functional>
+            <filesystem>
             <unordered_map>
     )
 endif ()
 
 add_executable(driver src/driver.cpp)
-add_executable(tests test/tree.cpp test/index.cpp test/structure.cpp test/preprocessor.cpp)
+add_executable(tests test/tree.cpp test/ast.cpp test/index_microstream.cpp test/index_simple.cpp test/preprocessor.cpp)
 target_link_libraries(tests PRIVATE Catch2::Catch2WithMain)
 set_target_properties(driver PROPERTIES OUTPUT_NAME "sv")
 foreach (target driver tests)
@@ -251,9 +260,10 @@ function(setup_fixture name cc cxx fc suffix)
     message(STATUS "Adding fixture ${fixture_name}")
     set(build_dir "${CMAKE_BINARY_DIR}/${fixture_name}_build")
     set(FIXTURE_${fixture_name_upper}_EXPR "std::tuple{ \"${name}\", \"${cc}\", \"${suffix}\", \"${build_dir}\" }" PARENT_SCOPE)
+
     add_custom_command(
-            TARGET tests
-            PRE_BUILD
+            TARGET tests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E rm -rf "${build_dir}"
             COMMAND ${CMAKE_COMMAND} -E env CCACHE_DISABLE=1 CC=${cc} CXX=${cxx} FC=${fc} ${CMAKE_COMMAND}
             -S "${CMAKE_SOURCE_DIR}/test/fixture/${name}"
             -B "${build_dir}"
@@ -261,8 +271,6 @@ function(setup_fixture name cc cxx fc suffix)
             -DCMAKE_BUILD_TYPE=Release
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
             -DCMAKE_VERBOSE_MAKEFILE=ON
-            COMMAND ${CMAKE_COMMAND} --build "${build_dir}"
-            BYPRODUCTS "${build_dir}/CMakeCache.txt"
             WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
             COMMENT "Configure fixture ${name} as ${fixture_name}"
     )
@@ -272,11 +280,12 @@ add_library(processor_fixture OBJECT test/fixture/processor.cpp)
 target_compile_options(processor_fixture PRIVATE -E)
 set(FIXTURE_PROCESSOR_FILE "$<TARGET_OBJECTS:processor_fixture>")
 
-set(GCC_COVERAGE_FLAGS "-fprofile-arcs;-ftest-coverage")
+set(GCC_COVERAGE_FLAGS "-fprofile-arcs;-ftest-coverage;-g") # -g helps retain `return` in coverage (!?)
 set(CLANG_COVERAGE_FLAGS "-fprofile-instr-generate;-fcoverage-mapping")
 
-setup_fixture(dummy clang clang++ flang-new "" -DCMAKE_CXX_FLAGS="${CLANG_COVERAGE_FLAGS}")
-setup_fixture(dummy gcc g++ gfortran "" -DCMAKE_CXX_FLAGS="${GCC_COVERAGE_FLAGS}")
+setup_fixture(simple clang clang++ flang-new cxx -DCMAKE_CXX_FLAGS="${CLANG_COVERAGE_FLAGS}")
+setup_fixture(simple gcc g++ gfortran cxx -DCMAKE_CXX_FLAGS="${GCC_COVERAGE_FLAGS}")
+setup_fixture(simple gcc g++ gfortran f90 -DUSE_FORTRAN=ON -DCMAKE_Fortran_FLAGS="${GCC_COVERAGE_FLAGS}")
 
 setup_fixture(microstream gcc g++ gfortran serial_f90 -DUSE_SERIAL=ON -DUSE_FORTRAN=ON -DCMAKE_Fortran_FLAGS="${GCC_COVERAGE_FLAGS}")
 setup_fixture(microstream gcc g++ gfortran omp_f90 -DUSE_OMP=ON -DUSE_FORTRAN=ON -DCMAKE_Fortran_FLAGS="${GCC_COVERAGE_FLAGS}")

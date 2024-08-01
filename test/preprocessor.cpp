@@ -13,12 +13,13 @@
 #include "aspartame/vector.hpp"
 
 using namespace aspartame;
+using namespace sv;
 
 TEST_CASE("parse-CPP-linemarkers") {
 
   std::ifstream read(FIXTURE_PROCESSOR_FILE);
 
-  auto [order, contents] = sv::parseCPPLineMarkers(sv::readFile(FIXTURE_PROCESSOR_FILE));
+  auto [order, contents] = parseCPPLineMarkers(readFile(FIXTURE_PROCESSOR_FILE));
 
   auto actual = order ^ map([](auto &p) { return std::filesystem::path(p).filename().string(); });
 
@@ -34,12 +35,14 @@ TEST_CASE("parse-CPP-linemarkers") {
   CHECK(((actual ^ filter([&](auto f) { return rest ^ contains(f); })) == rest));
 
   for (auto [name, expected] : {
-           std::pair{"processor.cpp", std::vector{std::pair{16, "int main() { return 1 + 1 + 1; }"},
-                                                  std::pair{24, "void end() {}"}}},
-           std::pair{"processor.h",
-                     std::vector{std::pair{8, "#pragma foo"}, std::pair{9, "#pragma bar"},
-                                 std::pair{10, "#pragma baz"}, std::pair{11, "#pragma omp \"a\""},
-                                 std::pair{12, "void baz() {}"}}},
+           std::pair{"processor.cpp",
+                     std::vector{std::pair{22, "int main() { return 1 + 1 + 1 + 1; }"},
+                                 std::pair{30, "void end() {}"}}},
+           std::pair{"processor.h", std::vector{std::pair{9, "#pragma foo"},        //
+                                                std::pair{10, "#pragma bar"},       //
+                                                std::pair{11, "#pragma baz"},       //
+                                                std::pair{12, "#pragma omp \"a\""}, //
+                                                std::pair{13, "void baz() {}"}}},
            std::pair{"processor_incl_a.h", std::vector{std::pair{4, "void foo() {}"}}},
            std::pair{"processor_incl_b.h", std::vector{std::pair{4, "void bar() {}"}}},
            std::pair{"processor_incl_c.h",

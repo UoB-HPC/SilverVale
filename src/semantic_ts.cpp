@@ -63,8 +63,8 @@ sv::parseCPPLineMarkers(const std::string &iiContent) {
 }
 
 sv::TsTree::TsTree() = default;
-sv::TsTree::TsTree(const std::string &source, const TSLanguage *lang)
-    : source(source),
+sv::TsTree::TsTree(const std::string &name, const std::string &source, const TSLanguage *lang)
+    : name(std::filesystem::path(name).filename()), source(source),
       parser(std::shared_ptr<TSParser>(ts_parser_new(), [](auto x) { ts_parser_delete(x); })) {
   ts_parser_set_language(parser.get(), lang);
   tree = std::shared_ptr<TSTree>(
@@ -74,9 +74,7 @@ sv::TsTree::TsTree(const std::string &source, const TSLanguage *lang)
 
 TSNode sv::TsTree::root() const { return ts_tree_root_node(tree.get()); }
 
-static void deleteNodes(const TSNode &node, const std::string &type, size_t &offset,
-                        std::string &out);
-static void deleteNodes( // NOLINT(*-no-recursion)
+static void without( // NOLINT(*-no-recursion)
     const TSNode &node, const std::string &type, size_t &offset, std::string &out) {
   if (std::string(ts_node_type(node)) == type) {
     auto start = ts_node_start_byte(node);
@@ -85,30 +83,29 @@ static void deleteNodes( // NOLINT(*-no-recursion)
     offset += end - start;
   } else {
     for (uint32_t i = 0; i < ts_node_child_count(node); ++i) {
-      deleteNodes(ts_node_child(node, i), type, offset, out);
+      without(ts_node_child(node, i), type, offset, out);
     }
   }
 }
 
-sv::TsTree sv::TsTree::deleteNodes(const std::string &type,
-                                   const std::optional<TSNode> &node) const {
+sv::TsTree sv::TsTree::without(const std::string &type, const std::optional<TSNode> &node) const {
   size_t offset = 0;
   std::string out = source;
-  ::deleteNodes(node.value_or(root()), type, offset, out);
-  return {out, ts_parser_language(parser.get())};
+  ::without(node.value_or(root()), type, offset, out);
+  return {name, out, ts_parser_language(parser.get())};
 }
 
 sv::TsTree sv::TsTree::normaliseNewLines(const std::optional<TSNode> &node) const {
-  auto linesToKeep = slocLines(node.value_or(root()));
-  auto slocNormalise =
-      (source ^ lines())                                                    //
-      | zip_with_index<uint32_t>()                                          //
-      | filter([&](auto l, auto idx) { return linesToKeep.contains(idx); }) //
-      | fold_left(std::string{}, [](auto acc, auto x) { return acc + "\n" + x.first; });
-  return {slocNormalise ^ trim(), ts_parser_language(parser.get())};
+  auto linesToKeep = slocLines({}, node.value_or(root()));
+  auto slocNormalise = (source ^ lines())                                                    //
+                       | zip_with_index<uint32_t>(1)                                          //
+                       | filter([&](auto l, auto idx) { return linesToKeep.contains(idx); }) //
+                       | keys()                                                              //
+                       | mk_string("\n");                                                    //
+  return {name, slocNormalise ^ trim(), ts_parser_language(parser.get())};
 }
 
-void markWSRanges( // NOLINT(*-no-recursion)
+static void markWSRanges( // NOLINT(*-no-recursion)
     const TSNode &root, const std::string &content, uint32_t maxWs,
     std::vector<std::pair<uint32_t, uint32_t>> &xs) {
   auto count = ts_node_child_count(root);
@@ -132,31 +129,21 @@ void markWSRanges( // NOLINT(*-no-recursion)
   }
 }
 
+// TODO FIXME breaks #define in Fortran
 sv::TsTree sv::TsTree::normaliseWhitespaces(uint32_t maxWS,
                                             const std::optional<TSNode> &node) const {
-  std::string out = source;
   std::vector<std::pair<uint32_t, uint32_t>> ranges;
-  markWSRanges(node.value_or(root()), out, maxWS, ranges);
-  if (ranges.empty()) { return {out, ts_parser_language(parser.get())}; }
-
-  auto sortedRanges = ranges ^ sort();
-  std::vector<std::pair<uint32_t, uint32_t>> merged{sortedRanges[0]};
-  for (auto r : sortedRanges) {
-    auto &last = merged.back();
-    if (r.first <= last.second) last.second = std::max(last.second, r.second);
-    else merged.push_back(r);
-  }
-  for (auto it = sortedRanges.rbegin(); it != sortedRanges.rend(); ++it) {
-    out.erase(it->first, it->second - it->first);
-  }
-  return {out, ts_parser_language(parser.get())};
+  markWSRanges(node.value_or(root()), source, maxWS, ranges);
+  return deleteRanges(ranges);
 }
 
-std::set<uint32_t> sv::TsTree::slocLines(const std::optional<TSNode> &node) const {
+std::set<uint32_t> sv::TsTree::slocLines(const std::function<bool(const TSNode &)> &mask,
+                                         const std::optional<TSNode> &node) const {
   std::set<uint32_t> slocLines;
-  walk(
+  preOrderWalk(
       [&](TSNode x) {
         std::string type = ts_node_type(x);
+        if (mask && mask(x)) { return true; }
 
         if (type == "translation_unit" || type == "program") {
           // Some parser's TU would use the end of the file as end point
@@ -166,19 +153,20 @@ std::set<uint32_t> sv::TsTree::slocLines(const std::optional<TSNode> &node) cons
 
         if (type.starts_with("preproc_")) {
           // preproc adds a *trailing* newline, so we just parse what's actually inside
-          slocLines.emplace(ts_node_start_point(x).row); // trailing, so the start is still correct
+          slocLines.emplace(ts_node_start_point(x).row +
+                            1); // trailing, so the start is still correct
           return true;
         }
 
         if (type == "end_program_statement" && ts_node_named_child_count(x) == 1) {
           // XXX handle Fortran's trailing newline after `end program $name`
-          slocLines.emplace(ts_node_start_point(x).row);
-          slocLines.emplace(ts_node_end_point(ts_node_named_child(x, 0)).row);
+          slocLines.emplace(ts_node_start_point(x).row + 1);
+          slocLines.emplace(ts_node_end_point(ts_node_named_child(x, 0)).row + 1);
           return true;
         }
 
-        slocLines.emplace(ts_node_start_point(x).row);
-        slocLines.emplace(ts_node_end_point(x).row);
+        slocLines.emplace(ts_node_start_point(x).row + 1);
+        slocLines.emplace(ts_node_end_point(x).row + 1);
         return true;
       },
       node, false);
@@ -186,10 +174,13 @@ std::set<uint32_t> sv::TsTree::slocLines(const std::optional<TSNode> &node) cons
 }
 
 std::set<std::pair<uint32_t, uint32_t>>
-sv::TsTree::llocRanges(const std::optional<TSNode> &node) const {
+sv::TsTree::llocRanges(const std::function<bool(const TSNode &)> &mask,
+                       const std::optional<TSNode> &node) const {
   std::set<std::pair<uint32_t, uint32_t>> llocRanges;
-  walk(
+  preOrderWalk(
       [&](auto &x) {
+        if (mask && mask(x)) { return true; }
+
         std::string type = ts_node_type(x);
         // don't count compound stmt as it contains children
         if (type == "compound_statement") return true;
@@ -221,9 +212,19 @@ sv::TsTree::llocRanges(const std::optional<TSNode> &node) const {
   return llocRanges;
 }
 
-size_t sv::TsTree::sloc(const std::optional<TSNode> &node) const { //
-  return slocLines(node).size();
-}
-size_t sv::TsTree::lloc(const std::optional<TSNode> &node) const { //
-  return llocRanges(node).size();
+sv::TsTree
+sv::TsTree::deleteRanges(const std::vector<std::pair<uint32_t, uint32_t>> &ranges) const {
+  if (ranges.empty()) { return *this; }
+  std::string out = source;
+  auto sortedRanges = ranges ^ sort_by([](auto x, auto) { return x; });
+  std::vector<std::pair<uint32_t, uint32_t>> merged{sortedRanges[0]};
+  for (auto r : sortedRanges) {
+    auto &last = merged.back();
+    if (r.first <= last.second) last.second = std::max(last.second, r.second);
+    else merged.push_back(r);
+  }
+  for (auto it = merged.rbegin(); it != merged.rend(); ++it) {
+    out.erase(it->first, it->second - it->first);
+  }
+  return {name, out, ts_parser_language(parser.get())};
 }

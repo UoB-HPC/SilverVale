@@ -1,5 +1,7 @@
 #include "sv/glob.h"
+
 #include <regex>
+#include <cstddef>
 #include <string>
 
 // This is a direct port of https://github.com/fitzgen/glob-to-regexp from JS to C++

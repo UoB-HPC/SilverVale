@@ -1,3 +1,4 @@
+#include <atomic>
 #include <fstream>
 #include <iostream>
 #include <utility>
@@ -36,6 +37,8 @@
 using namespace aspartame;
 using namespace clang;
 
+using namespace sv;
+
 class ClangContext {
   llvm::LLVMContext context;
   std::vector<std::vector<char>> astBackingBuffer;
@@ -46,7 +49,7 @@ class ClangContext {
   static EntryType mkEntry(llvm::LLVMContext &llvmContext,          //
                            std::vector<std::vector<char>> &storage, //
                            const std::filesystem::path &baseDir,    //
-                           const sv::ClangEntry &tu) {
+                           const ClangEntry &tu) {
     auto modules =
         tu.bitcodes |
         collect([&](auto &entry)
@@ -75,7 +78,7 @@ class ClangContext {
 
     auto pchFile = baseDir / tu.pchFile;
 
-    auto pchData = sv::utils::zStdDecompress(pchFile);
+    auto pchData = utils::zStdDecompress(pchFile);
     if (!pchData) {
       AGV_WARNF("Cannot read PCH data: {}", pchFile);
       return {nullptr, modules};
@@ -105,7 +108,7 @@ class ClangContext {
 
 public:
   std::map<std::string, EntryType> units;
-  explicit ClangContext(const std::vector<std::shared_ptr<sv::ClangEntry>> &entries,
+  explicit ClangContext(const std::vector<std::shared_ptr<ClangEntry>> &entries,
                         const std::string &baseDir)
       : context(),
         units(entries ^ map([&](auto &tu) { //
@@ -115,112 +118,206 @@ public:
 };
 
 // === Tree ===
-sv::Tree::Tree(const sv::SemanticTree<std::string> &root) : root(root) {}
-size_t sv::Tree::nodes() const {
+Tree::Tree(const NTree<SNode> &root) : root(root) {}
+size_t Tree::nodes() const {
   return lazyNodes([&] {
     size_t n = 0;
-    root.walk([&](auto &, auto) {
-      n++;
-      return true;
-    });
+    root.postOrderWalk([&](auto &, auto) { n++; });
     return n;
   });
 }
-size_t sv::Tree::maxDepth() const {
+size_t Tree::maxDepth() const {
   return lazyMaxDepth([&] {
     size_t maxDepth = 0;
-    root.walk([&](auto &, size_t depth) {
-      maxDepth = std::max(maxDepth, depth);
-      return true;
-    });
+    root.postOrderWalk([&](auto &, size_t depth) { maxDepth = std::max(maxDepth, depth); });
     return maxDepth;
   });
 }
-size_t sv::Tree::maxWidth() const {
+size_t Tree::maxWidth() const {
   return lazyMaxWidth([&] {
     std::vector<int> levelSize;
-    root.walk([&](auto &, size_t depth) {
+    root.postOrderWalk([&](auto &, size_t depth) {
       if (depth >= levelSize.size()) { levelSize.resize(depth + 1); }
       levelSize[depth]++;
-      return true;
     });
     return levelSize.empty() ? 0 : *std::max_element(levelSize.begin(), levelSize.end());
   });
 }
-sv::Tree sv::Tree::combine(const std::string &rootName, const std::vector<Tree> &trees) {
-  return Tree{sv::SemanticTree<std::string>(rootName, trees ^ map([](auto &t) { return t.root; }))};
+Tree Tree::combine(const std::string &rootName, const std::vector<Tree> &trees) {
+  return Tree{
+      NTree<SNode>(SNode{rootName, Location{}}, trees ^ map([](auto &t) { return t.root; }))};
 }
-std::string sv::Tree::prettyPrint() const {
-  std::stringstream ss;
-  root.print(ss);
-  return ss.str();
+std::string Tree::prettyPrint() const {
+  std::stringstream stream;
+  root.print(stream);
+  return stream.str();
 }
-sv::Tree sv::Tree::leaf(const std::string &rootName) {
-  return sv::Tree{sv::SemanticTree<std::string>(rootName, {})};
+Tree Tree::leaf(const std::string &rootName) {
+  return Tree{NTree<SNode>(SNode{rootName, Location{}}, {})};
 }
 
 // === Source ===
-sv::Source::Source(sv::TsTree tree) : tree(std::move(tree)) {}
-const std::string &sv::Source::content() const { return tree.source; }
-size_t sv::Source::sloc() const {
-  return lazySloc([&] { return tree.sloc(); });
+
+Source::Source(TsTree tree, std::string content, const Mask &mask)
+    : root_(std::move(tree)), content_(std::move(content)), mask(mask) {}
+// XXX this content is different from that root_'s one as this can be modified for coverage
+const std::string &Source::content() const { return content_; }
+
+const std::string &Source::contentWhitespaceNormalised() const {
+  return lazyNormalisedContent([&]() {
+    // run a source-level (tree-unaware) WS normalisation here
+    auto ws = [](char c) { return c == ' ' || c == '\t'; };
+    std::string result;
+    for (char c : content_) {
+      if (result.empty()) {
+        if (!ws(c) || c != '\n') result += c;
+      } else {
+        auto last = result.back();
+        if (last == '\n' && c == '\n') continue; // delete consecutive NL
+        if (ws(last) && ws(c)) continue;         // delete consecutive WS
+        if (last == '\n' && ws(c)) continue;     // delete trailing WS after NL
+        if (ws(last) && c == '\n') {
+          result.pop_back();
+          continue; // delete trailing WS before NL
+        }
+        result += c;
+      }
+    }
+    return result;
+  });
 }
-size_t sv::Source::lloc() const {
-  return lazyLloc([&] { return tree.lloc(); });
+static std::pair<uint32_t, uint32_t> rowRange(TSNode n) {
+  return {ts_node_start_point(n).row + 1,
+          ts_node_end_point(n).row + 1}; // tree sitter row is 0-based
 }
 
-std::set<uint32_t> sv::Source::slocLines() const {
-  return lazySlocLines([&] { return tree.slocLines(); });
+size_t Source::sloc() const {
+  return lazySloc(
+      [&] { return root_.slocLines([&](const TSNode n) { return mask(rowRange(n)); }).size(); });
 }
-std::set<sv::Range> sv::Source::llocRanges() const {
+size_t Source::lloc() const {
+  return lazyLloc(
+      [&] { return root_.llocRanges(([&](const TSNode n) { return mask(rowRange(n)); })).size(); });
+}
+std::set<uint32_t> Source::slocLines() const {
+  return lazySlocLines([&] { return root_.slocLines(); });
+}
+std::set<Range> Source::llocRanges() const {
   return lazyLlocRanges([&] {
-    return tree.llocRanges() ^ map([](auto &start, auto &end) { return sv::Range{start, end}; });
+    return root_.llocRanges() ^ map([](auto &start, auto &end) { return Range{start, end}; });
   });
 }
-const sv::Tree &sv::Source::tsTree() const {
+const Tree &Source::tsTree() const {
   return lazyTsTree([&] {
-    return Tree{tree.template traverse<sv::SemanticTree<std::string>>(
-        [](const auto &v) { return sv::SemanticTree{v, {}}; },
-        [](auto &n, const auto &x) { n.children.emplace_back(x); })};
+    auto root = root_.template traverse<NTree<TSNode>>(
+        [&](const TSNode v) { return NTree{v, {}}; },
+        [](auto &n, const auto &x) { n.children.emplace_back(x); });
+    root.pruneInplace([&](const TSNode &n) { return mask(rowRange(n)); });
+    return Tree(root.map<SNode>([&](const TSNode &n) {
+      return SNode{std::string(ts_node_type(n)),
+                   Location{.filename = root_.name,
+                            .line = ts_node_start_point(n).row + 1, // tree sitter row is 0-based
+                            .col = ts_node_start_point(n).column}};
+    }));
   });
+}
+
+// === FlatCoverage ===
+
+FlatCoverage::FlatCoverage(const PerFileCoverage &coverage) {
+  for (auto &[file, instances] : coverage.filenames) {
+    for (auto &instance : instances) {
+      if (instance.count != 0) {
+        for (size_t line = instance.lineStart; line <= instance.lineEnd; ++line) {
+          entries[std::pair{file, line}] += instance.count;
+        }
+      }
+    }
+  }
 }
 
 // === Unit ===
-sv::Unit::Unit(std::string path, sv::SemanticTree<std::string> sTree,
-               sv::SemanticTree<std::string> sTreeInlined, sv::SemanticTree<std::string> irTree,
-               TsTree source, TsTree preprocessedSource)
-    : path_(std::move(path)), name_(std::filesystem::path(path_).filename()), //
+
+Unit::Unit(std::string path, const std::shared_ptr<FlatCoverage> &coverage,    //
+           NTree<SNode> sTree, NTree<SNode> sTreeInlined, NTree<SNode> irTree, //
+           TsTree source, TsTree preprocessedSource)
+    : path_(std::move(path)), name_(std::filesystem::path(path_).filename()),
+      //      coverage(std::move(coverage)), //
       sTreeRoot(std::move(sTree)), sTreeInlinedRoot(std::move(sTreeInlined)),
       irTreeRoot(std::move(irTree)), sourceRoot(std::move(source)), //
-      preprocessedRoot(std::move(preprocessedSource)) {}
-const std::string &sv::Unit::path() const { return path_; }
-const std::string &sv::Unit::name() const { return name_; }
-const sv::Tree &sv::Unit::sTree() const { return sTreeRoot; }
-const sv::Tree &sv::Unit::sTreeInlined() const { return sTreeInlinedRoot; }
-const sv::Tree &sv::Unit::irTree() const { return irTreeRoot; }
-sv::Source sv::Unit::writtenSource(bool normalise) const {
-  return normalise //
-             ? lazyWrittenSourceNormalised([&]() {
-                 return Source(
-                     sourceRoot.deleteNodes("comment").normaliseNewLines().normaliseWhitespaces());
-               })
-             : lazyWrittenSource([&]() { return Source(sourceRoot); });
+      preprocessedRoot(std::move(preprocessedSource)), coverage(coverage) {}
+
+const std::string &Unit::path() const { return path_; }
+const std::string &Unit::name() const { return name_; }
+
+NTree<SNode> Unit::pruneTree(const NTree<SNode> &tree) const {
+  auto pruned = tree;
+  pruned.pruneInplace([&](auto &s) {
+    return coverage->entries.contains(std::pair{s.location.filename, s.location.line});
+  });
+  return pruned;
 }
-sv::Source sv::Unit::preprocessedSource(bool normalise) const {
-  return normalise //
-             ? lazyPreprocessedSourceNormalised([&]() {
-                 return Source(preprocessedRoot.deleteNodes("comment")
-                                   .normaliseNewLines()
-                                   .normaliseWhitespaces());
-               })
-             : lazyPreprocessedSource([&]() { return Source(preprocessedRoot); });
+
+const Tree &Unit::sTree(View view) const {
+  return lazySTree(view, [view, this]() {
+    return view == View::WithCoverage //
+               ? Tree(pruneTree(sTreeRoot.root))
+               : sTreeRoot;
+  });
+}
+const Tree &Unit::sTreeInlined(View view) const {
+  return lazySTreeInlined(view, [view, this]() {
+    return view == View::WithCoverage //
+               ? Tree(pruneTree(sTreeInlinedRoot.root))
+               : sTreeInlinedRoot;
+  });
+}
+const Tree &Unit::irTree(View view) const {
+  return lazyIrTree(view, [view, this]() {
+    return view == View::WithCoverage ? Tree(pruneTree(irTreeRoot.root)) : irTreeRoot;
+  });
+}
+
+TsTree Unit::normaliseTsTree(const TsTree &tree) {
+  return tree.without("comment"); // // .normaliseWhitespaces();
+}
+
+const Source &Unit::sourceAsWritten() const {
+  return lazySourceAsWritten([&]() {
+    auto normalised = normaliseTsTree(sourceRoot);
+    return Source(normalised, normalised.source, [](auto) { return true; });
+  });
+}
+const Source &Unit::sourcePreprocessed() const {
+  return lazySourcePreprocessed([&]() {
+    auto normalised = normaliseTsTree(preprocessedRoot);
+    return Source(normalised, normalised.source, [&](auto) { return true; });
+  });
+}
+const Source &Unit::sourceWithCoverage() const {
+  return lazySourceWithCoverage([&]() {
+    // XXX use the original source but without comments to match up the lines
+    auto normalised = normaliseTsTree(sourceRoot);
+    auto coveragePrunedSource =
+        (normalised.source ^ lines()) | zip_with_index(size_t{1})               //
+        | filter([&](auto s, auto idx) {                                        //
+            return coverage->entries.contains(std::pair{sourceRoot.name, idx}); //
+          })                                                                    //
+        | keys()                                                                //
+        | filter([](auto x) { return !(x ^ is_blank()); })                      //
+        | mk_string("\n");
+    return Source(normalised, coveragePrunedSource, [&](auto range) {
+      return inclusive(range.first, range.second) |
+             exists([&](auto line) { return coverage->entries.contains(std::pair{name_, line}); });
+    });
+  });
 }
 
 // === Database ===
 
-sv::Database sv::Codebase::loadDB(const std::string &root) {
+Database Codebase::loadDB(const std::string &root) {
   std::vector<std::variant<std::shared_ptr<ClangEntry>, std::shared_ptr<FlatEntry>>> entries;
-  auto coverage = std::make_shared<sv::CountBasedCoverage>();
+  auto coverage = std::make_shared<PerFileCoverage>();
   auto parseJSON = [](auto path) {
     std::ifstream s(path);
     s.exceptions(std::ios::failbit | std::ios::badbit);
@@ -228,39 +325,66 @@ sv::Database sv::Codebase::loadDB(const std::string &root) {
   };
   try {
     for (auto &entry : std::filesystem::directory_iterator(root)) {
-      if (auto path = entry.path(); path.string() ^ ends_with(sv::EntrySuffix)) {
-        if (path.filename() == sv::EntryClangSBCCName) {
+      if (auto path = entry.path(); path.string() ^ ends_with(EntrySuffix)) {
+        if (path.filename() == EntryClangSBCCName) {
           ClangSBCCProfile p;
           nlohmann::from_json(parseJSON(path), p);
-
           for (auto &e : p.data) {
             for (auto &f : e.functions) {
-              auto ys = f.regions ^ map([](auto &r) {
-                          return sv::CountBasedCoverage::Count{.lineStart = r.LineStart,
-                                                               .lineEnd = r.LineEnd,
-                                                               .colStart = r.ColumnStart,
-                                                               .colEnd = r.ColumnEnd,
-                                                               .count = r.ExecutionCount};
-                        });
-              if (auto it = coverage->functions.find(f.name); it != coverage->functions.end())
-                it->second.insert(it->second.end(), ys.begin(), ys.end());
-              else coverage->functions.emplace(f.name, ys);
+              for (auto &filename : f.filenames ^ distinct()) {
+                auto name = std::filesystem::path(filename).filename();
+                // XXX the first region encloses the entire function with a count of 1 iff it spans
+                // more than one line
+                if (f.regions.size() > 1 && f.regions[0].ExecutionCount == 1) {
+                  // marker region: subtractive regions from this region onwards where 0 counts
+                  // removes a region; we do this by first adding one instance per line then
+                  // deleting it later; TODO this does not handle columns in any way
+                  std::unordered_map<size_t, int64_t> counts;
+                  for (size_t l = f.regions[0].LineStart; l <= f.regions[0].LineEnd; ++l)
+                    counts.emplace(l, 1);
+                  for (size_t i = 1; i < f.regions.size(); ++i) {
+                    auto sub = f.regions[i];
+                    int64_t delta =
+                        sub.ExecutionCount > 0 ? int64_t(sub.ExecutionCount) : int64_t(-1);
+                    for (size_t l = sub.LineStart; l <= sub.LineEnd; ++l)
+                      counts[l] += delta;
+                  }
+                  for (auto &[line, count] : counts) {
+                    coverage->filenames[name].emplace_back(PerFileCoverage::Instance{
+                        .function = f.name,
+                        .lineStart = line,
+                        .lineEnd = line,
+                        .colStart = 0,
+                        .colEnd = 0,
+                        .count = static_cast<size_t>(count < 0 ? 0 : count)});
+                  }
+                } else {
+                  for (auto &r : f.regions) {
+                    coverage->filenames[name].emplace_back(
+                        PerFileCoverage::Instance{.function = f.name,
+                                                  .lineStart = r.LineStart,
+                                                  .lineEnd = r.LineEnd,
+                                                  .colStart = r.ColumnStart,
+                                                  .colEnd = r.ColumnEnd,
+                                                  .count = r.ExecutionCount});
+                  }
+                }
+              }
             }
           }
-        } else if (path.filename() ^ ends_with(sv::EntryGCCGCovName)) {
+        } else if (path.filename() ^ ends_with(EntryGCCGCovName)) {
           // GCov is cumulative: it generates one profile per TU. We need to fold it into one.
           GCCGCovProfile p;
           nlohmann::from_json(parseJSON(path), p);
           for (auto &f : p.files) {
             for (auto &l : f.lines) {
-              (coverage->functions ^=
-               get_or_emplace(l.function_name,
-                              [](auto) { return std::vector<sv::CountBasedCoverage::Count>{}; }))
-                  .emplace_back(sv::CountBasedCoverage::Count{.lineStart = l.line_number,
-                                                              .lineEnd = l.line_number,
-                                                              .colStart = 0,
-                                                              .colEnd = 0,
-                                                              .count = l.count});
+              coverage->filenames[std::filesystem::path(f.file).filename()].emplace_back(
+                  PerFileCoverage::Instance{.function = {},
+                                            .lineStart = l.line_number,
+                                            .lineEnd = l.line_number,
+                                            .colStart = 0,
+                                            .colEnd = 0,
+                                            .count = l.count});
             }
           }
         } else {
@@ -283,14 +407,18 @@ sv::Database sv::Codebase::loadDB(const std::string &root) {
       }
     }
   } catch (const std::exception &e) { AGV_WARNF("Cannot list directory {}: {}", root, e); }
+
+  AGV_INFOF("Loaded DB {} with {} entries and {} coverage entries", root, entries.size(),
+            coverage->filenames.size());
+
   return {root, entries, coverage};
 }
 
-sv::Codebase sv::Codebase::load(const Database &db,                    //
-                                std::ostream &out,                     //
-                                bool normalise,                        //
-                                const std::vector<std::string> &roots, //
-                                const std::function<bool(const std::string &)> &predicate) {
+Codebase Codebase::load(const Database &db,                    //
+                        std::ostream &out,                     //
+                        bool normalise,                        //
+                        const std::vector<std::string> &roots, //
+                        const std::function<bool(const std::string &)> &predicate) {
 
   const auto select = [](auto x, auto f) { return std::visit([&](auto &&x) { return f(*x); }, x); };
 
@@ -307,13 +435,13 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
     }
   };
 
-  const auto extractPreprocessedTsRoot = [&](const std::string &iiLines,
+  const auto extractPreprocessedTsRoot = [&](const std::string &name, const std::string &iiLines,
                                              const std::string &language) {
-    const auto [witnessed, contents] = sv::parseCPPLineMarkers(iiLines);
-    sv::TsTree tree{};
+    const auto [witnessed, contents] = parseCPPLineMarkers(iiLines);
+    TsTree tree{};
     if (!witnessed.empty()) {
       contents ^ get(witnessed.front()) ^
-          for_each([&](auto &s) { tree = sv::TsTree(s, createTsParser(language)); });
+          for_each([&](auto &s) { tree = TsTree(name, s, createTsParser(language)); });
     }
     return tree;
   };
@@ -326,6 +454,9 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
              }) //
            | head_maybe();
   };
+
+  auto flatCoverage =
+      db.coverage ? std::make_shared<FlatCoverage>(*db.coverage) : std::make_shared<FlatCoverage>();
 
   const auto selected =
       db.entries                                                                               //
@@ -341,7 +472,7 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
   // Load clang entries first
   const auto clangEntries =
       selected ^ collect([](auto &x) { return x ^ get<std::shared_ptr<ClangEntry>>(); });
-  const auto clangUnits = sv::par_map(
+  const auto clangUnits = par_map(
       clangEntries,
       [&, clangCtx = ClangContext(clangEntries, db.root)](const auto &x) -> std::shared_ptr<Unit> {
         try {
@@ -351,16 +482,16 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
             return {};
           };
           auto &[ast, modules] = *unitCtx;
-          sv::SemanticTree<std::string> irTreeRoot{"root", {}};
+          NTree<SNode> irTreeRoot{{"root", Location{}}, {}};
           for (auto &[name, module] : modules) {
-            sv::SemanticTree<std::string> irTree{name, {}};
-            sv::LLVMIRTreeVisitor(&irTree, *module, normalise);
+            NTree<SNode> irTree{{normalise ? "(bc)" : name, Location{}}, {}};
+            LLVMIRTreeVisitor(&irTree, *module, normalise);
             irTreeRoot.children.emplace_back(irTree);
           }
 
-          sv::SemanticTree<std::string> sTree{"root", {}};
-          sv::SemanticTree<std::string> sTreeInlined{"root", {}};
-          sv::TsTree sourceRoot{};
+          NTree<SNode> sTree{{"root", Location{}}, {}};
+          NTree<SNode> sTreeInlined{{"root", Location{}}, {}};
+          TsTree sourceRoot{};
 
           if (ast) {
             clang::SourceManager &sm = ast->getSourceManager();
@@ -376,20 +507,20 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
                         x->file, language);
 
             if (auto data = sm.getBufferDataOrNone(sm.getMainFileID()); data)
-              sourceRoot = sv::TsTree(data->str(), createTsParser(language));
+              sourceRoot = TsTree(x->file, data->str(), createTsParser(language));
             else
               AGV_WARNF("Failed to load original source for entry {}, main file ID missing",
                         x->file);
 
             for (clang::Decl *decl :
-                 sv::topLevelDeclsInMainFile(*ast) ^ sort_by([&](clang::Decl *decl) {
+                 topLevelDeclsInMainFile(*ast) ^ sort_by([&](clang::Decl *decl) {
                    return std::pair{sm.getDecomposedExpansionLoc(decl->getBeginLoc()).second,
                                     sm.getDecomposedExpansionLoc(decl->getEndLoc()).second};
                  })) {
 
-              auto createTree = [&](const sv::ClangASTSemanticTreeVisitor::Option &option) {
-                sv::SemanticTree<std::string> topLevel{"toplevel", {}};
-                sv::ClangASTSemanticTreeVisitor(&topLevel, ast->getASTContext(), option)
+              auto createTree = [&](const ClangASTSemanticTreeVisitor::Option &option) {
+                NTree<SNode> topLevel{SNode{"toplevel", Location{}}, {}};
+                ClangASTSemanticTreeVisitor(&topLevel, ast->getASTContext(), option)
                     .TraverseDecl(decl);
                 return topLevel;
               };
@@ -409,12 +540,13 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
           } else {
             AGV_WARNF("Failed to load AST for entry {}", x->file);
             auto source = findSourceInDeps(x->dependencies, x->file);
-            sourceRoot = sv::TsTree(source.value_or(""), createTsParser(x->language));
+            sourceRoot = TsTree(x->file, source.value_or(""), createTsParser(x->language));
           }
 
+          auto name = ast ? ast->getMainFileName().str() : x->file;
           auto unit = std::make_shared<Unit>( //
-              ast ? ast->getMainFileName().str() : x->file, sTree, sTreeInlined, irTreeRoot,
-              sourceRoot, extractPreprocessedTsRoot(x->preprocessed, x->language));
+              name, flatCoverage, sTree, sTreeInlined, irTreeRoot, sourceRoot,
+              extractPreprocessedTsRoot(name, x->preprocessed, x->language));
           out << "# Loaded " << std::left << std::setw(maxFileLen) << x->file << "\r";
           return unit;
         } catch (const std::exception &e) {
@@ -426,10 +558,10 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
   // Then flat entries
   const auto flatEntries =
       selected ^ collect([](auto &x) { return x ^ get<std::shared_ptr<FlatEntry>>(); });
-  auto flatUnits = sv::par_map(flatEntries, [&](const auto &x) -> std::shared_ptr<Unit> {
+  auto flatUnits = par_map(flatEntries, [&](const auto &x) -> std::shared_ptr<Unit> {
     try {
       auto loadTree = [](const std::filesystem::path &path) {
-        sv::SemanticTree<std::string> tree;
+        NTree<SNode> tree;
         if (!std::filesystem::exists(path)) return tree;
         std::ifstream read(path);
         read.exceptions(std::ios::badbit | std::ios::failbit);
@@ -444,9 +576,9 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
 
       auto source = findSourceInDeps(x->dependencies, x->file);
       auto unit =
-          std::make_unique<Unit>(x->file, stree, sv::SemanticTree<std::string>{}, irtree,
-                                 sv::TsTree(source.value_or(""), createTsParser(x->language)),
-                                 extractPreprocessedTsRoot(x->preprocessed, x->language));
+          std::make_unique<Unit>(x->file, flatCoverage, stree, NTree<SNode>{}, irtree,
+                                 TsTree(x->file, source.value_or(""), createTsParser(x->language)),
+                                 extractPreprocessedTsRoot(x->file, x->preprocessed, x->language));
       out << "# Loaded " << std::left << std::setw(maxFileLen) << x->file << "\r";
       return unit;
     } catch (const std::exception &e) {
@@ -455,7 +587,8 @@ sv::Codebase sv::Codebase::load(const Database &db,                    //
     }
   });
   out << std::endl;
-  return sv::Codebase(db.root, clangUnits ^ concat(flatUnits), db.coverage);
+
+  return Codebase(db.root, clangUnits ^ concat(flatUnits), flatCoverage);
 }
 
 namespace sv {
@@ -482,4 +615,5 @@ std::ostream &operator<<(std::ostream &os, const Unit &unit) {
             << ".sourceRoot=" << unit.sourceRoot.root().tree //
             << "}";
 }
+
 } // namespace sv

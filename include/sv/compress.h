@@ -1,6 +1,11 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <optional>
 #include <string>
+#include <system_error>
+#include <vector>
 
 #include "zstd.h"
 #include "llvm/Support/raw_ostream.h"
