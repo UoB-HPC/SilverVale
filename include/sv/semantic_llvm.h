@@ -16,8 +16,7 @@ class LLVMIRTreeVisitor : private NTreeVisitor<SNode, void> {
   void walk(const llvm::Value *fn);
 
 public:
-  LLVMIRTreeVisitor(NTree<SNode> *root, const llvm::Module &module,
-                    bool normaliseName);
+  LLVMIRTreeVisitor(NTree<SNode> *root, const llvm::Module &module, bool normaliseName);
 };
 
 class ClangASTSemanticTreeVisitor : private NTreeVisitor<SNode, bool>,
@@ -34,12 +33,10 @@ public:
 private:
   clang::ASTContext &Context;
   Option option;
-  [[nodiscard ]]  sv::Location  locationOf(const clang::SourceLocation &e) const ;
-
+  [[nodiscard]] sv::Location locationOf(const clang::SourceLocation &e) const;
 
 public:
-  ClangASTSemanticTreeVisitor(NTree<SNode> *root, clang::ASTContext &Context,
-                              Option option);
+  ClangASTSemanticTreeVisitor(NTree<SNode> *root, clang::ASTContext &Context, Option option);
   bool TraverseDecl(clang::Decl *decl);
   bool TraverseStmt(clang::Stmt *stmt);
 };

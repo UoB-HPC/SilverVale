@@ -74,7 +74,7 @@ struct TsTree {
         node.value_or(root()), out, //
         [&](const TSNode &n) { return show(n); },
         [&](const TSNode &n) {
-          return exclusive<uint32_t>(0, ts_node_child_count(n))              //
+          return exclusive<uint32_t>(0, ts_node_child_count(n))         //
                  | map([&](uint32_t i) { return ts_node_child(n, i); }) //
                  | filter([&](auto &n) { return ts_node_is_named(n); }) //
                  | to_vector();

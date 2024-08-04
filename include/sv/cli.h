@@ -1,9 +1,8 @@
 #pragma once
 
+#include <atomic>
 #include <iostream>
-
-#include "clang/Tooling/CommonOptionsParser.h"
-#include "llvm/Support/CommandLine.h"
+#include <string>
 
 #include "fmt/format.h"
 #include "fmt/std.h"
@@ -23,19 +22,6 @@
 #define SV_ERRF(...) (SV_CERR << fmt::format(__VA_ARGS__) << std::endl)
 
 namespace sv {
-
-std::optional<llvm::Error> parseCategory(llvm::cl::OptionCategory &category, int &argc,
-                                         const char **argv);
-
-template <typename P, typename F>
-static int parseAndRun(int argc, const char **argv, P parse, F run) {
-  auto maybeOptions = parse(argc, argv);
-  if (auto x = maybeOptions.takeError()) {
-    SV_CERR << toString(std::move(x));
-    return EXIT_FAILURE;
-  }
-  return run(maybeOptions.get());
-}
 
 class ProgressLogger {
   size_t total;

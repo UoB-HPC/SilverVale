@@ -1,4 +1,3 @@
-#include <fstream>
 #include <iostream>
 #include <utility>
 
@@ -12,51 +11,40 @@
 #include "aspartame/variant.hpp"
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
+#include "cxxopts.hpp"
 
 using namespace aspartame;
-using namespace llvm;
-
-static Expected<sv::script::Options> parseOpts(int argc, const char **argv) {
-  static cl::OptionCategory category("Run options");
-
-  static cl::opt<bool> defs( //
-      "defs",
-      cl::desc(
-          "Emit Teal type (*.d.tl) declarations to standard output for Teal script development."
-          "This option supersedes any other argument or user script."),
-      cl::cat(category));
-
-  static cl::opt<bool> noBuffer( //
-      "no-buffer", cl::desc("Disable buffering to C++'s stdout for print"), cl::cat(category));
-
-  static cl::list<std::string> roots(
-      cl::CommaSeparated, "roots",
-      cl::desc("Additional search paths in CSV format for Lua's requires function."),
-      cl::cat(category));
-
-  static cl::opt<int> maxThreads(
-      "j",
-      cl::desc("Global number of jobs to run in parallel, defaults to total number of threads."),
-      cl::init(std::thread::hardware_concurrency()), cl::cat(category));
-
-  static cl::list<std::string> args( //
-      cl::FormattingFlags::Positional,
-      cl::desc("<script> [... args]\n"
-               "The path to the Lua user script followed by arguments passed to the arg table for "
-               "the script."),
-      cl::cat(category));
-
-  if (auto e = sv::parseCategory(category, argc, argv); e) return std::move(*e);
-
-  return sv::script::Options{.roots = roots | to_vector(),
-                             .defs = defs.getValue(),
-                             .noBuffer = noBuffer.getValue(),
-                             .maxThreads = maxThreads,
-                             .args = args | to_vector()};
-}
 
 int sv::script::main(int argc, const char **argv) {
-  return sv::parseAndRun(argc, argv, &parseOpts, &run);
+  cxxopts::Options options(Name, Description);
+  options.add_options() //
+      ("defs",
+       "Emit Teal type (*.d.tl) declarations to standard output for Teal script development."
+       "This option supersedes any other argument or user script.",
+       cxxopts::value<bool>()->default_value("false")) //
+      ("nobuffer", "Disable buffering to C++'s stdout for print.",
+       cxxopts::value<bool>()->default_value("true")) //
+      ("j,threads",
+       "Global number of jobs to run in parallel, defaults to total number of threads.",
+       cxxopts::value<int>()->default_value(std::to_string(std::thread::hardware_concurrency()))) //
+      ("roots", "Additional search paths in CSV format for Lua's requires function.",
+       cxxopts::value<std::vector<std::string>>()) //
+      ("scripts",
+       "The path to the Lua user script followed by arguments passed to the arg table for "
+       "the script.",
+       cxxopts::value<std::vector<std::string>>());
+
+  options.parse_positional({"scripts"});
+  auto result = options.parse(argc, argv);
+  if (result.count("help")) {
+    SV_COUT << options.help() << std::endl;
+    return EXIT_SUCCESS;
+  } else
+    return run(Options{.roots = result["roots"].as<std::vector<std::string>>(),
+                       .defs = result["defs"].as<bool>(),
+                       .noBuffer = result["nobuffer"].as<bool>(),
+                       .maxThreads = result["threads"].as<int>(),
+                       .args = result["scripts"].as<std::vector<std::string>>()});
 }
 
 constexpr sv::lua::TypeList<       //
@@ -68,7 +56,7 @@ constexpr sv::lua::TypeList<       //
     sv::Source,                    //
     sv::Unit,                      //
     sv::Codebase,                  //
-    sv::PerFileCoverage,        //
+    sv::PerFileCoverage,           //
     sv::PerFileCoverage::Instance, //
     sv::Database,                  //
     sv::Diff,                      //

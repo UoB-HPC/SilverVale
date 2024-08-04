@@ -25,6 +25,7 @@ message(STATUS "Using ClangConfig.cmake in: ${Clang_DIR}")
 include(${LLVM_DIR}/AddLLVM.cmake)
 include(${Clang_DIR}/AddClang.cmake)
 
+CPMAddPackage("gh:jarro2783/cxxopts@3.2.0")
 CPMAddPackage("gh:madler/zlib@1.3.1")
 CPMAddPackage("gh:nlohmann/json@3.11.3")
 CPMAddPackage("gh:fmtlib/fmt#11.0.1")
@@ -178,6 +179,7 @@ target_link_libraries(SilverVale
         fmt::fmt
         xxHash::xxhash
         zlibstatic
+        cxxopts
 
         PUBLIC
         tree-sitter

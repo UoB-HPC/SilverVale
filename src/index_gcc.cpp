@@ -12,17 +12,11 @@
 #include "fmt/core.h"
 #include "xxh3.h"
 
-#include "clang/Tooling/CompilationDatabase.h"
-#include "llvm/Support/FileSystem.h"
-#include "llvm/Support/Program.h"
-
 #include "aspartame/string.hpp"
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
 
-using namespace std::string_literals;
 using namespace aspartame;
-using namespace llvm;
 
 bool sv::detectGccAndIndex(bool verbose,
                            const sv::CompilationDatabase::Entry &cmd, //

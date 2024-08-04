@@ -6,7 +6,17 @@
 
 namespace sv::index {
 
+constexpr const char *Name = "index";
+constexpr const char *Description = "Build SV database from compile_commands.json";
+
 enum class CoverageKind : uint8_t { AutoDetect, ClangSBCC, GCov };
+
+static std::optional<CoverageKind> parseCoverageKind(const std::string_view &kind) {
+  if (kind == "auto") return CoverageKind::AutoDetect;
+  if (kind == "gcov") return CoverageKind::GCov;
+  if (kind == "sbcc") return CoverageKind::ClangSBCC;
+  return std::nullopt;
+}
 
 struct Options {
   std::filesystem::path buildDir;

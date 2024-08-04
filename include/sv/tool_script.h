@@ -5,6 +5,9 @@
 
 namespace sv::script {
 
+constexpr const char *Name = "script";
+constexpr const char *Description = "Execute Lua scripts with SV objects in scope";
+
 struct Options {
   std::vector<std::string> roots;
   bool defs;

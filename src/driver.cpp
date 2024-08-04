@@ -1,5 +1,4 @@
 #include <iostream>
-#include <unistd.h>
 
 #include "aspartame/map.hpp"
 #include "aspartame/optional.hpp"
@@ -15,14 +14,7 @@
 
 using namespace aspartame;
 
-enum class Kind : uint8_t { Build = 1, Inspect, Script, Delta };
-
-std::map<std::string, std::pair<Kind, std::string>> table = {
-    {"index", {Kind::Build, "Build SV database from compile_commands.json"}},
-    {"inspect", {Kind::Inspect, "List entries in an SV database"}},
-    {"script", {Kind::Script, "Execute Lua scripts against a loaded database"}},
-    {"delta", {Kind::Delta, "Compare two or more SV databases"}},
-};
+enum class Kind : uint8_t { Index = 1, Dump, Script, Delta };
 
 static bool hasEnv(const std::string &name) {
   if (auto valueCStr = std::getenv(name.c_str()); !valueCStr) return false;
@@ -62,6 +54,13 @@ int wrapper(const std::vector<const char *> &args) {
 
 int main(int argc, const char **argv) {
   std::vector<const char *> args(argv, argv + argc);
+
+  static std::map<std::string, std::pair<Kind, std::string>> table = {
+      {sv::index::Name, {Kind::Index, sv::index::Description}},
+      {sv::dump::Name, {Kind::Dump, sv::dump::Description}},
+      {sv::script::Name, {Kind::Script, sv::script::Description}},
+      {sv::delta::Name, {Kind::Delta, sv::delta::Description}},
+  };
 
   auto rightW = 12;
   auto printHelp = [&]() {
@@ -103,8 +102,8 @@ int main(int argc, const char **argv) {
                              | keys()                                      //
                              | to_vector();
                switch (kind) {
-                 case Kind::Build: return sv::index::main(sliced.size(), sliced.data());
-                 case Kind::Inspect: return sv::inspect::main(sliced.size(), sliced.data());
+                 case Kind::Index: return sv::index::main(sliced.size(), sliced.data());
+                 case Kind::Dump: return sv::dump::main(sliced.size(), sliced.data());
                  case Kind::Script: return sv::script::main(sliced.size(), sliced.data());
                  case Kind::Delta: return sv::delta::main(sliced.size(), sliced.data());
                }

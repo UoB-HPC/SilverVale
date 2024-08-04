@@ -1,27 +1,23 @@
 #include <iostream>
 
-#include "aspartame/vector.hpp"
 #include "sv/cli.h"
 #include "sv/model.h"
 #include "sv/tool_dump.h"
 
+#include "aspartame/vector.hpp"
+#include "cxxopts.hpp"
+
 using namespace aspartame;
-using namespace clang;
-using namespace llvm;
-
-static Expected<sv::dump::Options> parseOpts(int argc, const char **argv) {
-  static cl::OptionCategory category("List options");
-
-  static cl::opt<std::string> dbPath(
-      "db", cl::desc("The path to the database, as generated using the build command"),
-      cl::Required, cl::cat(category));
-
-  if (auto e = sv::parseCategory(category, argc, argv); e) return std::move(*e);
-  return sv::dump::Options{dbPath.getValue()};
-}
 
 int sv::dump::main(int argc, const char **argv) {
-  return parseAndRun(argc, argv, &parseOpts, &run);
+  cxxopts::Options options(Name, Description);
+  options.add_options()("db", "The path to the database, as generated using the index command",
+                        cxxopts::value<std::string>());
+  auto result = options.parse(argc, argv);
+  if (result.count("help")) {
+    SV_COUT << options.help() << std::endl;
+    return EXIT_SUCCESS;
+  } else return sv::dump::run(sv::dump::Options{result["db"].as<std::string>()});
 }
 
 int sv::dump::run(const Options &options) {

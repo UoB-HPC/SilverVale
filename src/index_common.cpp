@@ -12,7 +12,6 @@
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
 
-using namespace llvm;
 using namespace aspartame;
 
 std::optional<std::pair<std::filesystem::path, std::string>>

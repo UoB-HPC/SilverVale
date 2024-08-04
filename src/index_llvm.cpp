@@ -8,18 +8,14 @@
 #include "sv/glob.h"
 #include "sv/index_common.h"
 #include "sv/index_llvm.h"
-#include "sv/model.h"
 #include "sv/par.h"
 
 #include "fmt/core.h"
-#include "fmt/std.h"
 #include "xxh3.h"
 
 #include "clang/Driver/OffloadBundler.h"
-#include "clang/Tooling/CompilationDatabase.h"
 #include "llvm/BinaryFormat/Magic.h"
 #include "llvm/Object/OffloadBinary.h"
-#include "llvm/Support/Program.h"
 
 #include "aspartame/string.hpp"
 #include "aspartame/vector.hpp"

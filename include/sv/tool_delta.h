@@ -6,6 +6,9 @@
 
 namespace sv::delta {
 
+constexpr const char *Name = "delta";
+constexpr const char *Description = "Compare two or more SV databases";
+
 enum class Kind : uint8_t {
 
   SrcLenAbs,

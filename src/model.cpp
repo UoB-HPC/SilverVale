@@ -35,8 +35,6 @@
 #include "aspartame/view.hpp"
 
 using namespace aspartame;
-using namespace clang;
-
 using namespace sv;
 
 class ClangContext {
@@ -63,7 +61,7 @@ class ClangContext {
 
           auto module = llvm::parseBitcodeFile(buffer.get()->getMemBufferRef(), llvmContext);
           if (auto e = module.takeError()) {
-            SV_WARNF("Cannot parse BC file {}: ", bcFile, toString(std::move(e)));
+            SV_WARNF("Cannot parse BC file {}: ", bcFile, llvm::toString(std::move(e)));
             return {};
           }
 
@@ -71,10 +69,11 @@ class ClangContext {
         }) |
         and_then([](auto &xs) { return std::map{xs.begin(), xs.end()}; });
 
-    IntrusiveRefCntPtr<DiagnosticOptions> opts = new DiagnosticOptions();
-    auto diagnostics = CompilerInstance::createDiagnostics(opts.get());
+    llvm::IntrusiveRefCntPtr<clang::DiagnosticOptions> opts = new clang::DiagnosticOptions();
+    auto diagnostics = clang::CompilerInstance::createDiagnostics(opts.get());
 
-    IntrusiveRefCntPtr<llvm::vfs::InMemoryFileSystem> vfs = new llvm::vfs::InMemoryFileSystem();
+    llvm::IntrusiveRefCntPtr<llvm::vfs::InMemoryFileSystem> vfs =
+        new llvm::vfs::InMemoryFileSystem();
 
     auto pchFile = baseDir / tu.pchFile;
 
@@ -92,16 +91,16 @@ class ClangContext {
     }
 
     auto opt = std::make_shared<clang::HeaderSearchOptions>();
-    auto ast = ASTUnit::LoadFromASTFile(pchFile,                          //
-                                        clang::RawPCHContainerReader(),   //
-                                        ASTUnit::WhatToLoad::LoadASTOnly, //
-                                        diagnostics,                      //
+    auto ast = clang::ASTUnit::LoadFromASTFile(pchFile,                                 //
+                                               clang::RawPCHContainerReader(),   //
+                                               clang::ASTUnit::WhatToLoad::LoadASTOnly, //
+                                               diagnostics,                      //
                                         clang::FileSystemOptions(""),     //
                                         opt, false,
 #if LLVM_VERSION_MAJOR < 18
                                         true,
 #endif
-                                        CaptureDiagsKind::None, true, true, vfs);
+                                               clang::CaptureDiagsKind::None, true, true, vfs);
 
     return {std::move(ast), modules};
   }
