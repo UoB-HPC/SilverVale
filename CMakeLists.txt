@@ -157,7 +157,7 @@ add_library(SilverVale STATIC
         src/tool_script.cpp
         src/tool_delta.cpp
         src/tool_index.cpp
-        src/tool_inspect.cpp
+        src/tool_dump.cpp
         src/diff.cpp
         src/cli.cpp
         src/model.cpp

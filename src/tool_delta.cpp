@@ -293,7 +293,7 @@ Expected<delta::Options> parseOpts(int argc, const char **argv) {
                         char delim) -> std::optional<std::pair<std::string, std::string>> {
     auto pair = in ^ split(delim);
     if (pair.size() == 2) return std::pair{pair[0], pair[1]};
-    AGV_WARNF("Ignoring malformed pair pattern with delimiter ({}): `{}`", delim, in);
+    SV_WARNF("Ignoring malformed pair pattern with delimiter ({}): `{}`", delim, in);
     return std::nullopt;
   };
 
@@ -322,8 +322,8 @@ Expected<delta::Options> parseOpts(int argc, const char **argv) {
                    if (k && m) return TaskDesc{*k, *m};
                  }
 
-                 AGV_WARNF("Ignoring malformed kind: {} (parsed as [{}])", spec,
-                           parts ^ mk_string(","));
+                 SV_WARNF("Ignoring malformed kind: {} (parsed as [{}])", spec,
+                          parts ^ mk_string(","));
                  return std::nullopt;
                }) //
                | to_vector(),
@@ -351,7 +351,7 @@ int delta::run(const delta::Options &options) {
                                    options.maxThreads);
 
   if (options.databases.empty()) {
-    AGV_ERRF("At least 1 database required for comparison");
+    SV_ERRF("At least 1 database required for comparison");
     return EXIT_FAILURE;
   }
 
@@ -363,7 +363,7 @@ int delta::run(const delta::Options &options) {
   //                      mk_string(", ", [](auto &l, auto &r) { return l + " -> " + r; })))
   //           << std::endl;
 
-  AGV_COUT << "# Loading " << options.databases.size() << " models ..." << std::endl;
+  SV_COUT << "# Loading " << options.databases.size() << " models ..." << std::endl;
 
   struct Model {
     std::string path;
@@ -376,48 +376,6 @@ int delta::run(const delta::Options &options) {
     const Codebase cb = Codebase::load(db, std::cout, true, {}, [&](auto &path) {
       return excludes ^ forall([&](auto &r) { return !std::regex_match(path, r); });
     });
-
-    std::cout << "> " << cb.root << std::endl;
-    auto root = std::filesystem::current_path() /
-                fmt::format("debug_{}", std::filesystem::path(cb.root).filename());
-    std::filesystem::create_directories(root);
-
-    {
-      std::ofstream out(root / "cov.all.txt");
-      auto xss = (cb.coverage->entries | to_vector())                                            //
-                 ^ map([](auto &p, auto count) { return std::tuple{p.first, p.second, count}; }) //
-                 ^ sort();
-      for (auto &[name, line, count] : xss)
-        out << name << ":" << line << "=" << count << "\n";
-    }
-    for (auto &u : cb.units) {
-      auto path = std::filesystem::path(u->name());
-      auto stem = path.stem(), ext = path.extension();
-      {
-        std::ofstream out(root / fmt::format("{}.raw{}", stem, ext));
-        out << u->sourceAsWritten().contentWhitespaceNormalised();
-      }
-      {
-        std::ofstream out(root / fmt::format("{}.cpp{}", stem, ext));
-        out << u->sourcePreprocessed().contentWhitespaceNormalised();
-      }
-      {
-        std::ofstream out(root / fmt::format("{}.cov{}", stem, ext));
-        out << u->sourceWithCoverage().contentWhitespaceNormalised();
-      }
-      {
-        std::ofstream out(root / fmt::format("{}.raw.txt", stem));
-        out << u->sourceAsWritten().tsTree().prettyPrint();
-      }
-      {
-        std::ofstream out(root / fmt::format("{}.cpp.txt", stem));
-        out << u->sourcePreprocessed().tsTree().prettyPrint();
-      }
-      {
-        std::ofstream out(root / fmt::format("{}.cov.txt", stem));
-        out << u->sourceWithCoverage().tsTree().prettyPrint();
-      }
-    }
 
     const auto merges =
         options.merges ^ map([](auto &m) { return std::pair{globToRegex(m.glob), m.name}; });
@@ -446,7 +404,7 @@ int delta::run(const delta::Options &options) {
     return model;
   });
 
-  AGV_INFOF("All models loaded");
+  SV_INFOF("All models loaded");
 
   struct Key {
     delta::TaskDesc desc{};
@@ -480,7 +438,7 @@ int delta::run(const delta::Options &options) {
             });
           });
 
-    AGV_INFOF("Created {} tasks", deltaTasks.size());
+    SV_INFOF("Created {} tasks", deltaTasks.size());
 
     auto cost = [](auto &&xs) {
       return xs | fold_left(0, [](auto acc, auto &u) {
@@ -570,12 +528,12 @@ int delta::run(const delta::Options &options) {
     std::cout << "\n#max\n";
     auto m = tabulate(maxes, [](auto v) { return std::to_string(v.value_or(-1)); });
     for (auto row : m) {
-      AGV_COUT << (row ^ mk_string(", ")) << std::endl;
+      SV_COUT << (row ^ mk_string(", ")) << std::endl;
     }
     std::cout << "\n#delta\n";
     auto d = tabulate(diffs, [](auto v) { return std::to_string(v); });
     for (auto row : d) {
-      AGV_COUT << (row ^ mk_string(", ")) << std::endl;
+      SV_COUT << (row ^ mk_string(", ")) << std::endl;
     }
 
     // MEMORY

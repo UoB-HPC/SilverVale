@@ -221,14 +221,15 @@ public:
   [[nodiscard]] const Source &sourceAsWritten() const;
   [[nodiscard]] const Source &sourcePreprocessed() const;
   [[nodiscard]] const Source &sourceWithCoverage() const;
-  DEF_TEAL_SOL_UT(Unit,                             //
-                  SOL_UT_FN(Unit, path),            //
-                  SOL_UT_FN(Unit, name),            //
-                  SOL_UT_FN(Unit, sTree),           //
-                  SOL_UT_FN(Unit, sTreeInlined),    //
-                  SOL_UT_FN(Unit, irTree),          //
-                  SOL_UT_FN(Unit, sourceAsWritten), //
-                  SOL_UT_FN(Unit, sourcePreprocessed));
+  DEF_TEAL_SOL_UT(Unit,                                //
+                  SOL_UT_FN(Unit, path),               //
+                  SOL_UT_FN(Unit, name),               //
+                  SOL_UT_FN(Unit, sTree),              //
+                  SOL_UT_FN(Unit, sTreeInlined),       //
+                  SOL_UT_FN(Unit, irTree),             //
+                  SOL_UT_FN(Unit, sourceAsWritten),    //
+                  SOL_UT_FN(Unit, sourcePreprocessed), //
+                  SOL_UT_FN(Unit, sourceWithCoverage));
   friend std::ostream &operator<<(std::ostream &os, const Unit &unit);
 };
 

@@ -57,13 +57,13 @@ class ClangContext {
           auto bcFile = baseDir / entry.file;
           auto buffer = llvm::MemoryBuffer::getFile(bcFile.string());
           if (auto ec = buffer.getError()) {
-            AGV_WARNF("Cannot load BC file  {}: ", bcFile, ec);
+            SV_WARNF("Cannot load BC file  {}: ", bcFile, ec);
             return {};
           }
 
           auto module = llvm::parseBitcodeFile(buffer.get()->getMemBufferRef(), llvmContext);
           if (auto e = module.takeError()) {
-            AGV_WARNF("Cannot parse BC file {}: ", bcFile, toString(std::move(e)));
+            SV_WARNF("Cannot parse BC file {}: ", bcFile, toString(std::move(e)));
             return {};
           }
 
@@ -80,7 +80,7 @@ class ClangContext {
 
     auto pchData = utils::zStdDecompress(pchFile);
     if (!pchData) {
-      AGV_WARNF("Cannot read PCH data: {}", pchFile);
+      SV_WARNF("Cannot read PCH data: {}", pchFile);
       return {nullptr, modules};
     }
     auto &backing = storage.emplace_back(*pchData);
@@ -400,16 +400,16 @@ Database Codebase::loadDB(const std::string &root) {
               e.get_to(*p);
               entries.emplace_back(p);
             } else {
-              AGV_WARNF("Unknown entry kind {} from {}", kind, path);
+              SV_WARNF("Unknown entry kind {} from {}", kind, path);
             }
-          } catch (const std::exception &e) { AGV_WARNF("Cannot load entry {}: {}", path, e); }
+          } catch (const std::exception &e) { SV_WARNF("Cannot load entry {}: {}", path, e); }
         }
       }
     }
-  } catch (const std::exception &e) { AGV_WARNF("Cannot list directory {}: {}", root, e); }
+  } catch (const std::exception &e) { SV_WARNF("Cannot list directory {}: {}", root, e); }
 
-  AGV_INFOF("Loaded DB {} with {} entries and {} coverage entries", root, entries.size(),
-            coverage->filenames.size());
+  SV_INFOF("Loaded DB {} with {} entries and {} coverage entries", root, entries.size(),
+           coverage->filenames.size());
 
   return {root, entries, coverage};
 }
@@ -430,7 +430,7 @@ Codebase Codebase::load(const Database &db,                    //
     else if (language == "julia") return tree_sitter_julia();
     else if (language == "rust") return tree_sitter_rust();
     else {
-      AGV_WARNF("Language {} is not supported by any included tree sitter parsers", language);
+      SV_WARNF("Language {} is not supported by any included tree sitter parsers", language);
       return nullptr;
     }
   };
@@ -478,7 +478,7 @@ Codebase Codebase::load(const Database &db,                    //
         try {
           auto unitCtx = clangCtx.units ^ get(x->file);
           if (!unitCtx) {
-            AGV_WARNF("Failed to load entry {}: cannot find context", x->file);
+            SV_WARNF("Failed to load entry {}: cannot find context", x->file);
             return {};
           };
           auto &[ast, modules] = *unitCtx;
@@ -502,15 +502,15 @@ Codebase Codebase::load(const Database &db,                    //
             else if (o.CPlusPlus) language = "cpp";
             else if (o.C99 || o.C11 || o.C17 || o.C2x) language = "c";
             else
-              AGV_WARNF("Cannot determine precise language from PCH for {}, using driver-based "
-                        "language: {}",
+              SV_WARNF("Cannot determine precise language from PCH for {}, using driver-based "
+                       "language: {}",
                         x->file, language);
 
             if (auto data = sm.getBufferDataOrNone(sm.getMainFileID()); data)
               sourceRoot = TsTree(x->file, data->str(), createTsParser(language));
             else
-              AGV_WARNF("Failed to load original source for entry {}, main file ID missing",
-                        x->file);
+              SV_WARNF("Failed to load original source for entry {}, main file ID missing",
+                       x->file);
 
             for (clang::Decl *decl :
                  topLevelDeclsInMainFile(*ast) ^ sort_by([&](clang::Decl *decl) {
@@ -538,7 +538,7 @@ Codebase Codebase::load(const Database &db,                    //
               }));
             }
           } else {
-            AGV_WARNF("Failed to load AST for entry {}", x->file);
+            SV_WARNF("Failed to load AST for entry {}", x->file);
             auto source = findSourceInDeps(x->dependencies, x->file);
             sourceRoot = TsTree(x->file, source.value_or(""), createTsParser(x->language));
           }
@@ -550,7 +550,7 @@ Codebase Codebase::load(const Database &db,                    //
           out << "# Loaded " << std::left << std::setw(maxFileLen) << x->file << "\r";
           return unit;
         } catch (const std::exception &e) {
-          AGV_WARNF("Failed to load entry {}: {}", x->file, e);
+          SV_WARNF("Failed to load entry {}: {}", x->file, e);
           return {};
         }
       });
@@ -582,7 +582,7 @@ Codebase Codebase::load(const Database &db,                    //
       out << "# Loaded " << std::left << std::setw(maxFileLen) << x->file << "\r";
       return unit;
     } catch (const std::exception &e) {
-      AGV_WARNF("Failed to load entry {}: {}", x->file, e);
+      SV_WARNF("Failed to load entry {}: {}", x->file, e);
       return {};
     }
   });

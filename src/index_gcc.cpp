@@ -78,10 +78,10 @@ bool sv::detectGccAndIndex(bool verbose,
 
   sv::par_for(std::vector{treeArgs, iiArgs}, [&](auto args, auto) {
     auto line = args | prepend(envLine) | mk_string(" ");
-    if (verbose) AGV_COUT << line << std::endl;
+    if (verbose) SV_COUT << line << std::endl;
     if (auto code = sv::exec(line, std::cout); code) {
-      if (*code != 0) AGV_WARNF("non-zero return for `{}`", line);
-    } else AGV_WARNF("popen failed for `{}`: ", line);
+      if (*code != 0) SV_WARNF("non-zero return for `{}`", line);
+    } else SV_WARNF("popen failed for `{}`: ", line);
   });
 
   // For GCC, we only support Fortran and C/C++, which uses a different driver
@@ -90,8 +90,8 @@ bool sv::detectGccAndIndex(bool verbose,
   else if (driver == "g++") language = "cpp";
   else if (driver == "gfortran") language = "fortran";
   else {
-    AGV_WARNF("cannot determine language from driver ({}) for command: {}", driver,
-              cmd.command ^ mk_string(" "));
+    SV_WARNF("cannot determine language from driver ({}) for command: {}", driver,
+             cmd.command ^ mk_string(" "));
     language = fmt::format("unknown ({})", driver);
   }
 

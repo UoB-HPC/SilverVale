@@ -10,17 +10,17 @@
 
 #ifdef __cpp_lib_syncbuf
   #include <syncstream>
-  #define AGV_COUT std::osyncstream(std::cout)
-  #define AGV_CERR std::osyncstream(std::cerr)
+  #define SV_COUT std::osyncstream(std::cout)
+  #define SV_CERR std::osyncstream(std::cerr)
 #else
   #include <iostream>
-  #define AGV_COUT std::cout
-  #define AGV_CERR std::cerr
+  #define SV_COUT std::cout
+  #define SV_CERR std::cerr
 #endif
 
-#define AGV_WARNF(...) (AGV_CERR << fmt::format("# Warning: " __VA_ARGS__) << std::endl)
-#define AGV_INFOF(...) (AGV_COUT << fmt::format("# " __VA_ARGS__) << std::endl)
-#define AGV_ERRF(...) (AGV_CERR << fmt::format(__VA_ARGS__) << std::endl)
+#define SV_WARNF(...) (SV_CERR << fmt::format("# Warning: " __VA_ARGS__) << std::endl)
+#define SV_INFOF(...) (SV_COUT << fmt::format("# " __VA_ARGS__) << std::endl)
+#define SV_ERRF(...) (SV_CERR << fmt::format(__VA_ARGS__) << std::endl)
 
 namespace sv {
 
@@ -31,7 +31,7 @@ template <typename P, typename F>
 static int parseAndRun(int argc, const char **argv, P parse, F run) {
   auto maybeOptions = parse(argc, argv);
   if (auto x = maybeOptions.takeError()) {
-    AGV_CERR << toString(std::move(x));
+    SV_CERR << toString(std::move(x));
     return EXIT_FAILURE;
   }
   return run(maybeOptions.get());

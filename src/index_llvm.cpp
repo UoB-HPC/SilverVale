@@ -97,23 +97,23 @@ static std::vector<sv::LLVMBitcode> collectBitcodeFiles(bool verbose, const std:
                     const std::filesystem::path &src, const std::filesystem::path &dest) {
     auto e = std::error_code{};
     if (!std::filesystem::copy_file(src, dest) || e)
-      AGV_WARNF("failed to copy BC {} to {}: {}", src, dest, e.message());
+      SV_WARNF("failed to copy BC {} to {}: {}", src, dest, e.message());
     else {
       auto buffer = MemoryBuffer::getFile(src.string());
       if (!buffer) {
-        AGV_WARNF("error reading BC {}: {}", src, buffer.getError().message());
+        SV_WARNF("error reading BC {}: {}", src, buffer.getError().message());
         return;
       }
       auto bufferRef = buffer->get()->getMemBufferRef();
       if (auto magic = identify_magic(bufferRef.getBuffer()); magic != file_magic::bitcode) {
-        AGV_WARNF("file {} is not a BC file (llvm::file_magic index={})", src,
-                  static_cast<std::underlying_type_t<file_magic::Impl>>(magic));
+        SV_WARNF("file {} is not a BC file (llvm::file_magic index={})", src,
+                 static_cast<std::underlying_type_t<file_magic::Impl>>(magic));
         return;
       }
 
       SmallVector<object::OffloadFile> binaries;
       if (auto _ = object::extractOffloadBinaries(bufferRef, binaries)) {
-        AGV_WARNF("error reading embedded offload binaries for {}", src);
+        SV_WARNF("error reading embedded offload binaries for {}", src);
       }
       binaries | filter([](auto &f) {
         return f.getBinary()->getImageKind() == object::ImageKind::IMG_Bitcode;
@@ -122,13 +122,13 @@ static std::vector<sv::LLVMBitcode> collectBitcodeFiles(bool verbose, const std:
         auto triple = f.getBinary()->getTriple().str();
         auto embeddedName = fmt::format("{}.{}-{}-{}.bc", prefix, name, kind, triple);
         if (verbose)
-          AGV_INFOF("adding embedded BC {} (kind={}, triple={})", embeddedName, kind, triple);
+          SV_INFOF("adding embedded BC {} (kind={}, triple={})", embeddedName, kind, triple);
         std::error_code embeddedEC;
         llvm::raw_fd_ostream file((dest.parent_path() / embeddedName).string(), embeddedEC);
         file << f.getBinary()->getImage();
         if (embeddedEC) {
-          AGV_WARNF("failed to write embedded offload binary {}: {}", embeddedName,
-                    embeddedEC.message());
+          SV_WARNF("failed to write embedded offload binary {}: {}", embeddedName,
+                   embeddedEC.message());
         } else codes.emplace_back(embeddedName, kind, triple);
       });
 
@@ -137,7 +137,7 @@ static std::vector<sv::LLVMBitcode> collectBitcodeFiles(bool verbose, const std:
       auto [_, kind, triple] = std::regex_match(destName, match, pattern)
                                    ? codes.emplace_back(destName, match[1].str(), match[2].str())
                                    : codes.emplace_back(destName, "host", "");
-      if (verbose) AGV_INFOF("adding BC: {} (kind={}, triple={})", destName, kind, triple);
+      if (verbose) SV_INFOF("adding BC: {} (kind={}, triple={})", destName, kind, triple);
     }
   };
 
@@ -150,7 +150,7 @@ static std::vector<sv::LLVMBitcode> collectBitcodeFiles(bool verbose, const std:
       }
     }
   } catch (const std::exception &e) {
-    AGV_WARNF("failed to traverse working directory {} for BC files:{} ", wd, e);
+    SV_WARNF("failed to traverse working directory {} for BC files:{} ", wd, e);
   }
 
   // then handle the host BC itself
@@ -168,7 +168,7 @@ static std::vector<sv::LLVMBitcode> collectBitcodeFiles(bool verbose, const std:
     auto bundle = ClangOffloadBundle::parse(hostBCFile);
     if (bundle) {
       if (auto e = bundle->takeError())
-        AGV_WARNF("cannot list offload bundles for {}: {}", hostBCFile, toString(std::move(e)));
+        SV_WARNF("cannot list offload bundles for {}: {}", hostBCFile, toString(std::move(e)));
       else targets = bundle->get().entries ^ map([](auto x) { return x.id; });
     }
     auto extracted = targets ^ collect([&](auto &target) -> std::optional<std::string> {
@@ -180,25 +180,25 @@ static std::vector<sv::LLVMBitcode> collectBitcodeFiles(bool verbose, const std:
                        config.OutputFileNames = {targetBCFile};
                        config.TargetNames = {target};
                        if (auto e = clang::OffloadBundler(config).UnbundleFiles()) {
-                         AGV_WARNF("cannot extract target {} from {}", target, hostBCFile);
+                         SV_WARNF("cannot extract target {} from {}", target, hostBCFile);
                          return std::nullopt;
                        }
                        if (verbose)
-                         AGV_INFOF("extracted {} from offload bundle {}", targetBCFile, hostBCFile);
+                         SV_INFOF("extracted {} from offload bundle {}", targetBCFile, hostBCFile);
                        return {targetBCFile};
                      });
     auto hostBCDest = dest / fmt::format("{}.{}.bc", prefix, name);
     if (targets.empty()) saveBC(hostBCFile, hostBCDest); // not an offload bundle, copy the host BC
     else {
       if (extracted.size() != targets.size()) {
-        AGV_WARNF(
+        SV_WARNF(
             "not all BC extracted, got [{}] targets but extracted only [{}], retaining all BCs",
             targets | mk_string(","), extracted | mk_string(","));
         saveBC(hostBCFile, hostBCDest);
       }
       for (auto &file : extracted) { // copy the extracted targets then delete
         saveBC(file, dest / file);
-        if (!std::filesystem::remove(file)) AGV_WARNF("cannot remove extracted temporary {}", file);
+        if (!std::filesystem::remove(file)) SV_WARNF("cannot remove extracted temporary {}", file);
       }
     }
   }
@@ -250,10 +250,10 @@ bool sv::detectClangAndIndex(bool verbose,
 
   sv::par_for(std::vector{bcArgs, pchArgs, iiArgs}, [&](auto args, auto) {
     auto line = args ^ mk_string(" ");
-    if (verbose) AGV_COUT << line << std::endl;
+    if (verbose) SV_COUT << line << std::endl;
     if (auto code = sv::exec(line, std::cout); code) {
-      if (*code != 0) AGV_WARNF("non-zero return for `{}`", line);
-    } else AGV_WARNF("popen failed for `{}`: ", line);
+      if (*code != 0) SV_WARNF("non-zero return for `{}`", line);
+    } else SV_WARNF("popen failed for `{}`: ", line);
   });
 
   // For Clang, we set an initial language guess determined by the driver, then select the correct
@@ -262,8 +262,8 @@ bool sv::detectClangAndIndex(bool verbose,
   if (auto driver = std::filesystem::path(program).filename(); driver == "clang") language = "c";
   else if (driver == "clang++") language = "cpp";
   else {
-    AGV_WARNF("cannot determine language from driver ({}) for command: {}", driver,
-              cmd.command ^ mk_string(" "));
+    SV_WARNF("cannot determine language from driver ({}) for command: {}", driver,
+             cmd.command ^ mk_string(" "));
     language = fmt::format("unknown ({})", driver);
   }
 
@@ -282,11 +282,11 @@ bool sv::detectClangAndIndex(bool verbose,
     std::error_code zstdError;
     auto pchStream = sv::utils::zstd_ostream(pchDest, zstdError, 6);
     if (zstdError)
-      AGV_WARNF("cannot open compressed stream for PHC {}: {}", pchDest, zstdError.message());
+      SV_WARNF("cannot open compressed stream for PHC {}: {}", pchDest, zstdError.message());
     else {
       auto buffer = MemoryBuffer::getFile((wd / pchName).string());
       if (auto bufferError = buffer.getError())
-        AGV_WARNF("cannot open PCH {}: {}", (wd / pchName), bufferError.message());
+        SV_WARNF("cannot open PCH {}: {}", (wd / pchName), bufferError.message());
       else {
         auto ptr = std::move(buffer.get());
         (pchStream << ptr->getBuffer()).flush();

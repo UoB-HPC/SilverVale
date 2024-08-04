@@ -9,8 +9,8 @@
 
 #include "sv/cli.h"
 #include "sv/tool_delta.h"
+#include "sv/tool_dump.h"
 #include "sv/tool_index.h"
-#include "sv/tool_inspect.h"
 #include "sv/tool_script.h"
 
 using namespace aspartame;
@@ -54,7 +54,7 @@ int wrapper(const std::vector<const char *> &args) {
   //    args.push_back(argv[i]);
   //  args.push_back(nullptr);
   //  execvp(args[0], args.data());
-  AGV_INFOF("{}", args ^ mk_string(" "));
+  SV_INFOF("{}", args ^ mk_string(" "));
 
   //  std::cerr << "execvp failed: " << strerror(errno) << std::endl;
   return EXIT_FAILURE;

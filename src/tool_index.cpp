@@ -47,7 +47,7 @@ static int clearAndCreateDir(bool clear, const std::filesystem::path &outDir) {
     }
     return EXIT_SUCCESS;
   } catch (const std::exception &e) {
-    AGV_ERRF("Cannot determine output directory ({}) state: {}", outDir, e);
+    SV_ERRF("Cannot determine output directory ({}) state: {}", outDir, e);
     return EXIT_FAILURE;
   }
 }
@@ -60,30 +60,30 @@ static void runCoverageTask(const std::filesystem::path &coverageBin,
   if (coverageBin.empty()) return;
   auto absCoverageBin = std::filesystem::absolute(coverageBin);
   if (absCoverageBin.empty()) {
-    AGV_INFOF("No coverage binary specified, no coverage data will be included");
+    SV_INFOF("No coverage binary specified, no coverage data will be included");
     if (!coverageRawDir.empty()) {
-      AGV_WARNF("Ignoring coverage directory {} as no binary was specified", coverageRawDir);
+      SV_WARNF("Ignoring coverage directory {} as no binary was specified", coverageRawDir);
     }
     return;
   }
 
   if (!std::filesystem::is_regular_file(absCoverageBin)) {
-    AGV_WARNF("Coverage binary {} not found or is not a file", absCoverageBin);
+    SV_WARNF("Coverage binary {} not found or is not a file", absCoverageBin);
     return;
   }
 
   const auto exec = [&](const std::string &args, std::ostream &out) {
-    if (verbose) AGV_INFOF("{}", args);
+    if (verbose) SV_INFOF("{}", args);
     //    std::stringstream buffer;
     if (auto code = sv::exec(args, out); code) {
-      if (*code != 0) AGV_WARNF("non-zero return for `{}`", args);
-    } else AGV_WARNF("popen failed for `{}`: ", args);
+      if (*code != 0) SV_WARNF("non-zero return for `{}`", args);
+    } else SV_WARNF("popen failed for `{}`: ", args);
     //    return buffer.str();
   };
 
   const auto clangSBCC = [&](auto &profrawFiles) {
     for (auto &p : profrawFiles)
-      AGV_INFOF("adding Clang SBCC coverage data: {}", p);
+      SV_INFOF("adding Clang SBCC coverage data: {}", p);
 
     auto profdataFile = std::filesystem::absolute(outDir / "default.profdata");
     exec(fmt::format("llvm-profdata merge -sparse {} -o {}", profrawFiles ^ mk_string(" "),
@@ -96,26 +96,26 @@ static void runCoverageTask(const std::filesystem::path &coverageBin,
       exec(fmt::format("llvm-cov export {} -instr-profile={}", absCoverageBin, profdataFile),
            stream);
     }
-    AGV_INFOF("exported Clang SBCC coverage: {}", output);
+    SV_INFOF("exported Clang SBCC coverage: {}", output);
   };
 
   const auto gcov = [&](auto gcovFiles) {
     std::error_code wdEC;
     auto currentPath = std::filesystem::current_path(wdEC);
     if (wdEC) {
-      AGV_ERRF("Cannot get current working directory ({}), gcov cannot proceed", wdEC);
+      SV_ERRF("Cannot get current working directory ({}), gcov cannot proceed", wdEC);
       return;
     }
 
     for (auto &gcovFile : gcovFiles) {
-      AGV_INFOF("adding GCC GCov coverage data: {}", gcovFile);
+      SV_INFOF("adding GCC GCov coverage data: {}", gcovFile);
 
       auto gcovWd = gcovFile.parent_path();
       try {
         std::filesystem::current_path(gcovWd);
       } catch (const std::exception &e) {
-        AGV_WARNF("Cannot set current directory to {} for gcov file {}, skipping coverage...",
-                  gcovWd, gcovFile);
+        SV_WARNF("Cannot set current directory to {} for gcov file {}, skipping coverage...",
+                 gcovWd, gcovFile);
         return;
       }
 
@@ -124,8 +124,8 @@ static void runCoverageTask(const std::filesystem::path &coverageBin,
 
       if (gcovOutcome.str() ^ contains_slice("stamp mismatch with notes file")) {
         // this means the GCDA file didn't match up with GCNO and all coverage will be 0%
-        AGV_WARNF("stamp mismatch between gcov notes (*.gcda) and profile (*.gcda), please rerun "
-                  "binary, skipping coverage...");
+        SV_WARNF("stamp mismatch between gcov notes (*.gcda) and profile (*.gcda), please rerun "
+                 "binary, skipping coverage...");
         return;
       }
       std::cout <<gcovOutcome .str()<<std::endl;
@@ -136,12 +136,12 @@ static void runCoverageTask(const std::filesystem::path &coverageBin,
         auto gcovOutput = fmt::format("{}.gcov.json.gz", gcovFile.stem());
         gzFile gzFile = gzopen(gcovOutput.c_str(), "rb");
         if (!gzFile) {
-          AGV_WARNF("cannot open {} for decompression, did gcov succeed?", gcovOutput);
+          SV_WARNF("cannot open {} for decompression, did gcov succeed?", gcovOutput);
           return;
         }
         std::ofstream stream(output);
         if (!stream) {
-          AGV_WARNF("cannot open {} for writing", output);
+          SV_WARNF("cannot open {} for writing", output);
           gzclose(gzFile);
           return;
         }
@@ -153,20 +153,20 @@ static void runCoverageTask(const std::filesystem::path &coverageBin,
 
         gzclose(gzFile);
       }
-      AGV_INFOF("exported GCC GCov coverage: {}", output);
+      SV_INFOF("exported GCC GCov coverage: {}", output);
     }
 
     try {
       std::filesystem::current_path(currentPath);
     } catch (const std::exception &e) {
-      AGV_ERRF("Cannot restore current working directory to {}: {}", currentPath, e);
+      SV_ERRF("Cannot restore current working directory to {}: {}", currentPath, e);
       return;
     }
   };
 
   std::vector<std::filesystem::path> covFiles;
   auto collectCovFiles = [&](auto root) {
-    if (verbose) AGV_INFOF("searching for coverage data in {}", root);
+    if (verbose) SV_INFOF("searching for coverage data in {}", root);
     for (const auto &entry : std::filesystem::recursive_directory_iterator(root)) {
       covFiles.emplace_back(std::filesystem::absolute(entry.path()));
     }
@@ -180,15 +180,15 @@ static void runCoverageTask(const std::filesystem::path &coverageBin,
   auto gcovFiles = covFiles ^ filter([](auto &p) { return p.extension() == ".gcda"; });
 
   if (profRawFiles.empty() && gcovFiles.empty()) {
-    AGV_WARNF("not coverage data found");
+    SV_WARNF("not coverage data found");
     return;
   }
 
   switch (kind) {
     case sv::index::CoverageKind::AutoDetect:
       if (!profRawFiles.empty() && !gcovFiles.empty()) {
-        AGV_WARNF("Detected both Clang *.profraw and GCC *.gcda files [{},{}], please "
-                  "specify with format should be used, skipping coverage... ",
+        SV_WARNF("Detected both Clang *.profraw and GCC *.gcda files [{},{}], please "
+                 "specify with format should be used, skipping coverage... ",
                   profRawFiles ^ mk_string(","), gcovFiles ^ mk_string(","));
       }
       if (!profRawFiles.empty()) clangSBCC(profRawFiles);
@@ -207,14 +207,14 @@ static void runIndexTasks(const std::vector<sv::CompilationDatabase::Entry> &com
   std::error_code outEC;
   auto absOutDir = std::filesystem::absolute(outDir, outEC);
   if (outEC) {
-    AGV_ERRF("Cannot resolve absolute path for output dir {}: {}", outDir, outEC);
+    SV_ERRF("Cannot resolve absolute path for output dir {}: {}", outDir, outEC);
     return;
   }
 
   std::error_code wdEC;
   auto currentPath = std::filesystem::current_path(wdEC);
   if (wdEC) {
-    AGV_ERRF("Cannot get current working directory ({}), index cannot proceed", wdEC);
+    SV_ERRF("Cannot get current working directory ({}), index cannot proceed", wdEC);
     return;
   }
 
@@ -225,9 +225,9 @@ static void runIndexTasks(const std::vector<sv::CompilationDatabase::Entry> &com
     if (!std::filesystem::path(program).is_absolute() && !programLUT.contains(program)) {
       auto name = sys::findProgramByName(program);
       if (auto e = name.getError()) {
-        AGV_WARNF("cannot resolve program `{}`: {}", program, e.message());
+        SV_WARNF("cannot resolve program `{}`: {}", program, e.message());
       } else {
-        AGV_INFOF("program {} resolves to {}", program, *name);
+        SV_INFOF("program {} resolves to {}", program, *name);
         programLUT.emplace(program, *name);
       }
     }
@@ -241,30 +241,30 @@ static void runIndexTasks(const std::vector<sv::CompilationDatabase::Entry> &com
     try {
       std::filesystem::current_path(wd);
     } catch (const std::exception &e) {
-      AGV_WARNF("cannot change working directory for {} tasks: {}; skipping...", tasks.size(), e);
+      SV_WARNF("cannot change working directory for {} tasks: {}; skipping...", tasks.size(), e);
       continue;
     }
 
-    AGV_INFOF("cd {}", wd);
+    SV_INFOF("cd {}", wd);
     sv::par_for(tasks, [&](const sv::CompilationDatabase::Entry &cmd, auto) {
       if (cmd.command.empty()) {
-        AGV_WARNF("empty command line for file {}", cmd.file);
+        SV_WARNF("empty command line for file {}", cmd.file);
         return;
       }
       logger.log(cmd.file);
 
       if (!sv::detectClangAndIndex(verbose, cmd, wd, absOutDir, programLUT)) {
         if (!sv::detectGccAndIndex(verbose, cmd, wd, absOutDir, programLUT)) {
-          AGV_WARNF("unsupported compiler in command `{}`", cmd.command ^ mk_string(" "));
+          SV_WARNF("unsupported compiler in command `{}`", cmd.command ^ mk_string(" "));
         }
       }
     });
   }
-  AGV_COUT << std::endl;
+  SV_COUT << std::endl;
   try {
     std::filesystem::current_path(currentPath);
   } catch (const std::exception &e) {
-    AGV_ERRF("Cannot restore current working directory to {}: {}", currentPath, e);
+    SV_ERRF("Cannot restore current working directory to {}: {}", currentPath, e);
     return;
   }
 }
@@ -346,7 +346,7 @@ int sv::index::main(int argc, const char **argv) {
 
 int sv::index::run(const sv::index::Options &options) {
 
-  AGV_COUT //
+  SV_COUT //
       << "Build:\n"
       << " - Build:        " << options.buildDir << " (/compile_commands.json, ...)\n"
       << " - Coverage:     " << options.coverageBin << " (bin, bin/../*.profraw, ...)\n"
@@ -358,7 +358,7 @@ int sv::index::run(const sv::index::Options &options) {
   auto global_limit = par_setup(options.maxThreads);
   std::shared_ptr<CompilationDatabase> db = options.resolveDatabase();
   if (!db) {
-    AGV_CERR << "Unable to open compilation database at build dir `" << options.buildDir
+    SV_CERR << "Unable to open compilation database at build dir `" << options.buildDir
              << "`, please check if compile_commands.json exists in that directory.\n"
              << "If you are using CMake, add `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`.\n"
                 "For example: \n"
@@ -376,9 +376,9 @@ int sv::index::run(const sv::index::Options &options) {
                   }) ^
                   sort_by([](auto &cmd) { return cmd.file; });
 
-  AGV_COUT << "Sources (" << commands.size() << "/" << db->entries.size() << "):\n";
+  SV_COUT << "Sources (" << commands.size() << "/" << db->entries.size() << "):\n";
   for (auto &cmd : commands) {
-    AGV_COUT << " - " << cmd.file << "\n";
+    SV_COUT << " - " << cmd.file << "\n";
   }
 
   if (auto result = clearAndCreateDir(options.clearOutDir, options.outDir);

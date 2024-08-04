@@ -68,7 +68,7 @@ std::map<std::string, sv::Dependency> sv::readDepFile(const std::filesystem::pat
           std::chrono::clock_cast<std::chrono::system_clock>( //
               std::filesystem::last_write_time(file)));
       deps.emplace(file, sv::Dependency{time, readFile(file)});
-    } catch (const std::exception &e) { AGV_WARNF("cannot read/stat dependency {}: {}", file, e); }
+    } catch (const std::exception &e) { SV_WARNF("cannot read/stat dependency {}: {}", file, e); }
   };
   addDep(source);
 

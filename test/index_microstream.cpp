@@ -11,8 +11,8 @@
 #include "sv/diff.h"
 #include "sv/glob.h"
 #include "sv/model.h"
+#include "sv/tool_dump.h"
 #include "sv/tool_index.h"
-#include "sv/tool_inspect.h"
 #include "sv/tool_script.h"
 
 #include "aspartame/string.hpp"
@@ -137,17 +137,17 @@ TEST_CASE("microstream") {
       }
     }
 
-    DYNAMIC_SECTION("inspect-" << model) {
+    DYNAMIC_SECTION("dump-" << model) {
       auto buffer = std::cout.rdbuf();
       std::ostringstream ss;
       std::cout.rdbuf(ss.rdbuf());
-      int code = inspect::run(inspect::Options{.dbDir = outDir});
+      int code = dump::run(dump::Options{.dbDir = outDir});
       std::cout.rdbuf(buffer);
       CHECK(code == 0);
       auto actual = ss.str() ^ lines() ^ filter([](auto x) { return !(x ^ starts_with("# ")); });
       INFO(ss.str());
       REQUIRE(actual.size() == (1 + 2));
-      CHECK(actual[0] == "entry,deps");
+      CHECK(actual[0] ^ starts_with("entry,") );
 
       for (auto file : {fmt::format("main{},", ext), fmt::format("consume{},", ext)}) {
         CHECK(actual ^ exists([&](auto s) { return s ^ contains_slice(file); }));

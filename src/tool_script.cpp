@@ -77,7 +77,7 @@ constexpr sv::lua::TypeList<       //
     Types;
 
 int bufferedPrint(lua_State *L) {
-  AGV_COUT << lua_tostring(L, 1) << std::endl;
+  SV_COUT << lua_tostring(L, 1) << std::endl;
   return 0;
 }
 
@@ -87,7 +87,7 @@ int sv::script::run(const Options &options) {
     return EXIT_SUCCESS;
   }
   if (auto script = options.args ^ head_maybe(); !script) {
-    AGV_ERRF("No script given, terminating...");
+    SV_ERRF("No script given, terminating...");
     return EXIT_FAILURE;
   } else {
     auto global_limit = par_setup(options.maxThreads);

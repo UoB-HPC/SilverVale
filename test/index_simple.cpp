@@ -10,8 +10,8 @@
 #include "fmt/core.h"
 #include "sv/exec.h"
 #include "sv/model.h"
+#include "sv/tool_dump.h"
 #include "sv/tool_index.h"
-#include "sv/tool_inspect.h"
 
 #include "aspartame/string.hpp"
 #include "aspartame/vector.hpp"
