@@ -1,23 +1,72 @@
-#include <filesystem>
-#include <fstream>
-#include <iostream>
+#pragma once
 
-#include "sv/cli.h"
-#include "sv/database.h"
-#include "sv/exec.h"
-#include "sv/index_common.h"
+#include <chrono>
+#include <filesystem>
+#include <optional>
 
 #include "aspartame/optional.hpp"
 #include "aspartame/string.hpp"
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
 
-using namespace aspartame;
+#include "sv/io.h"
+#include "sv/cli.h"
+#include "sv/exec.h"
 
-std::optional<std::pair<std::filesystem::path, std::string>>
-sv::resolveProgramAndDetect(const std::filesystem::path &program,
-                            const std::function<bool(const std::string &)> &predicate,
-                            const std::unordered_map<std::string, std::string> &programLUT) {
+namespace sv::uproot {
+
+constexpr std::string_view UprootWd = "UPROOT_WD";
+constexpr std::string_view UprootDest = "UPROOT_DEST";
+constexpr std::string_view UprootFile = "UPROOT_FILE";
+constexpr std::string_view UprootPrefix = "UPROOT_PREFIX";
+constexpr std::string_view UprootVerbose = "UPROOT_VERBOSE";
+
+struct Options {
+  std::filesystem::path wd, dest;
+  std::string file, prefix;
+  bool verbose;
+};
+
+inline bool hasEnv(const char *name) {
+  if (auto value = std::getenv(name); value) {
+    return std::string(value) == "1";
+  } else return false;
+}
+
+inline std::optional<Options> parseEnv() {
+  auto wd = std::getenv(UprootWd.data());
+  auto dest = std::getenv(UprootDest.data());
+  auto file = std::getenv(UprootFile.data());
+  auto prefix = std::getenv(UprootPrefix.data());
+  if (wd && dest && file && prefix)
+    return Options{.wd = wd,
+                   .dest = dest,
+                   .file = file,
+                   .prefix = prefix,
+                   .verbose = hasEnv(UprootVerbose.data())};
+  return {};
+}
+
+inline std::string
+createEnvLine(const Options &options,
+              std::initializer_list<std::pair<std::string_view, std::string>> rest = {}) {
+  using namespace aspartame;
+  return std::vector{
+             std::pair{UprootWd, options.wd.string()},
+             std::pair{UprootDest, options.dest.string()},
+             std::pair{UprootFile, options.file},
+             std::pair{UprootPrefix, options.prefix},
+             std::pair{UprootVerbose, std::string(options.verbose ? "1" : "0")},
+         } |
+         concat(rest) |
+         mk_string("env ", " ", "", [](auto k, auto v) { return fmt::format("{}={}", k, v); });
+}
+
+inline std::optional<std::pair<std::filesystem::path, std::string>>
+resolveProgramAndDetect(const std::filesystem::path &program,
+                        const std::function<bool(const std::string &)> &predicate,
+                        const std::unordered_map<std::string, std::string> &programLUT) {
+  using namespace aspartame;
   auto resolved = program;
   if (!program.is_absolute()) {
     if (auto it = programLUT.find(program); it != programLUT.end()) { resolved = it->second; }
@@ -31,15 +80,9 @@ sv::resolveProgramAndDetect(const std::filesystem::path &program,
          ^ map([&](auto &version) { return std::pair{resolved, version}; });
 }
 
-std::string sv::readFile(const std::filesystem::path &file) {
-  std::ifstream t(file);
-  t.exceptions(std::ios::badbit | std::ios::failbit);
-  std::stringstream buffer;
-  buffer << t.rdbuf();
-  return buffer.str();
-}
 
-std::vector<std::string> sv::stripHeadAndOArgs(const std::vector<std::string> &args) {
+inline std::vector<std::string> stripHeadAndOArgs(const std::vector<std::string> &args) {
+  using namespace aspartame;
   return args                                                                               //
          | zip_with_index()                                                                 //
          | bind([](auto &s, auto idx) {                                                     //
@@ -58,15 +101,17 @@ std::vector<std::string> sv::stripHeadAndOArgs(const std::vector<std::string> &a
            });
 }
 
-std::map<std::string, sv::Dependency> sv::readDepFile(const std::filesystem::path &depFile,
-                                                      const std::string &source) {
+inline std::map<std::string, sv::Dependency> readDepFile(const std::filesystem::path &depFile,
+                                                         const std::string &source) {
+  using namespace aspartame;
+
   std::map<std::string, sv::Dependency> deps;
   auto addDep = [&](const std::filesystem::path &file) {
     try {
       auto time = std::chrono::system_clock::to_time_t(       //
           std::chrono::clock_cast<std::chrono::system_clock>( //
               std::filesystem::last_write_time(file)));
-      deps.emplace(file, sv::Dependency{time, readFile(file)});
+      deps.emplace(file, sv::Dependency{time, sv::readFile(file)});
     } catch (const std::exception &e) { SV_WARNF("cannot read/stat dependency {}: {}", file, e); }
   };
   addDep(source);
@@ -86,3 +131,5 @@ std::map<std::string, sv::Dependency> sv::readDepFile(const std::filesystem::pat
   }
   return deps;
 }
+
+} // namespace sv::uproot

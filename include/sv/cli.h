@@ -29,8 +29,14 @@ class ProgressLogger {
   std::atomic_size_t completed{1};
 
 public:
-  ProgressLogger(size_t total, int maxLogLength);
-  void log(const std::string &line, bool progress = true);
+  ProgressLogger(size_t total, int maxLogLength) : total(total), maxLogLength(maxLogLength) {}
+
+  void log(const std::string &line, bool progress = true) {
+    auto s = SV_COUT << "# [" << (progress ? completed++ : completed.load()) << "/" << total << "] "
+                     << std::left << std::setw(maxLogLength + 10) << line;
+    if (progress) (s << "\r").flush();
+    else s << std::endl;
+  }
 };
 
 } // namespace sv

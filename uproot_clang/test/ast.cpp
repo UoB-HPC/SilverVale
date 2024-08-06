@@ -9,7 +9,7 @@
 #include "aspartame/vector.hpp"
 
 #include "sv/semantic_llvm.h"
-#include "sv/semantic_ts.h"
+#include "sv/tree_ts.h"
 
 #ifdef SKIP // XXX catch2 introduces a SKIP macro which collides with one in tree_sitter_cpp
   #undef SKIP
@@ -48,6 +48,128 @@ std::vector<NTree<SNode>> makeNodes(const ClangASTSemanticTreeVisitor::Option &o
            return root;
          });
 }
+TEST_CASE("cpp-inline") {
+  auto trees =
+      makeNodes(
+          {.inlineCalls = true, .normaliseVarName = false, .normaliseFnName = false, .roots = {""}},
+          R"(
+#include <stdio.h>
+#include <stdlib.h>
+
+void foo();
+
+template <typename X> void run(int a, X x) {
+  foo();
+  x(a + 1);
+  foo();
+}
+
+int a() {
+  int a = 42;
+  printf("Hey %d\n", 42);
+  foo();
+  [&](auto x) { printf("%d\n", x + a); }(a + 1);
+  foo();
+  return EXIT_SUCCESS;
+}
+
+int b() {
+  int a = 42;
+  printf("Hey %d\n", 42);
+  run(a, [&](auto x) { printf("%d\n", x + a); });
+  return EXIT_SUCCESS;
+}
+)") ^ collect([](auto x) {
+        return x.template map<std::string>([](auto n) { return n.data; }).children ^ head_maybe() ^
+               filter([](auto v) { return v.value == "Function: a" || v.value == "Function: b"; }) ^
+               map([](auto n) { return n.children; });
+      });
+
+  REQUIRE(trees.size() == 2);
+  CHECK(trees[0] == trees[1]);
+}
+
+TEST_CASE("cpp-inlines-invariant") {
+  auto trees =
+      makeNodes(
+          {.inlineCalls = true, .normaliseVarName = true, .normaliseFnName = false, .roots = {""}},
+          R"(
+#include <stdio.h>
+#include <stdlib.h>
+
+void bar();
+
+template <typename F> void run(int m, F f) {
+  bar();
+  f(m + 1);
+  bar();
+}
+
+int a() {
+  int aaa = 42;
+  printf("Hey %d\n", 42);
+  bar();
+  [&](auto xxx) { printf("%d\n", xxx + aaa); }(aaa + 1);
+  bar();
+  return EXIT_SUCCESS;
+}
+
+int b() {
+  int a = 42;
+  printf("Hey %d\n", 42);
+  run(a, [&](auto x) { printf("%d\n", x + a); });
+  return EXIT_SUCCESS;
+}
+)") ^ collect([](auto x) {
+        return x.template map<std::string>([](auto n) { return n.data; }).children ^ head_maybe() ^
+               filter([](auto v) { return v.value == "Function: a" || v.value == "Function: b"; }) ^
+               map([](auto n) { return n.children; });
+      });
+
+  REQUIRE(trees.size() == 2);
+  CHECK(trees[0] == trees[1]);
+}
+
+TEST_CASE("cpp-two-layers") {
+  auto trees =
+      makeNodes(
+          {.inlineCalls = true, .normaliseVarName = true, .normaliseFnName = false, .roots = {""}},
+          R"(
+#include <stdio.h>
+#include <stdlib.h>
+
+void foo();
+void bar(int, int);
+
+template <typename X> void run(int a, X x) {
+  foo();
+  x(a, a);
+}
+
+int a() {
+  int a = 42;
+  foo();
+  bar(a, a);
+  return EXIT_SUCCESS;
+}
+
+int b() {
+  int a = 42;
+  run(a, [&](auto x, auto y) { bar(x, y); });
+  return EXIT_SUCCESS;
+}
+)") ^ collect([](auto x) {
+        return x.template map<std::string>([](auto n) { return n.data; }).children ^ head_maybe() ^
+               filter([](auto v) { return v.value == "Function: a" || v.value == "Function: b"; }) ^
+               map([](auto n) { return n.children; });
+      });
+  REQUIRE(trees.size() == 2);
+  CHECK(trees[0] == trees[1]);
+}
+
+
+// ============================================
+
 
 TEST_CASE("cpp-source-loc") {
 
@@ -169,124 +291,6 @@ return 42;
 )");
 }
 
-TEST_CASE("cpp-inline") {
-  auto trees =
-      makeNodes(
-          {.inlineCalls = true, .normaliseVarName = false, .normaliseFnName = false, .roots = {""}},
-          R"(
-#include <stdio.h>
-#include <stdlib.h>
-
-void foo();
-
-template <typename X> void run(int a, X x) {
-  foo();
-  x(a + 1);
-  foo();
-}
-
-int a() {
-  int a = 42;
-  printf("Hey %d\n", 42);
-  foo();
-  [&](auto x) { printf("%d\n", x + a); }(a + 1);
-  foo();
-  return EXIT_SUCCESS;
-}
-
-int b() {
-  int a = 42;
-  printf("Hey %d\n", 42);
-  run(a, [&](auto x) { printf("%d\n", x + a); });
-  return EXIT_SUCCESS;
-}
-)") ^ collect([](auto x) {
-        return x.template map<std::string>([](auto n) { return n.data; }).children ^ head_maybe() ^
-               filter([](auto v) { return v.value == "Function: a" || v.value == "Function: b"; }) ^
-               map([](auto n) { return n.children; });
-      });
-
-  REQUIRE(trees.size() == 2);
-  CHECK(trees[0] == trees[1]);
-}
-
-TEST_CASE("cpp-inlines-invariant") {
-  auto trees =
-      makeNodes(
-          {.inlineCalls = true, .normaliseVarName = true, .normaliseFnName = false, .roots = {""}},
-          R"(
-#include <stdio.h>
-#include <stdlib.h>
-
-void bar();
-
-template <typename F> void run(int m, F f) {
-  bar();
-  f(m + 1);
-  bar();
-}
-
-int a() {
-  int aaa = 42;
-  printf("Hey %d\n", 42);
-  bar();
-  [&](auto xxx) { printf("%d\n", xxx + aaa); }(aaa + 1);
-  bar();
-  return EXIT_SUCCESS;
-}
-
-int b() {
-  int a = 42;
-  printf("Hey %d\n", 42);
-  run(a, [&](auto x) { printf("%d\n", x + a); });
-  return EXIT_SUCCESS;
-}
-)") ^ collect([](auto x) {
-        return x.template map<std::string>([](auto n) { return n.data; }).children ^ head_maybe() ^
-               filter([](auto v) { return v.value == "Function: a" || v.value == "Function: b"; }) ^
-               map([](auto n) { return n.children; });
-      });
-
-  REQUIRE(trees.size() == 2);
-  CHECK(trees[0] == trees[1]);
-}
-
-TEST_CASE("cpp-two-layers") {
-  auto trees =
-      makeNodes(
-          {.inlineCalls = true, .normaliseVarName = true, .normaliseFnName = false, .roots = {""}},
-          R"(
-#include <stdio.h>
-#include <stdlib.h>
-
-void foo();
-void bar(int, int);
-
-template <typename X> void run(int a, X x) {
-  foo();
-  x(a, a);
-}
-
-int a() {
-  int a = 42;
-  foo();
-  bar(a, a);
-  return EXIT_SUCCESS;
-}
-
-int b() {
-  int a = 42;
-  run(a, [&](auto x, auto y) { bar(x, y); });
-  return EXIT_SUCCESS;
-}
-)") ^ collect([](auto x) {
-        return x.template map<std::string>([](auto n) { return n.data; }).children ^ head_maybe() ^
-               filter([](auto v) { return v.value == "Function: a" || v.value == "Function: b"; }) ^
-               map([](auto n) { return n.children; });
-      });
-  REQUIRE(trees.size() == 2);
-  CHECK(trees[0] == trees[1]);
-}
 
 TEST_CASE("cpp-normalise") {
 

@@ -1,22 +1,24 @@
 #pragma once
 
-#include "oneapi/tbb.h"
+#include "BS_thread_pool.hpp"
 
 namespace sv {
 
-inline tbb::global_control par_setup(size_t n) {
-  return {tbb::global_control::max_allowed_parallelism, n};
+namespace {
+static BS::thread_pool pool;
 }
+inline void par_setup(size_t n) { pool.reset(n); }
 
 template <typename C, typename F> static void par_for(C &&xs, F f) {
-  tbb::parallel_for(size_t{}, xs.size(), [&](auto idx) { f(xs[idx], idx); });
+  pool.detach_blocks (size_t{}, xs.size(), [&](size_t start, size_t end) {
+    for (size_t i = start; i < end; ++i)
+      f(xs[i], i);
+  });
+  pool.wait();
 }
 
 template <typename C, typename F> static auto par_map(C &&xs, F f) {
-  using R = decltype(f(xs[size_t{}]));
-  std::vector<R> out(xs.size());
-  tbb::parallel_for(size_t{}, xs.size(), [&](auto idx) { out[idx] = std::move(f(xs[idx])); });
-  return out;
+  return pool.template submit_sequence (size_t{}, xs.size(), [&](size_t idx) { return f(xs[idx]); }).get();
 }
 
 } // namespace sv

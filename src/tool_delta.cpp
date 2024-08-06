@@ -242,7 +242,7 @@ int delta::main(int argc, const char **argv) {
       ("root",
        "Root path shared by all databases. Analysis (delta) will not escape the unions of all root "
        "paths.",
-       cxxopts::value<std::string>()) //
+       cxxopts::value<std::string>()->default_value("")) //
       ("output", "The output file name prefix for all result CSV files.",
        cxxopts::value<std::string>()) //
       ("j,threads",
@@ -294,12 +294,17 @@ int delta::main(int argc, const char **argv) {
         }) |
         to_vector();
 
+    auto optionalCSV = [&](const std::string &name) -> std::vector<std::string> {
+      if (result[name].count() > 0) return result[name].as<std::vector<std::string>>();
+      return {};
+    };
+
     return run(
         Options{.databases = mappedDbs,
                 .base = result.count("base") ? result["base"].as<std::string>()
                         : mappedDbs.empty()  ? ""
                                              : mappedDbs.front().path.string(),
-                .kinds = result["kinds"].as<std::vector<std::string>>()        //
+                .kinds = optionalCSV("kinds")                                  //
                          | collect([](auto &spec) -> std::optional<TaskDesc> { //
                              auto parts = spec ^ split("+");
                              if (parts.size() == 1) {
@@ -317,10 +322,10 @@ int delta::main(int argc, const char **argv) {
                              return std::nullopt;
                            })                                                                 //
                          | to_vector(),                                                       //
-                .excludes = result["excludes"].as<std::vector<std::string>>()                 //
+                .excludes = optionalCSV("excludes")                                           //
                             | map([](auto &s) { return ExcludeFilter{s}; })                   //
                             | to_vector(),                                                    //
-                .merges = result["merges"].as<std::vector<std::string>>()                     //
+                .merges = optionalCSV("merges")                                               //
                           | collect([&](auto &s) {                                            //
                               return pairPattern(s, ':')                                      //
                                      ^ map([&](auto &glob, auto &name) {                      //
@@ -328,7 +333,7 @@ int delta::main(int argc, const char **argv) {
                                        });                                                    //
                             })                                                                //
                           | to_vector(),                                                      //
-                .matches = result["matches"].as<std::vector<std::string>>()                   //
+                .matches = optionalCSV("matches")                                             //
                            | collect([&](auto &p) { return pairPattern(p, ':'); })            //
                            | map([](auto &source, auto &target) {                             //
                                return EntryMatch{.sourceGlob = source, .targetGlob = target}; //
@@ -341,8 +346,7 @@ int delta::main(int argc, const char **argv) {
 
 int delta::run(const delta::Options &options) {
 
-  tbb::global_control global_limit(tbb::global_control::max_allowed_parallelism,
-                                   options.maxThreads);
+  par_setup(options.maxThreads);
 
   if (options.databases.empty()) {
     SV_ERRF("At least 1 database required for comparison");

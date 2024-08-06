@@ -147,7 +147,7 @@ TEST_CASE("microstream") {
       auto actual = ss.str() ^ lines() ^ filter([](auto x) { return !(x ^ starts_with("# ")); });
       INFO(ss.str());
       REQUIRE(actual.size() == (1 + 2));
-      CHECK(actual[0] ^ starts_with("entry,") );
+      CHECK(actual[0] ^ starts_with("entry,"));
 
       for (auto file : {fmt::format("main{},", ext), fmt::format("consume{},", ext)}) {
         CHECK(actual ^ exists([&](auto s) { return s ^ contains_slice(file); }));
@@ -155,38 +155,52 @@ TEST_CASE("microstream") {
     }
 
     DYNAMIC_SECTION("load-" << model) {
-      auto db = Codebase::loadDB(outDir);
-      CHECK(db.entries.size() == 2);
-      auto cb = Codebase::load(db, true, {}, [](auto) { return true; });
 
-      REQUIRE(!cb.units.empty());
+      auto normalise = GENERATE(true, false);
 
-      for (auto file : {"main.", "consume."}) {
-        CHECK(cb.units ^ exists([&](auto n) { return n->name() ^ starts_with(file); }));
-      }
+      DYNAMIC_SECTION("load-" << model << "-" << (normalise ? "normalised" : "as-is")) {
 
-      for (auto &unit : cb.units) {
-        CHECK(Diff::apted(unit->sTree(Unit::View::AsIs), unit->sTree(Unit::View::AsIs)) == 0);
-        // make sure processed TS is successful
-        auto nodes = unit->sourcePreprocessed().tsTree().root    //
-                     | map([](auto &n) { return n.value.data; }) //
-                     | to_vector();
-        CHECK(!nodes.empty());
-        CHECK(!(nodes ^ contains("ERROR")));
-      }
+        auto db = Codebase::loadDB(outDir);
+        CHECK(db.entries.size() == 2);
+        auto cb = Codebase::load(db, normalise, {}, [](auto) { return true; });
 
-      for (auto &u : cb.units) {
-        //        if(u->name() !=  "consume.cpp") continue;
+        REQUIRE(!cb.units.empty());
 
-        std::cout << "### " << u->name() << std::endl;
-        //        std::cout << u->sTree().prettyPrint() << std::endl;
+        for (auto file : {"main.", "consume."}) {
+          CHECK(cb.units ^ exists([&](auto n) { return n->name() ^ starts_with(file); }));
+        }
 
-        std::cout << u->sourceAsWritten().content() << std::endl;
-        std::cout << "### cov " << u->name() << std::endl;
-        auto xx = u->sourceAsWritten().content();
-        std::cout << "@`" << xx << "`" << std::endl;
+        for (auto &unit : cb.units) {
+          // make sure it's not all empty trees with one root
+          CHECK(unit->sTree(Unit::View::AsIs).maxWidth() > 1);
+          CHECK(unit->sTreeInlined(Unit::View::AsIs).maxWidth() > 1);
+          CHECK(unit->irTree(Unit::View::AsIs).maxWidth() > 1);
+          CHECK(unit->sourceAsWritten().tsTree().maxWidth() > 1);
+          CHECK(unit->sourcePreprocessed().tsTree().maxWidth() > 1);
+          CHECK(unit->sourceWithCoverage().tsTree().maxWidth() > 1);
 
-        //        std::cout << u->withCoverage()->sTree().prettyPrint() << std::endl;
+          // smoke test identity distance
+
+
+          CHECK(Diff::apted(unit->sTree(Unit::View::AsIs), unit->sTree(Unit::View::AsIs)) == 0);
+          // TODO parallelise, too slow
+//          CHECK(Diff::apted(unit->sTreeInlined(Unit::View::AsIs),
+//                            unit->sTreeInlined(Unit::View::AsIs)) == 0);
+//          CHECK(Diff::apted(unit->irTree(Unit::View::AsIs), unit->irTree(Unit::View::AsIs)) == 0);
+//          CHECK(Diff::apted(unit->sourceAsWritten().tsTree(), unit->sourceAsWritten().tsTree()) ==
+//                0);
+//          CHECK(Diff::apted(unit->sourcePreprocessed().tsTree(),
+//                            unit->sourcePreprocessed().tsTree()) == 0);
+//          CHECK(Diff::apted(unit->sourceWithCoverage().tsTree(),
+//                            unit->sourceWithCoverage().tsTree()) == 0);
+
+          // make sure processed TS is successful
+          auto nodes = unit->sourcePreprocessed().tsTree().root    //
+                       | map([](auto &n) { return n.value.data; }) //
+                       | to_vector();
+          CHECK(!nodes.empty());
+          CHECK(!(nodes ^ contains("ERROR")));
+        }
       }
     }
 

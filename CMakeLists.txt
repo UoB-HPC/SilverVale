@@ -14,17 +14,6 @@ if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0")
     cmake_policy(SET CMP0135 NEW)
 endif ()
 
-find_package(LLVM REQUIRED CONFIG)
-find_package(Clang REQUIRED CONFIG)
-find_package(TBB REQUIRED CONFIG)
-
-message(STATUS "Found LLVM: ${LLVM_PACKAGE_VERSION}")
-message(STATUS "Found Clang: ${Clang_VERSION}")
-message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
-message(STATUS "Using ClangConfig.cmake in: ${Clang_DIR}")
-include(${LLVM_DIR}/AddLLVM.cmake)
-include(${Clang_DIR}/AddClang.cmake)
-
 CPMAddPackage("gh:jarro2783/cxxopts@3.2.0")
 CPMAddPackage("gh:madler/zlib@1.3.1")
 CPMAddPackage("gh:nlohmann/json@3.11.3")
@@ -51,6 +40,14 @@ CPMAddPackage(
         GITHUB_REPOSITORY lua/lua
         VERSION 5.4.7
         DOWNLOAD_ONLY YES)
+CPMAddPackage(
+        NAME BS_thread_pool
+        GITHUB_REPOSITORY bshoshany/thread-pool
+        VERSION 4.1.0)
+if (BS_thread_pool_ADDED)
+    add_library(BS_thread_pool INTERFACE)
+    target_include_directories(BS_thread_pool INTERFACE "${BS_thread_pool_SOURCE_DIR}/include")
+endif ()
 if (lua_ADDED)
     file(GLOB lua_sources ${lua_SOURCE_DIR}/*.c)
     list(REMOVE_ITEM lua_sources "${lua_SOURCE_DIR}/lua.c" "${lua_SOURCE_DIR}/luac.c")
@@ -125,8 +122,11 @@ add_tree_sitter_lang(stadelmanma fortran HASH dde9829)
 # =====================
 
 list(APPEND SV_COMPILE_DEBUG_FLAGS -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
-list(APPEND SV_COMPILE_RELEASE_FLAGS -O3 -march=native)
 list(APPEND SV_LINK_DEBUG_FLAGS -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
+
+list(APPEND SV_COMPILE_RELEASE_FLAGS -O3 -march=native)
+list(APPEND SV_LINK_RELEASE_FLAGS -static-libgcc -static-libstdc++ LINKER:--gc-sections)
+
 list(APPEND SV_COMPILE_FLAGS
         "$<$<CONFIG:Release>:${SV_COMPILE_RELEASE_FLAGS}>"
         "$<$<CONFIG:Debug>:${SV_COMPILE_DEBUG_FLAGS}>"
@@ -144,39 +144,37 @@ list(APPEND SV_COMPILE_FLAGS
         -Wno-unknown-warning-option
         #        -ftime-trace
 )
-list(APPEND SV_LINK_FLAGS "$<$<CONFIG:Debug>:${SV_LINK_DEBUG_FLAGS}>")
+list(APPEND SV_LINK_FLAGS
+        "$<$<CONFIG:Release>:${SV_LINK_RELEASE_FLAGS}>"
+        "$<$<CONFIG:Debug>:${SV_LINK_DEBUG_FLAGS}>"
+)
 
 add_library(SilverVale STATIC
 
-        src/semantic_llvm.cpp
-        src/semantic_ts.cpp
+        src/tree_ts.cpp
 
         src/index_llvm.cpp
         src/index_gcc.cpp
-        src/index_common.cpp
 
         src/tool_script.cpp
         src/tool_delta.cpp
         src/tool_index.cpp
         src/tool_dump.cpp
         src/diff.cpp
-        src/cli.cpp
         src/model.cpp
-        src/compress.cpp
         src/glob.cpp)
+
 target_include_directories(SilverVale PRIVATE include)
 target_link_libraries(SilverVale
-
         PRIVATE
-        libzstd_static
         Aspartame::Aspartame
         nlohmann_json::nlohmann_json
         TreeSimilarity
         dtl
-        TBB::tbb
+        BS_thread_pool
         sol2
         lua
-        fmt::fmt
+        fmt::fmt-header-only
         xxHash::xxhash
         zlibstatic
         cxxopts
@@ -189,8 +187,7 @@ target_link_libraries(SilverVale
         tree-sitter-julia
         tree-sitter-rust
         tree-sitter-fortran
-        clang-cpp
-        LLVM)
+)
 target_compile_options(SilverVale PRIVATE ${SV_COMPILE_FLAGS})
 target_link_options(SilverVale PRIVATE ${SV_LINK_FLAGS})
 #set_property(TARGET SilverVale PROPERTY CXX_INCLUDE_WHAT_YOU_USE include-what-you-use)
@@ -198,19 +195,6 @@ target_link_options(SilverVale PRIVATE ${SV_LINK_FLAGS})
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_precompile_headers(SilverVale PRIVATE
-            [["clang/Tooling/Tooling.h"]]
-            [["clang/Frontend/ASTUnit.h"]]
-            [["clang/AST/RecursiveASTVisitor.h"]]
-            [["clang/Frontend/FrontendActions.h"]]
-            [["clang/Tooling/CommonOptionsParser.h"]]
-
-            [["llvm/IR/Module.h"]]
-            [["llvm/IR/LLVMContext.h"]]
-            [["llvm/Support/raw_ostream.h"]]
-            [["llvm/Bitcode/BitcodeReader.h"]]
-
-            [["oneapi/tbb.h"]]
-
             [["nlohmann/json.hpp"]]
             [["fmt/core.h"]]
             [["sol/sol.hpp"]]
@@ -224,7 +208,6 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
             [["aspartame/string.hpp"]]
             [["aspartame/vector.hpp"]]
             [["aspartame/view.hpp"]]
-
 
             <map>
             <tuple>
@@ -246,11 +229,11 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif ()
 
 add_executable(driver src/driver.cpp)
-add_executable(tests test/tree.cpp test/ast.cpp test/index_microstream.cpp test/index_simple.cpp test/preprocessor.cpp)
+add_executable(tests test/tree.cpp test/tstree.cpp test/index_microstream.cpp test/index_simple.cpp test/preprocessor.cpp)
 target_link_libraries(tests PRIVATE Catch2::Catch2WithMain)
 set_target_properties(driver PROPERTIES OUTPUT_NAME "sv")
 foreach (target driver tests)
-    target_link_libraries(${target} PRIVATE SilverVale Aspartame::Aspartame nlohmann_json::nlohmann_json sol2 lua fmt::fmt)
+    target_link_libraries(${target} PRIVATE SilverVale Aspartame::Aspartame nlohmann_json::nlohmann_json sol2 lua fmt::fmt-header-only)
     target_include_directories(${target} PRIVATE include)
     target_compile_options(${target} PRIVATE ${SV_COMPILE_FLAGS})
     target_link_options(${target} PRIVATE ${SV_LINK_FLAGS})
@@ -299,8 +282,9 @@ setup_fixture(microstream clang clang++ flang-new omp -DUSE_OMP=ON -DCMAKE_CXX_F
 setup_fixture(microstream gcc g++ gfortran omp -DUSE_OMP=ON -DCMAKE_CXX_FLAGS="${GCC_COVERAGE_FLAGS}")
 
 setup_fixture(microstream clang clang++ flang-new omp_target -DUSE_OMP_TARGET=sm_60 -DCMAKE_CXX_FLAGS="${CLANG_COVERAGE_FLAGS}")
-setup_fixture(microstream clang clang++ flang-new cuda -DUSE_CUDA=sm_60 -DCMAKE_CUDA_COMPILER=clang++ -DCMAKE_CXX_FLAGS="${CLANG_COVERAGE_FLAGS}")
+
 setup_fixture(microstream clang clang++ flang-new hip -DUSE_HIP=gfx1036 -DCMAKE_CXX_FLAGS="${CLANG_COVERAGE_FLAGS}")
+setup_fixture(microstream clang clang++ flang-new cuda -DUSE_CUDA=sm_60 -DCMAKE_CUDA_COMPILER=clang++ -DCMAKE_CXX_FLAGS="${CLANG_COVERAGE_FLAGS}" -DCMAKE_CUDA_FLAGS="${CLANG_COVERAGE_FLAGS}")
 set(FIXTURE_TMP_DIR ${CMAKE_CURRENT_BINARY_DIR})
 
 
@@ -324,6 +308,7 @@ file(GENERATE # expand generator expressions too
 
 
 add_subdirectory(uproot_gcc)
-add_dependencies(tests uproot_gcc processor_fixture)
+add_subdirectory(uproot_clang)
+add_dependencies(tests uproot_gcc uproot_clang processor_fixture)
 
 

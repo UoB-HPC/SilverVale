@@ -12,9 +12,9 @@
 #include "sv/par.h"
 #include "sv/tool_index.h"
 
+#include "aspartame/optional.hpp"
 #include "aspartame/string.hpp"
 #include "aspartame/variant.hpp"
-#include "aspartame/optional.hpp"
 #include "aspartame/vector.hpp"
 #include "zlib.h"
 
@@ -124,7 +124,7 @@ static void runCoverageTask(const std::filesystem::path &coverageBin,
                  "binary, skipping coverage...");
         return;
       }
-      std::cout <<gcovOutcome .str()<<std::endl;
+      std::cout << gcovOutcome.str() << std::endl;
 
       auto output = outDir / fmt::format("{}.{}", gcovFile.stem(), sv::EntryGCCGCovName);
 
@@ -185,7 +185,7 @@ static void runCoverageTask(const std::filesystem::path &coverageBin,
       if (!profRawFiles.empty() && !gcovFiles.empty()) {
         SV_WARNF("Detected both Clang *.profraw and GCC *.gcda files [{},{}], please "
                  "specify with format should be used, skipping coverage... ",
-                  profRawFiles ^ mk_string(","), gcovFiles ^ mk_string(","));
+                 profRawFiles ^ mk_string(","), gcovFiles ^ mk_string(","));
       }
       if (!profRawFiles.empty()) clangSBCC(profRawFiles);
       if (!gcovFiles.empty()) gcov(gcovFiles);
@@ -246,11 +246,13 @@ static void runIndexTasks(const std::vector<sv::CompilationDatabase::Entry> &com
       }
       logger.log(cmd.file);
 
-      if (!sv::detectClangAndIndex(verbose, cmd, wd, absOutDir, programLUT)) {
-        if (!sv::detectGccAndIndex(verbose, cmd, wd, absOutDir, programLUT)) {
-          SV_WARNF("unsupported compiler in command `{}`", cmd.command ^ mk_string(" "));
+      try {
+        if (!sv::detectClangAndIndex(verbose, cmd, wd, absOutDir, programLUT)) {
+          if (!sv::detectGccAndIndex(verbose, cmd, wd, absOutDir, programLUT)) {
+            SV_WARNF("unsupported compiler in command `{}`", cmd.command ^ mk_string(" "));
+          }
         }
-      }
+      } catch (const std::exception &e) { SV_WARNF("index step failed with exception: {}", e); }
     });
   }
   SV_COUT << std::endl;
@@ -323,18 +325,18 @@ int sv::index::run(const sv::index::Options &options) {
       << " - Clear output: " << (options.clearOutDir ? "true" : "false") << "\n"
       << " - Max threads:  " << options.maxThreads << "\n";
 
-  auto global_limit = par_setup(options.maxThreads);
+  par_setup(options.maxThreads);
   std::shared_ptr<CompilationDatabase> db = options.resolveDatabase();
   if (!db) {
     SV_CERR << "Unable to open compilation database at build dir `" << options.buildDir
-             << "`, please check if compile_commands.json exists in that directory.\n"
-             << "If you are using CMake, add `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`.\n"
-                "For example: \n"
-                "> cmake -Bbuild -S <source_dir> -DCMAKE_EXPORT_COMPILE_COMMANDS=ON "
-                "-DCMAKE_CXX_LINK_EXECUTABLE='echo \"\"'\n"
-                "Here we also disable linking entirely by setting the link command to simply echo "
-                "an empty string."
-             << std::endl;
+            << "`, please check if compile_commands.json exists in that directory.\n"
+            << "If you are using CMake, add `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`.\n"
+               "For example: \n"
+               "> cmake -Bbuild -S <source_dir> -DCMAKE_EXPORT_COMPILE_COMMANDS=ON "
+               "-DCMAKE_CXX_LINK_EXECUTABLE='echo \"\"'\n"
+               "Here we also disable linking entirely by setting the link command to simply echo "
+               "an empty string."
+            << std::endl;
     return EXIT_FAILURE;
   }
   auto regexes = options.sourceGlobs ^ map([](auto &glob) { return globToRegex(glob); });

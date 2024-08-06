@@ -49,9 +49,6 @@ int sv::script::main(int argc, const char **argv) {
 
 constexpr sv::lua::TypeList<       //
     sv::Dependency,                //
-    sv::FlatEntry,                 //
-    sv::ClangEntry,                //
-    sv::LLVMBitcode,               //
     sv::Tree,                      //
     sv::Source,                    //
     sv::Unit,                      //
@@ -59,6 +56,7 @@ constexpr sv::lua::TypeList<       //
     sv::PerFileCoverage,           //
     sv::PerFileCoverage::Instance, //
     sv::Database,                  //
+    sv::Database::Entry,           //
     sv::Diff,                      //
     sv::Glob                       //
     >
@@ -78,7 +76,7 @@ int sv::script::run(const Options &options) {
     SV_ERRF("No script given, terminating...");
     return EXIT_FAILURE;
   } else {
-    auto global_limit = par_setup(options.maxThreads);
+    par_setup(options.maxThreads);
     sol::state state = lua::bindSol(Types);
     if (!options.roots.empty()) {
       state["package"]["path"] = std::string(options.roots | mk_string(";")) + ";" +

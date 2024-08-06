@@ -6,7 +6,8 @@
 #include "fixture.h"
 #include "fmt/core.h"
 #include "sv/index_common.h"
-#include "sv/semantic_ts.h"
+#include "sv/tree_ts.h"
+#include "sv/uproot.h"
 
 #include "aspartame/string.hpp"
 #include "aspartame/unordered_map.hpp"
@@ -19,7 +20,7 @@ TEST_CASE("parse-CPP-linemarkers") {
 
   std::ifstream read(FIXTURE_PROCESSOR_FILE);
 
-  auto [order, contents] = parseCPPLineMarkers(readFile(FIXTURE_PROCESSOR_FILE));
+  auto [order, contents] = parseCPPLineMarkers(sv::readFile(FIXTURE_PROCESSOR_FILE));
 
   auto actual = order ^ map([](auto &p) { return std::filesystem::path(p).filename().string(); });
 

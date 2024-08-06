@@ -11,9 +11,34 @@
 
 namespace sv {
 
+template <typename T, typename FS = std::fstream>
+void writeJSON(const std::string &path, const T &t) {
+  FS out(path, std::ios::out);
+  out.exceptions(std::ios::badbit | std::ios::failbit);
+  out << nlohmann::json(t);
+}
+
+template <typename T, typename FS = std::fstream> T readJSON(const std::string &path) {
+  FS in(path, std::ios::in);
+  in.exceptions(std::ios::badbit | std::ios::failbit);
+  T t{};
+  nlohmann::from_json(nlohmann::json::parse(in), t);
+  return t;
+}
+
 constexpr std::string_view EntrySuffix = "sv.json";
+constexpr std::string_view EntryDepSuffix = "dep.json";
+
 constexpr std::string_view EntryClangSBCCName = "coverage.clang_sbcc.sv.json";
 constexpr std::string_view EntryGCCGCovName = "coverage.gcc_gcov.sv.json";
+
+constexpr std::string_view EntryNamedSTreeSuffix = "named.stree.json";
+constexpr std::string_view EntryNamedSTreeInlinedSuffix = "named.streeinlined.json";
+constexpr std::string_view EntryNamedIrTreeSuffix = "named.irtree.json";
+
+constexpr std::string_view EntryUnnamedSTreeSuffix = "unnamed.stree.json";
+constexpr std::string_view EntryUnnamedSTreeInlinedSuffix = "unnamed.streeinlined.json";
+constexpr std::string_view EntryUnnamedIrTreeSuffix = "unnamed.irtree.json";
 
 struct GCCGCovProfile {
 
@@ -226,163 +251,61 @@ public:
                   SOL_UT_FN_ACC(Dependency, content));
 };
 
-struct LLVMBitcode {
-  std::string file{};
-  std::string kind{};
-  std::string triple{};
-  NLOHMANN_DEFINE_TYPE_INTRUSIVE(LLVMBitcode, file, kind, triple);
-
-private:
-  DEF_SOL_UT_ACCESSOR(file);
-  DEF_SOL_UT_ACCESSOR(kind);
-  DEF_SOL_UT_ACCESSOR(triple);
-
-public:
-  DEF_TEAL_SOL_UT(LLVMBitcode,                      //
-                  SOL_UT_FN_ACC(LLVMBitcode, file), //
-                  SOL_UT_FN_ACC(LLVMBitcode, kind), //
-                  SOL_UT_FN_ACC(LLVMBitcode, triple));
-  friend std::ostream &operator<<(std::ostream &os, const LLVMBitcode &bitcode) {
-    return os << "sv::LLVMBitcode{"               //
-              << ".file=" << bitcode.file << ", " //
-              << ".kind=" << bitcode.kind << ", " //
-              << ".triple=" << bitcode.triple     //
-              << "}";
-  }
-};
-
-struct ClangEntry {
-
-  std::string kind = "clang";
-  std::string language;
-
-  std::string file;
-  std::string command;
-  std::string preprocessed{};
-
-  std::string pchFile{};
-  std::vector<LLVMBitcode> bitcodes{};
-  std::map<std::string, Dependency> dependencies{};
-  std::map<std::string, std::string> attributes{};
-
-  NLOHMANN_DEFINE_TYPE_INTRUSIVE(ClangEntry, kind, language, file, command, preprocessed, //
-                                 pchFile, bitcodes, dependencies, attributes);
-
-private:
-  DEF_SOL_UT_ACCESSOR(kind);
-  DEF_SOL_UT_ACCESSOR(language);
-  DEF_SOL_UT_ACCESSOR(file);
-  DEF_SOL_UT_ACCESSOR(command);
-  DEF_SOL_UT_ACCESSOR(preprocessed);
-  DEF_SOL_UT_ACCESSOR(pchFile);
-  DEF_SOL_UT_ACCESSOR(bitcodes);
-  DEF_SOL_UT_ACCESSOR(dependencies);
-  DEF_SOL_UT_ACCESSOR(attributes);
-
-public:
-  DEF_TEAL_SOL_UT(ClangEntry,                              //
-                  SOL_UT_FN_ACC(ClangEntry, kind),         //
-                  SOL_UT_FN_ACC(ClangEntry, language),     //
-                  SOL_UT_FN_ACC(ClangEntry, file),         //
-                  SOL_UT_FN_ACC(ClangEntry, command),      //
-                  SOL_UT_FN_ACC(ClangEntry, preprocessed), //
-                  SOL_UT_FN_ACC(ClangEntry, pchFile),      //
-                  SOL_UT_FN_ACC(ClangEntry, bitcodes),     //
-                  SOL_UT_FN_ACC(ClangEntry, dependencies), //
-                  SOL_UT_FN_ACC(ClangEntry, attributes));
-
-  friend std::ostream &operator<<(std::ostream &os, const ClangEntry &entry) {
-    os << "sv::ClangEntry{"                                         //
-       << ".kind=" << entry.kind << ", "                            //
-       << ".language=" << entry.language << ", "                    //
-       << ".file=" << entry.file << ", "                            //
-       << ".commands=" << entry.command << ", "                     //
-       << ".preprocessed=(" << entry.preprocessed.size() << "), "   //
-       << ".pchFile=" << entry.pchFile << ", ";                     //
-    for (size_t i = 0; i < entry.bitcodes.size(); ++i)              //
-      os << ".bitcodes[" << i << "]=" << entry.bitcodes[i] << ", "; //
-    for (auto &[k, v] : entry.dependencies)
-      os << ".dependencies[" << k << "]=(" << v.content.size() << "), ";
-    for (auto &[k, v] : entry.attributes)
-      os << ".attributes[" << k << "]=" << v << ", ";
-    os << "}";
-    return os;
-  }
-};
-
-struct FlatEntry {
-
-  std::string kind = "flat";
-  std::string language;
-
-  std::string file;
-  std::string command;
-  std::string preprocessed{};
-
-  std::string namedSTreeFile{};
-  std::string unnamedSTreeFile{};
-  std::string namedIRTreeFile{};
-  std::string unnamedIRTreeFile{};
-
-  std::map<std::string, Dependency> dependencies{};
-  std::map<std::string, std::string> attributes{};
-
-  NLOHMANN_DEFINE_TYPE_INTRUSIVE(FlatEntry,                                   //
-                                 kind, language, file, command, preprocessed, //
-                                 namedSTreeFile, unnamedSTreeFile,            //
-                                 namedIRTreeFile, unnamedIRTreeFile,          //
-                                 dependencies, attributes);
-
-private:
-  DEF_SOL_UT_ACCESSOR(kind);
-  DEF_SOL_UT_ACCESSOR(language);
-  DEF_SOL_UT_ACCESSOR(file);
-  DEF_SOL_UT_ACCESSOR(command);
-  DEF_SOL_UT_ACCESSOR(preprocessed);
-  DEF_SOL_UT_ACCESSOR(namedSTreeFile);
-  DEF_SOL_UT_ACCESSOR(unnamedSTreeFile);
-  DEF_SOL_UT_ACCESSOR(namedIRTreeFile);
-  DEF_SOL_UT_ACCESSOR(unnamedIRTreeFile);
-  DEF_SOL_UT_ACCESSOR(dependencies);
-  DEF_SOL_UT_ACCESSOR(attributes);
-
-public:
-  DEF_TEAL_SOL_UT(FlatEntry,                                   //
-                  SOL_UT_FN_ACC(FlatEntry, kind),              //
-                  SOL_UT_FN_ACC(FlatEntry, language),          //
-                  SOL_UT_FN_ACC(FlatEntry, file),              //
-                  SOL_UT_FN_ACC(FlatEntry, command),           //
-                  SOL_UT_FN_ACC(FlatEntry, preprocessed),      //
-                  SOL_UT_FN_ACC(FlatEntry, namedSTreeFile),    //
-                  SOL_UT_FN_ACC(FlatEntry, unnamedSTreeFile),  //
-                  SOL_UT_FN_ACC(FlatEntry, namedIRTreeFile),   //
-                  SOL_UT_FN_ACC(FlatEntry, unnamedIRTreeFile), //
-                  SOL_UT_FN_ACC(FlatEntry, dependencies),      //
-                  SOL_UT_FN_ACC(FlatEntry, attributes));
-
-  friend std::ostream &operator<<(std::ostream &os, const FlatEntry &db) {
-    os << "sv::FlatEntry{"                                       //
-       << ".kind=" << db.kind << ", "                            //
-       << ".language=" << db.language << ", "                    //
-       << ".file=" << db.file << ", "                            //
-       << ".command=" << db.command << ", "                      //
-       << ".preprocessed=(" << db.preprocessed.size() << "), "   //
-       << ".namedSTreeFile=" << db.namedSTreeFile << ", "        //
-       << ".unnamedSTreeFile=" << db.unnamedSTreeFile << ", "    //
-       << ".namedIRTreeFile=" << db.namedIRTreeFile << ", "      //
-       << ".unnamedIRTreeFile=" << db.unnamedIRTreeFile << ", "; //
-    for (auto &[k, v] : db.dependencies)
-      os << ".dependencies[" << k << "]=(" << v.content.size() << "), ";
-    for (auto &[k, v] : db.attributes)
-      os << ".attributes[" << k << "]=" << v << ", ";
-    os << "}";
-    return os;
-  }
-};
-
 struct Database {
+
+  struct Entry {
+
+    std::string language;
+    std::string file;
+    std::string command;
+    std::string preprocessedFile{};
+    std::string dependencyFile{};
+    std::vector<std::string> treeFiles;
+
+    //    std::map<std::string, Dependency> dependencies{};
+
+    std::map<std::string, std::string> attributes{};
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Entry, language, file, command, preprocessedFile, //
+                                   dependencyFile, treeFiles, attributes);
+
+  private:
+    DEF_SOL_UT_ACCESSOR(language);
+    DEF_SOL_UT_ACCESSOR(file);
+    DEF_SOL_UT_ACCESSOR(command);
+    DEF_SOL_UT_ACCESSOR(preprocessedFile);
+    DEF_SOL_UT_ACCESSOR(dependencyFile);
+    DEF_SOL_UT_ACCESSOR(treeFiles);
+    DEF_SOL_UT_ACCESSOR(attributes);
+
+  public:
+    DEF_TEAL_SOL_UT(Entry,                                  //
+                    SOL_UT_FN_ACC(Entry, language),         //
+                    SOL_UT_FN_ACC(Entry, file),             //
+                    SOL_UT_FN_ACC(Entry, command),          //
+                    SOL_UT_FN_ACC(Entry, preprocessedFile), //
+                    SOL_UT_FN_ACC(Entry, dependencyFile),   //
+                    SOL_UT_FN_ACC(Entry, treeFiles),        //
+                    SOL_UT_FN_ACC(Entry, attributes));
+
+    friend std::ostream &operator<<(std::ostream &os, const Entry &entry) {
+      os << "sv::Database::Entry{"                                 //
+         << ".language=" << entry.language << ", "                 //
+         << ".file=" << entry.file << ", "                         //
+         << ".command=" << entry.command << ", "                   //
+         << ".preprocessedFile=" << entry.preprocessedFile << ", " //
+         << ".dependencyFile=" << entry.dependencyFile << ", ";    //
+      for (size_t i = 0; i < entry.treeFiles.size(); ++i)
+        os << ".treeFiles[" << i << "]=(" << entry.treeFiles[i] << "), ";
+      for (auto &[k, v] : entry.attributes)
+        os << ".attributes[" << k << "]=" << v << ", ";
+      os << "}";
+      return os;
+    }
+  };
+
   std::string root{};
-  std::vector<std::variant<std::shared_ptr<ClangEntry>, std::shared_ptr<FlatEntry>>> entries{};
+  std::vector<std::shared_ptr<Entry>> entries{};
   std::shared_ptr<PerFileCoverage> coverage{};
 
 private:
@@ -398,7 +321,7 @@ public:
     os << "sv::Database{"              //
        << ".root=" << db.root << ", "; //
     for (auto &e : db.entries)
-      std::visit([&](auto &&e) { os << ".entries[" << e->file << "]=" << e << ", "; }, e);
+      os << ".entries[" << e->file << "]=" << e << ", ";
     os << "}";
     return os;
   }

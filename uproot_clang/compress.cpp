@@ -1,4 +1,4 @@
-#include "sv/compress.h"
+#include "compress.h"
 
 #include <algorithm>
 #include <cstdlib>

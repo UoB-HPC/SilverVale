@@ -19,7 +19,7 @@
 #include "database.h"
 #include "tree.h"
 
-#include "semantic_ts.h"
+#include "tree_ts.h"
 
 namespace sv {
 
@@ -209,9 +209,13 @@ private:
   [[nodiscard]] static TsTree normaliseTsTree(const TsTree &tree);
 
 public:
-  Unit(std::string path, const std::shared_ptr<FlatCoverage> &coverage,    //
-       NTree<SNode> sTree, NTree<SNode> sTreeInlined, NTree<SNode> irTree, //
-       TsTree source, TsTree preprocessedSource);
+  Unit(std::string path,                              //
+       const std::shared_ptr<FlatCoverage> &coverage, //
+       NTree<SNode> sTree,                            //
+       NTree<SNode> sTreeInlined,                     //
+       NTree<SNode> irTree,                           //
+       TsTree source,                                 //
+       TsTree preprocessedSource);
   [[nodiscard]] const std::string &path() const;
   [[nodiscard]] const std::string &name() const;
 

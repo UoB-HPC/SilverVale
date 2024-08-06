@@ -14,8 +14,6 @@ resolveProgramAndDetect(const std::filesystem::path &program,
                         const std::function<bool(const std::string &)> &predicate,
                         const std::unordered_map<std::string, std::string> &programLUT);
 
-[[nodiscard]] std::string readFile(const std::filesystem::path &file);
-
 [[nodiscard]] std::vector<std::string> stripHeadAndOArgs(const std::vector<std::string> &args);
 
 [[nodiscard]] std::map<std::string, sv::Dependency>

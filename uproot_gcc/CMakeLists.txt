@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-add_library(uproot_gcc SHARED main.cpp)
+add_library(uproot_gcc SHARED main.cpp tree_gimple.cpp)
 
 execute_process(
         COMMAND gcc -print-file-name=plugin
@@ -25,13 +25,9 @@ else ()
     set(GCC_PLUGIN_INCLUDE_DIR "(call to `gcc -print-file-name=plugin` failed)")
 endif ()
 
-
-list(APPEND UPROOT_GCC_COMPILE_DEBUG_FLAGS -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
-list(APPEND UPROOT_GCC_COMPILE_RELEASE_FLAGS -O3 -march=native)
-list(APPEND UPROOT_GCC_LINK_DEBUG_FLAGS -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
 list(APPEND UPROOT_GCC_COMPILE_FLAGS
-        "$<$<CONFIG:Release>:${UPROOT_GCC_COMPILE_RELEASE_FLAGS}>"
-        "$<$<CONFIG:Debug>:${UPROOT_GCC_COMPILE_DEBUG_FLAGS}>"
+        "$<$<CONFIG:Release>:${SV_COMPILE_RELEASE_FLAGS}>"
+        "$<$<CONFIG:Debug>:${SV_COMPILE_DEBUG_FLAGS}>"
         -fexceptions
         -Wall
         -Wextra
@@ -45,7 +41,10 @@ list(APPEND UPROOT_GCC_COMPILE_FLAGS
         -Wno-unused-variable
         -Wno-unknown-warning-option
 )
-list(APPEND UPROOT_GCC_LINK_FLAGS "$<$<CONFIG:Debug>:${UPROOT_GCC_LINK_DEBUG_FLAGS}>")
+list(APPEND UPROOT_GCC_LINK_FLAGS
+        "$<$<CONFIG:Release>:${SV_LINK_RELEASE_FLAGS}>"
+        "$<$<CONFIG:Debug>:${SV_LINK_DEBUG_FLAGS}>"
+)
 
 
 set(UPROOT_ASAN_FLAGS
@@ -55,7 +54,6 @@ target_include_directories(uproot_gcc PUBLIC ${GCC_PLUGIN_INCLUDE_DIR} ${CMAKE_S
 target_compile_options(uproot_gcc PRIVATE ${UPROOT_GCC_COMPILE_FLAGS} -fno-rtti "${UPROOT_ASAN_FLAGS}")
 target_link_options(uproot_gcc PRIVATE ${UPROOT_GCC_LINK_FLAGS} "${UPROOT_ASAN_FLAGS}")
 target_link_libraries(uproot_gcc PRIVATE Aspartame::Aspartame fmt::fmt nlohmann_json::nlohmann_json)
-
 
 set_target_properties(uproot_gcc PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 

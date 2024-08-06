@@ -1,13 +1,11 @@
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 
 #include "sv/cli.h"
-#include "sv/compress.h"
 #include "sv/exec.h"
-#include "sv/index_common.h"
 #include "sv/index_gcc.h"
 #include "sv/par.h"
+#include "sv/uproot.h"
 
 #include "fmt/core.h"
 #include "xxh3.h"
@@ -24,7 +22,7 @@ bool sv::detectGccAndIndex(bool verbose,
                            const std::filesystem::path &dest,         //
                            const std::unordered_map<std::string, std::string> &programLUT) {
 
-  auto programAndVersion = sv::resolveProgramAndDetect(
+  auto programAndVersion = uproot::resolveProgramAndDetect(
       cmd.command[0],
       [](auto &x) {
         return x ^ starts_with("gcc (GCC)") || //
@@ -40,35 +38,29 @@ bool sv::detectGccAndIndex(bool verbose,
   const auto iiName = fmt::format("{}.ii", name);
   const auto dFile = fmt::format("{}.d", name);
 
-  const auto namedSTreeFile = fmt::format("{}.{}.named.stree.json", prefix, name);
-  const auto unnamedSTreeFile = fmt::format("{}.{}.unnamed.stree.json", prefix, name);
-  const auto namedIRTreeFile = fmt::format("{}.{}.named.irtree.json", prefix, name);
-  const auto unnamedIRTreeFile = fmt::format("{}.{}.unnamed.irtree.json", prefix, name);
-
-  auto envs = {//
-               std::pair{"UPROOT_NAMED_STREE_PATH", dest / namedSTreeFile},
-               std::pair{"UPROOT_UNNAMED_STREE_PATH", dest / unnamedSTreeFile},
-               std::pair{"UPROOT_NAMED_IRTREE_PATH", dest / namedIRTreeFile},
-               std::pair{"UPROOT_UNNAMED_IRTREE_PATH", dest / unnamedIRTreeFile},
+  const auto envLine = uproot::createEnvLine(
+      uproot::Options{.wd = wd,
+                      .dest = dest,
+                      .file = std::filesystem::path(cmd.file),
+                      .prefix = prefix,
+                      .verbose = verbose},
+      {
   // TODO don't hard code LD_PRELOAD
 #if !defined(NDEBUG) //&& !defined(__GNUG__)
-               std::pair{"LD_PRELOAD",
-                         std::filesystem::path(
-                             "/usr/lib/clang/17/lib/x86_64-redhat-linux-gnu/libclang_rt.asan.so")}
+          std::pair{std::string_view("LD_PRELOAD"),
+                    std::filesystem::path(
+                        "/usr/lib/clang/17/lib/x86_64-redhat-linux-gnu/libclang_rt.asan.so")}
 #endif
-  };
-  auto envLine =
-      envs | mk_string("env ", " ", "", [](auto k, auto v) { return fmt::format("{}={}", k, v); });
+      });
 
-  auto execParent = std::filesystem::canonical("/proc/self/exe").parent_path();
-
+  const auto execParent = std::filesystem::canonical("/proc/self/exe").parent_path();
   const auto treeArgs = //
       std::vector<std::string>{program,
                                fmt::format("-fplugin={}", execParent / "libuproot_gcc.so")} |
       concat(cmd.command | drop(1)) | to_vector();
   const auto iiArgs = //
       std::vector<std::string>{program, "-E", "-o" + iiName, "-MD"} |
-      concat(sv::stripHeadAndOArgs(cmd.command)) | to_vector();
+      concat(uproot::stripHeadAndOArgs(cmd.command)) | to_vector();
 
   sv::par_for(std::vector{treeArgs, iiArgs}, [&](auto args, auto) {
     auto line = args | prepend(envLine) | mk_string(" ");
@@ -89,19 +81,27 @@ bool sv::detectGccAndIndex(bool verbose,
     language = fmt::format("unknown ({})", driver);
   }
 
-  sv::FlatEntry //
-      result{.language = language,
-             .file = std::filesystem::path(cmd.file).filename(),
-             .command = cmd.command ^ mk_string(" "),
-             .preprocessed = readFile(wd / iiName),
-             .namedSTreeFile = namedSTreeFile,
-             .unnamedSTreeFile = unnamedSTreeFile,
-             .namedIRTreeFile = namedIRTreeFile,
-             .unnamedIRTreeFile = unnamedIRTreeFile,
-             .dependencies = sv::readDepFile(wd / dFile, cmd.file),
-             .attributes = {{"version", version}}};
+  auto dependencyFile = dest / fmt::format("{}.{}.{}", prefix, name, EntryDepSuffix);
+  writeJSON(dependencyFile, uproot::readDepFile(wd / dFile, cmd.file));
 
-  std::ofstream out(dest / fmt::format("{}.{}.sv.json", prefix, name), std::ios::out);
-  out << nlohmann::json(result);
+  auto preprocessedFile = dest / fmt::format("{}.{}.ii", prefix, name);
+  std::filesystem::copy(wd / iiName, preprocessedFile);
+
+  sv::Database::Entry //
+      entry{.language = language,
+            .file = std::filesystem::path(cmd.file).filename(),
+            .command = cmd.command ^ mk_string(" "),
+            .preprocessedFile = preprocessedFile,
+            .dependencyFile = dependencyFile,
+            .treeFiles =
+                {
+                    fmt::format("{}.{}.{}", prefix, name, EntryNamedSTreeSuffix),
+                    fmt::format("{}.{}.{}", prefix, name, EntryUnnamedSTreeSuffix),
+                    fmt::format("{}.{}.{}", prefix, name, EntryNamedIrTreeSuffix),
+                    fmt::format("{}.{}.{}", prefix, name, EntryUnnamedIrTreeSuffix),
+                },
+            .attributes = {{"version", version}}};
+
+  writeJSON(dest / fmt::format("{}.{}.{}", prefix, name, EntrySuffix), entry);
   return true;
 }

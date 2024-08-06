@@ -31,7 +31,7 @@ TEST_CASE("tree") {
   SECTION("nodes") { CHECK(t.nodes() == 6); }
 }
 
-TEST_CASE("stree-prune1") {
+TEST_CASE("tree-prune1") {
   auto actual = fixture;
   auto keep = std::unordered_set<std::string>{"c", "a"};
   actual.pruneInplace([&](auto x) { return keep.contains(x); });
@@ -43,21 +43,21 @@ TEST_CASE("stree-prune1") {
                                }}}});
 }
 
-TEST_CASE("stree-prune2") {
+TEST_CASE("tree-prune2") {
   auto actual = fixture;
   auto keep = std::unordered_set<std::string>{"foo"};
   actual.pruneInplace([&](auto x) { return keep.contains(x); });
   CHECK(actual == STree{"foo", {}});
 }
 
-TEST_CASE("stree-prune3") {
+TEST_CASE("tree-prune3") {
   auto actual = fixture;
   auto keep = std::unordered_set<std::string>{"bar"};
   actual.pruneInplace([&](auto x) { return keep.contains(x); });
   CHECK(actual == STree{"foo", {STree{"bar", {}}}});
 }
 
-TEST_CASE("stree-walk1") {
+TEST_CASE("tree-walk1") {
   using M = std::pair<bool, std::string>;
   auto keep = std::unordered_set<std::string>{"a"};
   auto actual = fixture.template map<M>([&](auto &x) -> M { return {keep.contains(x), x}; });
