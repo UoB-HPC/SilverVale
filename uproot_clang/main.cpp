@@ -339,7 +339,15 @@ auto collectFiles(const sv::uproot::Options &options) {
   // we consider HIP/CUDA the same, but HIP also sets CUDA and not the other way around
   if (o.HIP || o.CUDA) language = "cuda";
   else if (o.CPlusPlus) language = "cpp";
-  else if (o.C99 || o.C11 || o.C17 || o.C2x) language = "c";
+
+  else if (o.C99 || o.C11 || o.C17 ||
+#if LLVM_VERSION_MAJOR >= 18
+           o.C23
+#else
+           o.C2x
+#endif
+  )
+    language = "c";
   else SV_WARNF("Cannot determine precise language from PCH for {}", pchFile);
 
   llvm::LLVMContext context;

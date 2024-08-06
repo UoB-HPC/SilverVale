@@ -14,6 +14,9 @@ if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0")
     cmake_policy(SET CMP0135 NEW)
 endif ()
 
+option(ENABLE_CUDA_FIXTURES "Enable CUDA fixtures" ON)
+option(ENABLE_HIP_FIXTURES "Enable HIP fixtures" ON)
+
 CPMAddPackage("gh:jarro2783/cxxopts@3.2.0")
 CPMAddPackage("gh:madler/zlib@1.3.1")
 CPMAddPackage("gh:nlohmann/json@3.11.3")
@@ -58,7 +61,7 @@ endif ()
 CPMAddPackage(
         NAME dtl
         GITHUB_REPOSITORY cubicdaiya/dtl
-        VERSION 1.20
+        VERSION 1.21
         DOWNLOAD_ONLY YES)
 if (dtl_ADDED)
     add_library(dtl INTERFACE)
@@ -283,8 +286,13 @@ setup_fixture(microstream gcc g++ gfortran omp -DUSE_OMP=ON -DCMAKE_CXX_FLAGS="$
 
 setup_fixture(microstream clang clang++ flang-new omp_target -DUSE_OMP_TARGET=sm_60 -DCMAKE_CXX_FLAGS="${CLANG_COVERAGE_FLAGS}")
 
-setup_fixture(microstream clang clang++ flang-new hip -DUSE_HIP=gfx1036 -DCMAKE_CXX_FLAGS="${CLANG_COVERAGE_FLAGS}")
-setup_fixture(microstream clang clang++ flang-new cuda -DUSE_CUDA=sm_60 -DCMAKE_CUDA_COMPILER=clang++ -DCMAKE_CXX_FLAGS="${CLANG_COVERAGE_FLAGS}" -DCMAKE_CUDA_FLAGS="${CLANG_COVERAGE_FLAGS}")
+if (ENABLE_HIP_FIXTURES)
+    setup_fixture(microstream clang clang++ flang-new hip -DUSE_HIP=gfx1036 -DCMAKE_CXX_FLAGS="${CLANG_COVERAGE_FLAGS}")
+endif ()
+if (ENABLE_CUDA_FIXTURES)
+    setup_fixture(microstream clang clang++ flang-new cuda -DUSE_CUDA=sm_60 -DCMAKE_CUDA_COMPILER=clang++ -DCMAKE_CXX_FLAGS="${CLANG_COVERAGE_FLAGS}" -DCMAKE_CUDA_FLAGS="${CLANG_COVERAGE_FLAGS}")
+endif ()
+
 set(FIXTURE_TMP_DIR ${CMAKE_CURRENT_BINARY_DIR})
 
 
