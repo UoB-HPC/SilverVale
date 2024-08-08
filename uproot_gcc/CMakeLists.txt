@@ -53,7 +53,7 @@ set(UPROOT_ASAN_FLAGS
 target_include_directories(uproot_gcc PUBLIC ${GCC_PLUGIN_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/include)
 target_compile_options(uproot_gcc PRIVATE ${UPROOT_GCC_COMPILE_FLAGS} -fno-rtti "${UPROOT_ASAN_FLAGS}")
 target_link_options(uproot_gcc PRIVATE ${UPROOT_GCC_LINK_FLAGS} "${UPROOT_ASAN_FLAGS}")
-target_link_libraries(uproot_gcc PRIVATE Aspartame::Aspartame fmt::fmt nlohmann_json::nlohmann_json)
+target_link_libraries(uproot_gcc PRIVATE Aspartame::Aspartame fmt::fmt spdlog::spdlog nlohmann_json::nlohmann_json)
 
 set_target_properties(uproot_gcc PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 

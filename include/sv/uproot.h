@@ -9,9 +9,10 @@
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
 
-#include "sv/io.h"
 #include "sv/cli.h"
+#include "sv/database.h"
 #include "sv/exec.h"
+#include "sv/io.h"
 
 namespace sv::uproot {
 
@@ -80,7 +81,6 @@ resolveProgramAndDetect(const std::filesystem::path &program,
          ^ map([&](auto &version) { return std::pair{resolved, version}; });
 }
 
-
 inline std::vector<std::string> stripHeadAndOArgs(const std::vector<std::string> &args) {
   using namespace aspartame;
   return args                                                                               //
@@ -108,9 +108,10 @@ inline std::map<std::string, sv::Dependency> readDepFile(const std::filesystem::
   std::map<std::string, sv::Dependency> deps;
   auto addDep = [&](const std::filesystem::path &file) {
     try {
-      auto time = std::chrono::system_clock::to_time_t(       //
-          std::chrono::clock_cast<std::chrono::system_clock>( //
-              std::filesystem::last_write_time(file)));
+      auto tp = std::filesystem::last_write_time(file);
+      auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+          tp - decltype(tp)::clock::now() + std::chrono::system_clock::now());
+      auto time = std::chrono::system_clock::to_time_t(sctp);
       deps.emplace(file, sv::Dependency{time, sv::readFile(file)});
     } catch (const std::exception &e) { SV_WARNF("cannot read/stat dependency {}: {}", file, e); }
   };

@@ -99,6 +99,7 @@ static std::vector<LLVMBitcode> collectBitcodeFiles(bool verbose, const std::str
                                                     const std::filesystem::path &wd,
                                                     const std::filesystem::path &dest) {
   std::vector<LLVMBitcode> codes;
+  return codes;
   auto saveBC = [&, pattern = std::regex("^" + name + "-([a-zA-Z]+)-([a-zA-Z0-9-_]+)\\.bc$")](
                     const std::filesystem::path &src, const std::filesystem::path &dest) {
     auto e = std::error_code{};
@@ -129,13 +130,15 @@ static std::vector<LLVMBitcode> collectBitcodeFiles(bool verbose, const std::str
         auto embeddedName = fmt::format("{}.{}-{}-{}.bc", prefix, name, kind, triple);
         if (verbose)
           SV_INFOF("adding embedded BC {} (kind={}, triple={})", embeddedName, kind, triple);
-        std::error_code embeddedEC;
-        llvm::raw_fd_ostream file((dest.parent_path() / embeddedName).string(), embeddedEC);
-        file << f.getBinary()->getImage();
-        if (embeddedEC) {
-          SV_WARNF("failed to write embedded offload binary {}: {}", embeddedName,
-                   embeddedEC.message());
-        } else codes.emplace_back(embeddedName, kind, triple);
+
+        std::ofstream file(dest.parent_path() / embeddedName, std::ios::binary);
+        if (!file) {
+          SV_WARNF("failed to write embedded offload binary {}: cannot open file for writing",
+                   embeddedName);
+        } else {
+          file << f.getBinary()->getImage().str();
+          codes.emplace_back(embeddedName, kind, triple);
+        }
       });
 
       auto destName = dest.filename().string();
@@ -249,26 +252,72 @@ auto inflateASTFromFiles(const std::map<std::string, sv::Dependency> &dependenci
 
   auto mb = llvm::MemoryBuffer::getFile(pchFile.string());
   if (auto e = mb.getError()) {
-    SV_WARNF("Cannot read PCH data {}: {}", pchFile, e);
-    //    return {nullptr, modules};
+    SV_ERRF("Cannot read PCH data {}: {}", pchFile, e);
+    std::exit(1);
   }
+
+  auto pchBuffer = std::move(*mb);
+
+  // before we proceed, it's possible the .pch file is actually a clang offload bundle with an ast
+  // this was the case with -fsycl for icpx
+
+
+
+
+  auto magic = identify_magic(pchBuffer->getMemBufferRef().getBuffer());
+  switch(magic){
+    case file_magic::clang_ast : // good, kep going
+      break;
+    case file_magic::offload_bundle :
+    {
+
+
+      auto bundle = ClangOffloadBundle::parse(pchFile);
+      if(bundle){
+        for(auto f : bundle->get().entries){
+            std::cout << "@ " << pchFile << " " << f.id << " = " << f.size <<std::endl;
+        }
+      }
+
+      std::exit(1);
+      break;
+    }
+
+    default:
+      SV_WARNF("file {} is not a Clang PCH file or offload bundle (llvm::file_magic index={})", pchFile,
+               static_cast<std::underlying_type_t<file_magic::Impl>>(magic));
+  }
+
+
+
   vfs->addFile(pchFile.string(), 0, std::move(*mb));
+
+
 
   for (auto &[name, actual] : dependencies) {
     vfs->addFile(name, actual.modified, llvm::MemoryBuffer::getMemBuffer(actual.content));
   }
 
-  auto opt = std::make_shared<clang::HeaderSearchOptions>();
-  auto ast = clang::ASTUnit::LoadFromASTFile(pchFile,                                 //
-                                             clang::RawPCHContainerReader(),          //
-                                             clang::ASTUnit::WhatToLoad::LoadASTOnly, //
-                                             diagnostics,                             //
-                                             clang::FileSystemOptions(""),            //
-                                             opt, false,
+
+  auto ast = clang::ASTUnit::LoadFromASTFile(
+      /*Filename*/ pchFile,                               //
+      /*PCHContainerRdr*/ clang::RawPCHContainerReader(), //
+      /*ToLoad*/ clang::ASTUnit::WhatToLoad::LoadASTOnly, //
+      /*Diags*/ diagnostics,                              //
+      /*FileSystemOpts*/ clang::FileSystemOptions(""),    //
+      /*HSOpts*/ std::make_shared<clang::HeaderSearchOptions>(),
+
 #if LLVM_VERSION_MAJOR < 18
-                                             true,
+      /*UseDebugInfo*/ false,
+      /*OnlyLocalDecls*/ false,
+#elif LLVM_VERSION_MAJOR == 18
+      /*OnlyLocalDecls*/ false,
+#elif LLVM_VERSION_MAJOR > 18
+      /*LangOpts*/ nullptr,
+      /*OnlyLocalDecls*/ false,
 #endif
-                                             clang::CaptureDiagsKind::None, true, true, vfs);
+      /*CaptureDiagnostics*/ clang::CaptureDiagsKind::None,
+      /*AllowASTWithCompilerErrors*/ true, /*UserFilesAreVolatile*/ true, /*VFS*/ vfs);
   return ast;
 }
 
@@ -309,19 +358,19 @@ auto collectFiles(const sv::uproot::Options &options) {
   auto dFile = options.wd / fmt::format("{}.d", stem);
   auto pchDest = options.dest / fmt::format("{}.{}.zstd", options.prefix, pchFile.filename());
   { // handle TU.pch CPCH file
-    std::error_code zstdError;
-    auto pchStream = sv::utils::zstd_ostream(pchDest, zstdError, 6);
-    if (zstdError)
-      SV_WARNF("cannot open compressed stream for PHC {}: {}", pchDest, zstdError.message());
-    else {
-      auto buffer = MemoryBuffer::getFile(pchFile.string());
-      if (auto bufferError = buffer.getError())
-        SV_WARNF("cannot open PCH {}: {}", pchFile, bufferError.message());
-      else {
-        auto ptr = std::move(buffer.get());
-        (pchStream << ptr->getBuffer()).flush();
-      }
-    }
+    //    std::error_code zstdError;
+    //    auto pchStream = sv::utils::zstd_ostream(pchDest, zstdError, 6);
+    //    if (zstdError)
+    //      SV_WARNF("cannot open compressed stream for PHC {}: {}", pchDest, zstdError.message());
+    //    else {
+    //      auto buffer = MemoryBuffer::getFile(pchFile.string());
+    //      if (auto bufferError = buffer.getError())
+    //        SV_WARNF("cannot open PCH {}: {}", pchFile, bufferError.message());
+    //      else {
+    //        auto ptr = std::move(buffer.get());
+    //        (pchStream << ptr->getBuffer()).flush();
+    //      }
+    //    }
   }
 
   auto dependencies = sv::uproot::readDepFile(dFile, options.file);

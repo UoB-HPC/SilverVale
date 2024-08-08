@@ -24,7 +24,7 @@ static bool hasEnv(const std::string &name) {
   else return false;
 }
 
-int wrapper(const std::vector<const char *> &args) {
+int wrapper(const std::vector<char *> &args) {
 
   auto outDir = std::getenv("SV_OUTPUT_DIR");
   if (!outDir) {
@@ -52,8 +52,8 @@ int wrapper(const std::vector<const char *> &args) {
   return EXIT_FAILURE;
 }
 
-int main(int argc, const char **argv) {
-  std::vector<const char *> args(argv, argv + argc);
+int main(int argc, char **argv) {
+  std::vector<char *> args(argv, argv + argc);
 
   static std::map<std::string, std::pair<Kind, std::string>> table = {
       {sv::index::Name, {Kind::Index, sv::index::Description}},
@@ -91,7 +91,6 @@ int main(int argc, const char **argv) {
 
   // compiler wrapper mode: sv -- ...
   if (args.size() > 1 && std::string(args[1]) == "--") { return wrapper(args ^ drop(2)); }
-
 
   return table ^ get(args[1] ^ to_lower()) ^
          fold(

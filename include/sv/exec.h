@@ -15,7 +15,7 @@ inline std::optional<std::filesystem::path> findProgramByName(const std::string 
   while (std::getline(paths, path, ':')) {
     auto program = std::filesystem::path(path) / name;
     std::error_code error;
-    if (auto status = std::filesystem::status(program, error); error) {
+    if (auto status = std::filesystem::status(program, error); !error) {
       auto perms = status.permissions();
       if ((perms & std::filesystem::perms::owner_exec) != std::filesystem::perms::none ||
           (perms & std::filesystem::perms::group_exec) != std::filesystem::perms::none ||

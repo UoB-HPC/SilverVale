@@ -92,6 +92,8 @@ bool sv::detectClangAndIndex(bool verbose,
   const auto cc1UprootLine =
       fmt::format("{} {} -cc1 -load {}/{}", envLine, program, execParent, "libuproot_clang.so");
 
+  if (verbose) SV_COUT << cc1UprootLine << std::endl;
+
   if (auto code = sv::exec(cc1UprootLine, std::cout); code) {
     if (*code != 0) SV_WARNF("non-zero return for `{}`", cc1UprootLine);
   } else SV_WARNF("popen failed for `{}`: ", cc1UprootLine);

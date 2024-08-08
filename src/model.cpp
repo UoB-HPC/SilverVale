@@ -69,8 +69,8 @@ Tree Tree::leaf(const std::string &rootName) {
 
 // === Source ===
 
-Source::Source(TsTree tree, std::string content, const Mask &mask)
-    : root_(std::move(tree)), content_(std::move(content)), mask(mask) {}
+Source::Source(TsTree tree, std::string content, Mask mask)
+    : root_(std::move(tree)), content_(std::move(content)), mask(std::move(mask)) {}
 // XXX this content is different from that root_'s one as this can be modified for coverage
 const std::string &Source::content() const { return content_; }
 

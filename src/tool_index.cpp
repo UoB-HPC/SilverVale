@@ -1,4 +1,3 @@
-#include <cxxopts.hpp>
 #include <filesystem>
 #include <iostream>
 #include <system_error>
@@ -16,6 +15,7 @@
 #include "aspartame/string.hpp"
 #include "aspartame/variant.hpp"
 #include "aspartame/vector.hpp"
+#include "clipp.h"
 #include "zlib.h"
 
 using namespace aspartame;
@@ -264,54 +264,65 @@ static void runIndexTasks(const std::vector<sv::CompilationDatabase::Entry> &com
   }
 }
 
-int sv::index::main(int argc, const char **argv) {
-  cxxopts::Options options(Name, Description);
-  options.add_options() //
-      ("build", "The build directory containing compile_command.json.",
-       cxxopts::value<std::string>()) //
-      ("out", "The output directory for storing database files",
-       cxxopts::value<std::string>()) //
-      ("sourceGlobs", "Glob patterns for file to include in the database, defaults to *",
-       cxxopts::value<std::vector<std::string>>()->default_value({"*"})) //
-      ("cov-bin",
-       "Path to the binary compiled with coverage enabled. Profile data (*.profraw) files will "
-       "be searched in the directory containing the binary; all discovered raw profiles will be "
-       "merged.",
-       cxxopts::value<std::string>()->default_value("")) //
-      ("cov-raw",
-       "Additional path to directory containing profile data (*.profraw) files; all discovered "
-       "raw profiles will be merged.",
-       cxxopts::value<std::string>()->default_value("")) //
-      ("cov-kind", "Coverage data format, defaults to auto detect based on extension.",
-       cxxopts::value<std::string>()->default_value("auto")) //
-      ("clear", "Clear database output directory even if non-empty.",
-       cxxopts::value<bool>()->default_value("false")) //
-      ("v,verbose", "Print compile command line used for each translation unit.",
-       cxxopts::value<bool>()->default_value("false")) //
-      ("j,threads", "Number of jobs in parallel, defaults to total number of threads.",
-       cxxopts::value<int>()->default_value(std::to_string(std::thread::hardware_concurrency())));
+int sv::index::main(int argc, char **argv) {
+  using namespace clipp;
+  bool help{};
+  Options opts{};
+  opts.sourceGlobs = {"*"};
+  opts.maxThreads = static_cast<int>(std::thread::hardware_concurrency());
 
-  options.parse_positional({"sourceGlobs"});
-  auto result = options.parse(argc, argv);
-  if (result.count("help")) {
-    SV_COUT << options.help() << std::endl;
-    return EXIT_SUCCESS;
-  } else
-    return run(Options{
-        .buildDir = result["build"].as<std::string>(),
-        .sourceGlobs = result["sourceGlobs"].as<std::vector<std::string>>(),
-        .outDir = result["out"].as<std::string>(),
-        .coverageBin = result["cov-bin"].as<std::string>(),
-        .coverageRawDir = result["cov-raw"].as<std::string>(),
-        .coverageKind = parseCoverageKind(result["cov-kind"].as<std::string>()) ^ fold([]() {
-                          SV_WARNF("Cannot parse cov-kind, using default");
-                          return CoverageKind::AutoDetect;
-                        }),
-        .clearOutDir = result["clear"].as<bool>(),
-        .verbose = result["verbose"].as<bool>(),
-        .maxThreads = result["threads"].as<int>(),
+  auto bind = [](auto &x) { return [&](const char *arg) { x = arg; }; };
+  auto cli = ( //
+      option("-h", "--help").set(help).doc("Show help"),
 
-    });
+      required("--build")                                                //
+              % "The build directory containing compile_command.json." //
+          & value("buildDir", bind(opts.buildDir)),
+
+      required("--out")                                             //
+              % "The output directory for storing database files" //
+          & value("outDir", bind(opts.outDir)),
+
+      option("--sourceGlobs")                                                      //
+              % "Glob patterns for file to include in the database, defaults to *" //
+          & values("sourceGlobs", opts.sourceGlobs),
+
+      option("--cov-bin") //
+              % "Path to the binary compiled with coverage enabled. Profile data (*.profraw) files "
+                "will be searched in the directory containing the binary; all discovered raw "
+                "profiles will be merged." //
+          & value("coverageBin", bind(opts.coverageBin)),
+
+      option("--cov-raw") //
+              % "Additional path to directory containing profile data (*.profraw) files; all "
+                "discovered raw profiles will be merged." //
+          & value("coverageRawDir", bind(opts.coverageRawDir)),
+
+      option("--cov-kind")                                                          //
+              % "Coverage data format, defaults to auto detect based on extension." //
+          & value("coverageKind",
+                  [&](auto k) {
+                    opts.coverageKind = parseCoverageKind(k) ^ fold([]() {
+                                          SV_WARNF("Cannot parse cov-kind, using default");
+                                          return CoverageKind::AutoDetect;
+                                        });
+                  }),
+
+      option("--threads", "-j") %
+              "Number of jobs in parallel, defaults to total number of threads." //
+          & value("threads", opts.maxThreads),
+
+      option("--clear").set(opts.clearOutDir) //
+          % "Clear database output directory even if non-empty.",
+
+      option("--verbose", "-v").set(opts.verbose) //
+          % "Print compile command line used for each translation unit.");
+
+  if (!parse(argc, argv, cli) || help) {
+    std::cerr << make_man_page(cli, argv[0]) << std::endl;
+    return EXIT_FAILURE;
+  }
+  return run(opts);
 }
 
 int sv::index::run(const sv::index::Options &options) {

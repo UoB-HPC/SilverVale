@@ -5,19 +5,27 @@
 #include "sv/tool_dump.h"
 
 #include "aspartame/vector.hpp"
-#include "cxxopts.hpp"
+#include "clipp.h"
 
 using namespace aspartame;
 
-int sv::dump::main(int argc, const char **argv) {
-  cxxopts::Options options(Name, Description);
-  options.add_options()("db", "The path to the database, as generated using the index command",
-                        cxxopts::value<std::string>());
-  auto result = options.parse(argc, argv);
-  if (result.count("help")) {
-    SV_COUT << options.help() << std::endl;
-    return EXIT_SUCCESS;
-  } else return sv::dump::run(sv::dump::Options{result["db"].as<std::string>()});
+int sv::dump::main(int argc, char **argv) {
+  using namespace clipp;
+  bool help{};
+  Options opts{};
+  auto bind = [](auto &x) { return [&](const char *arg) { x = arg; }; };
+  auto cli = ( //
+      option("--help", "-h").doc("Show help").set(help),
+
+      option("--db")                                                             //
+              % "The path to the database, as generated using the index command" //
+          & value("db", bind(opts.dbDir)));
+
+  if (!parse(argc, argv, cli) || help) {
+    std::cerr << make_man_page(cli, argv[0]) << std::endl;
+    return EXIT_FAILURE;
+  }
+  return run(opts);
 }
 
 int sv::dump::run(const Options &options) {

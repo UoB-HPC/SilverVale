@@ -143,7 +143,7 @@ std::set<uint32_t> sv::TsTree::slocLines(const std::function<bool(const TSNode &
   preOrderWalk(
       [&](TSNode x) {
         std::string type = ts_node_type(x);
-        if (mask && mask(x)) { return true; }
+        if (mask && !mask(x)) { return true; }
 
         if (type == "translation_unit" || type == "program") {
           // Some parser's TU would use the end of the file as end point
@@ -179,7 +179,7 @@ sv::TsTree::llocRanges(const std::function<bool(const TSNode &)> &mask,
   std::set<std::pair<uint32_t, uint32_t>> llocRanges;
   preOrderWalk(
       [&](auto &x) {
-        if (mask && mask(x)) { return true; }
+        if (mask && !mask(x)) { return true; }
 
         std::string type = ts_node_type(x);
         // don't count compound stmt as it contains children

@@ -67,8 +67,8 @@ static std::optional<Modifier> parseModifier(const std::string_view &modifier) {
 }
 
 struct DatabaseSpec {
+  bool base;
   std::filesystem::path path;
-  std::vector<std::string> roots;
 };
 
 struct ExcludeFilter {
@@ -92,7 +92,6 @@ struct TaskDesc {
 
 struct Options {
   std::vector<DatabaseSpec> databases;
-  std::string base;
   std::vector<TaskDesc> kinds;
   std::vector<ExcludeFilter> excludes;
   std::vector<EntryMerge> merges;
@@ -101,7 +100,7 @@ struct Options {
   int maxThreads;
 };
 
-[[nodiscard]] int main(int argc, const char **argv);
+[[nodiscard]] int main(int argc, char **argv);
 [[nodiscard]] int run(const Options &options);
 
 } // namespace sv::delta

@@ -155,7 +155,7 @@ class Source {
   Mask mask;
 
 public:
-  Source(TsTree root, std::string content, const Mask &mask);
+  Source(TsTree root, std::string content, Mask mask);
   [[nodiscard]] const std::string &content() const;
   [[nodiscard]] const std::string &contentWhitespaceNormalised() const;
   [[nodiscard]] size_t sloc() const;

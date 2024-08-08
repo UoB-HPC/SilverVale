@@ -172,27 +172,34 @@ TEST_CASE("microstream") {
 
         for (auto &unit : cb.units) {
           // make sure it's not all empty trees with one root
+
           CHECK(unit->sTree(Unit::View::AsIs).maxWidth() > 1);
           CHECK(unit->sTreeInlined(Unit::View::AsIs).maxWidth() > 1);
           CHECK(unit->irTree(Unit::View::AsIs).maxWidth() > 1);
           CHECK(unit->sourceAsWritten().tsTree().maxWidth() > 1);
           CHECK(unit->sourcePreprocessed().tsTree().maxWidth() > 1);
           CHECK(unit->sourceWithCoverage().tsTree().maxWidth() > 1);
-
+          CHECK(unit->sourceAsWritten().sloc() > 1);
+          CHECK(unit->sourceAsWritten().lloc() > 1);
+          CHECK(unit->sourcePreprocessed().sloc() > 1);
+          CHECK(unit->sourcePreprocessed().lloc() > 1);
+          CHECK(unit->sourceAsWritten().sloc() > 1);
+          CHECK(unit->sourceAsWritten().lloc() > 1);
           // smoke test identity distance
-
 
           CHECK(Diff::apted(unit->sTree(Unit::View::AsIs), unit->sTree(Unit::View::AsIs)) == 0);
           // TODO parallelise, too slow
-//          CHECK(Diff::apted(unit->sTreeInlined(Unit::View::AsIs),
-//                            unit->sTreeInlined(Unit::View::AsIs)) == 0);
-//          CHECK(Diff::apted(unit->irTree(Unit::View::AsIs), unit->irTree(Unit::View::AsIs)) == 0);
-//          CHECK(Diff::apted(unit->sourceAsWritten().tsTree(), unit->sourceAsWritten().tsTree()) ==
-//                0);
-//          CHECK(Diff::apted(unit->sourcePreprocessed().tsTree(),
-//                            unit->sourcePreprocessed().tsTree()) == 0);
-//          CHECK(Diff::apted(unit->sourceWithCoverage().tsTree(),
-//                            unit->sourceWithCoverage().tsTree()) == 0);
+          //          CHECK(Diff::apted(unit->sTreeInlined(Unit::View::AsIs),
+          //                            unit->sTreeInlined(Unit::View::AsIs)) == 0);
+          //          CHECK(Diff::apted(unit->irTree(Unit::View::AsIs),
+          //          unit->irTree(Unit::View::AsIs)) == 0);
+          //          CHECK(Diff::apted(unit->sourceAsWritten().tsTree(),
+          //          unit->sourceAsWritten().tsTree()) ==
+          //                0);
+          //          CHECK(Diff::apted(unit->sourcePreprocessed().tsTree(),
+          //                            unit->sourcePreprocessed().tsTree()) == 0);
+          //          CHECK(Diff::apted(unit->sourceWithCoverage().tsTree(),
+          //                            unit->sourceWithCoverage().tsTree()) == 0);
 
           // make sure processed TS is successful
           auto nodes = unit->sourcePreprocessed().tsTree().root    //

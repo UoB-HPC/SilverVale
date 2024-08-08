@@ -1,6 +1,7 @@
 #pragma once
 #include <iosfwd>
 #include <ostream>
+#include <sstream>
 #include <stack>
 #include <string>
 #include <type_traits>

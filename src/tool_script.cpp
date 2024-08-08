@@ -11,40 +11,44 @@
 #include "aspartame/variant.hpp"
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
-#include "cxxopts.hpp"
+#include "clipp.h"
 
 using namespace aspartame;
 
-int sv::script::main(int argc, const char **argv) {
-  cxxopts::Options options(Name, Description);
-  options.add_options() //
-      ("defs",
-       "Emit Teal type (*.d.tl) declarations to standard output for Teal script development."
-       "This option supersedes any other argument or user script.",
-       cxxopts::value<bool>()->default_value("false")) //
-      ("nobuffer", "Disable buffering to C++'s stdout for print.",
-       cxxopts::value<bool>()->default_value("true")) //
-      ("j,threads",
-       "Global number of jobs to run in parallel, defaults to total number of threads.",
-       cxxopts::value<int>()->default_value(std::to_string(std::thread::hardware_concurrency()))) //
-      ("roots", "Additional search paths in CSV format for Lua's requires function.",
-       cxxopts::value<std::vector<std::string>>()) //
-      ("scripts",
-       "The path to the Lua user script followed by arguments passed to the arg table for "
-       "the script.",
-       cxxopts::value<std::vector<std::string>>());
+int sv::script::main(int argc, char **argv) {
+  using namespace clipp;
+  bool help{};
+  Options opts{};
+  opts.maxThreads = static_cast<int>(std::thread::hardware_concurrency());
 
-  options.parse_positional({"scripts"});
-  auto result = options.parse(argc, argv);
-  if (result.count("help")) {
-    SV_COUT << options.help() << std::endl;
-    return EXIT_SUCCESS;
-  } else
-    return run(Options{.roots = result["roots"].as<std::vector<std::string>>(),
-                       .defs = result["defs"].as<bool>(),
-                       .noBuffer = result["nobuffer"].as<bool>(),
-                       .maxThreads = result["threads"].as<int>(),
-                       .args = result["scripts"].as<std::vector<std::string>>()});
+  auto cli = ( //
+      option("-h", "--help").set(help).doc("Show help"),
+
+      option("--defs").set(opts.defs) //
+          % "Emit Teal type (*.d.tl) declarations to standard output for Teal script development. "
+            "This option supersedes any other argument or user script.",
+
+      option("--nobuffer").set(opts.noBuffer) //
+          % "Disable buffering to C++'s stdout for print.",
+
+      option("--threads", "-j")                                                                  //
+              % "Global number of jobs to run in parallel, defaults to total number of threads." //
+          & value("threads", opts.maxThreads),
+
+      option("--roots")                                                              //
+              % "Additional search paths in CSV format for Lua's requires function." //
+          & value("roots", opts.roots),
+
+      values("scripts", opts.args) //
+          % "The path to the Lua user script followed by arguments passed to the arg table for "
+            "the script.");
+
+  if (!parse(argc, argv, cli) || help) {
+    std::cerr << clipp::make_man_page(cli, argv[0]) << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  return run(opts);
 }
 
 constexpr sv::lua::TypeList<       //

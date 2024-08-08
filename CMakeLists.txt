@@ -14,17 +14,29 @@ if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0")
     cmake_policy(SET CMP0135 NEW)
 endif ()
 
-option(ENABLE_CUDA_FIXTURES "Enable CUDA fixtures" ON)
-option(ENABLE_HIP_FIXTURES "Enable HIP fixtures" ON)
+option(SV_ENABLE_CUDA_FIXTURES "Enable CUDA fixtures" ON)
+option(SV_ENABLE_HIP_FIXTURES "Enable HIP fixtures" ON)
 
-CPMAddPackage("gh:jarro2783/cxxopts@3.2.0")
 CPMAddPackage("gh:madler/zlib@1.3.1")
 CPMAddPackage("gh:nlohmann/json@3.11.3")
-CPMAddPackage("gh:fmtlib/fmt#11.0.1")
 CPMAddPackage("gh:catchorg/Catch2@3.6.0")
 CPMAddPackage("gh:ThePhD/sol2@3.3.0")
 CPMAddPackage("gh:DatabaseGroup/tree-similarity#0.1.1")
-CPMAddPackage(Aspartame
+
+CPMAddPackage(
+        NAME fmt
+        GITHUB_REPOSITORY fmtlib/fmt
+        GIT_TAG 11.0.1
+        OPTIONS "BUILD_SHARED_LIBS OFF"
+)
+CPMAddPackage(
+        NAME spdlog
+        GITHUB_REPOSITORY gabime/spdlog
+        VERSION 1.14.1
+        OPTIONS "SPDLOG_FMT_EXTERNAL ON" "BUILD_SHARED_LIBS OFF"
+)
+CPMAddPackage(
+        NAME Aspartame
         GITHUB_REPOSITORY tom91136/Aspartame
         GIT_TAG 8e87a5bb)
 CPMAddPackage(
@@ -34,6 +46,7 @@ CPMAddPackage(
         SOURCE_SUBDIR build/cmake
         OPTIONS "ZSTD_BUILD_STATIC ON" "ZSTD_BUILD_SHARED OFF" "BUILD_SHARED_LIBS OFF")
 CPMAddPackage(
+        NAME xxHash
         GITHUB_REPOSITORY Cyan4973/xxHash
         GIT_TAG a57f6cc # after https://github.com/Cyan4973/xxHash/commit/f17d319
         SOURCE_SUBDIR cmake_unofficial
@@ -43,6 +56,11 @@ CPMAddPackage(
         GITHUB_REPOSITORY lua/lua
         VERSION 5.4.7
         DOWNLOAD_ONLY YES)
+CPMAddPackage("gh:muellan/clipp@1.2.3")
+if (clipp_ADDED)
+    add_library(clipp INTERFACE IMPORTED)
+    target_include_directories(clipp INTERFACE ${clipp_SOURCE_DIR}/include)
+endif ()
 CPMAddPackage(
         NAME BS_thread_pool
         GITHUB_REPOSITORY bshoshany/thread-pool
@@ -177,10 +195,11 @@ target_link_libraries(SilverVale
         BS_thread_pool
         sol2
         lua
-        fmt::fmt-header-only
+        fmt::fmt
+        spdlog::spdlog
         xxHash::xxhash
         zlibstatic
-        cxxopts
+        clipp
 
         PUBLIC
         tree-sitter
@@ -199,7 +218,10 @@ target_link_options(SilverVale PRIVATE ${SV_LINK_FLAGS})
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_precompile_headers(SilverVale PRIVATE
             [["nlohmann/json.hpp"]]
-            [["fmt/core.h"]]
+#            [["fmt/core.h"]]
+#            [["fmt/std.h"]]
+            [["spdlog/spdlog.h"]]
+            [["clipp.h"]]
             [["sol/sol.hpp"]]
             [["zstd.h"]]
 
@@ -236,7 +258,7 @@ add_executable(tests test/tree.cpp test/tstree.cpp test/index_microstream.cpp te
 target_link_libraries(tests PRIVATE Catch2::Catch2WithMain)
 set_target_properties(driver PROPERTIES OUTPUT_NAME "sv")
 foreach (target driver tests)
-    target_link_libraries(${target} PRIVATE SilverVale Aspartame::Aspartame nlohmann_json::nlohmann_json sol2 lua fmt::fmt-header-only)
+    target_link_libraries(${target} PRIVATE SilverVale Aspartame::Aspartame nlohmann_json::nlohmann_json sol2 lua fmt::fmt spdlog::spdlog clipp)
     target_include_directories(${target} PRIVATE include)
     target_compile_options(${target} PRIVATE ${SV_COMPILE_FLAGS})
     target_link_options(${target} PRIVATE ${SV_LINK_FLAGS})
@@ -286,10 +308,10 @@ setup_fixture(microstream gcc g++ gfortran omp -DUSE_OMP=ON -DCMAKE_CXX_FLAGS="$
 
 setup_fixture(microstream clang clang++ flang-new omp_target -DUSE_OMP_TARGET=sm_60 -DCMAKE_CXX_FLAGS="${CLANG_COVERAGE_FLAGS}")
 
-if (ENABLE_HIP_FIXTURES)
+if (SV_ENABLE_HIP_FIXTURES)
     setup_fixture(microstream clang clang++ flang-new hip -DUSE_HIP=gfx1036 -DCMAKE_CXX_FLAGS="${CLANG_COVERAGE_FLAGS}")
 endif ()
-if (ENABLE_CUDA_FIXTURES)
+if (SV_ENABLE_CUDA_FIXTURES)
     setup_fixture(microstream clang clang++ flang-new cuda -DUSE_CUDA=sm_60 -DCMAKE_CUDA_COMPILER=clang++ -DCMAKE_CXX_FLAGS="${CLANG_COVERAGE_FLAGS}" -DCMAKE_CUDA_FLAGS="${CLANG_COVERAGE_FLAGS}")
 endif ()
 
@@ -318,5 +340,6 @@ file(GENERATE # expand generator expressions too
 add_subdirectory(uproot_gcc)
 add_subdirectory(uproot_clang)
 add_dependencies(tests uproot_gcc uproot_clang processor_fixture)
+add_dependencies(driver uproot_gcc uproot_clang)
 
 

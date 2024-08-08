@@ -5,7 +5,6 @@
 #include "catch2/catch_test_macros.hpp"
 #include "fixture.h"
 #include "fmt/core.h"
-#include "sv/index_common.h"
 #include "sv/tree_ts.h"
 #include "sv/uproot.h"
 

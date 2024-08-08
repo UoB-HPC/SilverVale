@@ -16,7 +16,7 @@ struct Options {
   std::vector<std::string> args;
 };
 
-[[nodiscard]] int main(int argc, const char **argv);
+[[nodiscard]] int main(int argc, char **argv);
 [[nodiscard]] int run(const Options &options);
 
 } // namespace sv::script

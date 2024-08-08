@@ -16,7 +16,7 @@
 #include "aspartame/variant.hpp"
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
-#include "cxxopts.hpp"
+#include "clipp.h"
 
 using namespace aspartame;
 using namespace sv;
@@ -85,7 +85,7 @@ template <typename F> std::pair<DiffFn, MaxFn> treeSelect(F f) {
         return Tree::combine("root", xs ^ map([&](auto &x) { return f(x); })).nodes();
       },
   };
-};
+}
 
 double minDiff(std::vector<std::string> &&ls, std::vector<std::string> &&rs) {
   auto value = std::numeric_limits<double>::max();
@@ -104,8 +104,8 @@ std::pair<DiffFn, MaxFn> createTask(delta::TaskDesc desc) {
     // source cases
     case delta::Kind::SLOCAbs:
       return {
-          [=](const Units &, const Units &rhs) -> double {
-            return rhs ^ fold_left(0, [&](auto acc, auto &u) {
+          [=](const Units &lhs, const Units &) -> double {
+            return lhs ^ fold_left(0, [&](auto acc, auto &u) {
                      switch (desc.mod) {
                        case delta::Modifier::Raw: return acc + u->sourceAsWritten().sloc();
                        case delta::Modifier::CPP: return acc + u->sourcePreprocessed().sloc();
@@ -118,8 +118,8 @@ std::pair<DiffFn, MaxFn> createTask(delta::TaskDesc desc) {
       };
     case delta::Kind::LLOCAbs:
       return {
-          [=](const Units &, const Units &rhs) -> double {
-            return rhs ^ fold_left(0, [&](auto acc, auto &u) {
+          [=](const Units &lhs, const Units &) -> double {
+            return lhs ^ fold_left(0, [&](auto acc, auto &u) {
                      switch (desc.mod) {
                        case delta::Modifier::Raw: return acc + u->sourceAsWritten().lloc();
                        case delta::Modifier::CPP: return acc + u->sourcePreprocessed().lloc();
@@ -215,136 +215,151 @@ std::pair<DiffFn, MaxFn> createTask(delta::TaskDesc desc) {
   }
 }
 
-int delta::main(int argc, const char **argv) {
-  cxxopts::Options options(Name, Description);
-  options.add_options()(
-      "kinds",
-      "Comma separated kinds of metric to use for diff operation. Defaults to all supported kinds."
-      "Source-based:\n"
-      "  sloc         - Source Lines of Code (Absolute measure).\n"
-      "  lloc         - Logical Lines of Code (Absolute measure).\n"
-      "  source       - Source code (whitespace normalised edit difference).\n"
-      "  tstree       - Tree-sitter tree.\n"
-      "Semantic-based:\n"
-      "  stree        - AST based (e.g ClangAST/High GIMPLE, etc) semantic tree with "
-      "  symbols normalised.\n"
-      "  streeinlined - AST based semantic tree with symbols normalised and calls inlined.\n"
-      "  irtree       - IR based (e.g LLVM IR/Low GIMPLE) semantic tree with symbols "
-      "normalised.\n"
-      "\nBy default the metric uses the source code or semantic as written, the following "
-      "modifiers for each kind are supported:"
-      "  +raw - Source code or semantic as written, no effect\n"
-      "  +cpp - Run the diff after the preprocessor has finished execution (source based kinds "
-      "only)\n"
-      "  +cov - Run the diff after pruning out code that was not covered if coverage is "
-      "available in the database\n",
-      cxxopts::value<std::vector<std::string>>()) //
-      ("root",
-       "Root path shared by all databases. Analysis (delta) will not escape the unions of all root "
-       "paths.",
-       cxxopts::value<std::string>()->default_value("")) //
-      ("output", "The output file name prefix for all result CSV files.",
-       cxxopts::value<std::string>()) //
-      ("j,threads",
-       "Number of parallel AST frontend jobs in parallel, defaults to total number of threads.",
-       cxxopts::value<int>()->default_value(std::to_string(std::thread::hardware_concurrency()))) //
-      ("excludes", "<TU glob> Exclude TUs that match the TU glob.",
-       cxxopts::value<std::vector<std::string>>()) //
-      ("merges",
-       "<TU glob>:<TU name> Combine multiple TUs (files) into a single TU where all TUs matching "
-       "TU glob will be merged",
-       cxxopts::value<std::vector<std::string>>()) //
-      ("matches",
-       "A comma separated glob pairs for matching TUs (files) against the base TUs. The format is "
-       "<base glob>:<model glob>,... where the diff will run on the first matching pattern pair; "
-       "malformed patterns are ignored. This overrides the default behaviour where TUs are matched "
-       "by identical filenames.",
-       cxxopts::value<std::vector<std::string>>()) //
-      ("base",
-       "The base database to compare against, defaults to the first positional database argument.",
-       cxxopts::value<std::string>()) //
-      ("databases",
-       "<database> [... <database N>]\nCompare all databases against the base database. Each "
-       "database can optionally be suffixed by a colon separated list of root paths (e.g "
-       "db_path_1:rootA:rootB). When applicable, tree analysis will not escape the union of all "
-       "root paths. The base database can be specified via --base <database>",
-       cxxopts::value<std::vector<std::string>>());
+int delta::main(int argc, char **argv) {
+  using namespace clipp;
+  bool help{};
+  Options opts{};
+  opts.maxThreads = static_cast<int>(std::thread::hardware_concurrency());
 
-  options.parse_positional({"databases"});
-  auto result = options.parse(argc, argv);
-  if (result.count("help")) {
-    SV_COUT << options.help() << std::endl;
-    return EXIT_SUCCESS;
-  } else {
+  auto pairPattern = [](const std::string &in,
+                        char delim) -> std::optional<std::pair<std::string, std::string>> {
+    auto pair = in ^ split(delim);
+    if (pair.size() == 2) return std::pair{pair[0], pair[1]};
+    SV_WARNF("Ignoring malformed pair pattern with delimiter ({}): `{}`", delim, in);
+    return std::nullopt;
+  };
 
-    auto pairPattern = [](const std::string &in,
-                          char delim) -> std::optional<std::pair<std::string, std::string>> {
-      auto pair = in ^ split(delim);
-      if (pair.size() == 2) return std::pair{pair[0], pair[1]};
-      SV_WARNF("Ignoring malformed pair pattern with delimiter ({}): `{}`", delim, in);
-      return std::nullopt;
-    };
+  auto cli = ( //
+      option("--help", "-h").set(help).doc("Show help"),
+      repeatable(
+          option("--kinds") %
+              "Comma separated kinds of metric to use for diff operation. Defaults to all  "
+              "supported kinds.\n"
+              "Source-based:\n"
+              "\tsloc         - Source Lines of Code (Absolute measure).\n"
+              "\tlloc         - Logical Lines of Code (Absolute measure).\n"
+              "\tsource       - Source code (whitespace normalised edit difference).\n"
+              "\ttstree       - Tree-sitter tree.\n"
+              "Semantic-based:\n"
+              "\tstree        - AST based (e.g ClangAST/High GIMPLE, etc) semantic tree with "
+              "\tsymbols normalised.\n"
+              "\tstreeinlined - AST based semantic tree with symbols normalised and calls "
+              "inlined.\n"
+              "\tirtree       - IR based (e.g LLVM IR/Low GIMPLE) semantic tree with symbols "
+              "normalised.\n"
+              "\nBy default the metric uses the source code or semantic as written, the following "
+              "modifiers for each kind are supported:\n"
+              "\t+raw - Source code or semantic as written, no transformation\n"
+              "\t+cpp - Source after preprocessor has been executed (no-op for semantic kinds)\n"
+              "\t+cov - Source after pruning with coverage data if available in the database\n" //
+          & value("kind[+modifier],...",
+                  [&](const std::string &s) {
+                    s ^ split(",") | collect([](auto &spec) -> std::optional<TaskDesc> {
+                      auto parts = spec ^ split("+");
+                      if (parts.size() == 1) {
+                        if (auto k = delta::parseKind(parts[0]); k)
+                          return TaskDesc{*k, delta::Modifier::Raw};
 
-    auto mappedDbs =
-        result["databases"].as<std::vector<std::string>>() | map([&](auto &x) {
-          auto paths = x ^ split(":");
-          auto root = result["root"].as<std::string>();
-          return DatabaseSpec{paths ^ head_maybe() ^ get_or_else(x),
-                              root.empty() ? paths ^ tail() : paths ^ tail() ^ append(root)};
-        }) |
-        to_vector();
+                      } else if (parts.size() == 2) {
+                        auto k = delta::parseKind(parts[0]);
+                        auto m = delta::parseModifier(parts[1]);
+                        if (k && m) return TaskDesc{*k, *m};
+                      }
+                      SV_WARNF("Ignoring malformed kind: {} (parsed as [{}])", spec,
+                               parts ^ mk_string(","));
+                      return std::nullopt;
+                    }) | for_each([&](auto x) { opts.kinds.emplace_back(x); });
+                  })),
 
-    auto optionalCSV = [&](const std::string &name) -> std::vector<std::string> {
-      if (result[name].count() > 0) return result[name].as<std::vector<std::string>>();
-      return {};
-    };
+      option("--output")                                                //
+              % "The output file name prefix for all result CSV files." //
+          & value("output", opts.outputPrefix),
 
-    return run(
-        Options{.databases = mappedDbs,
-                .base = result.count("base") ? result["base"].as<std::string>()
-                        : mappedDbs.empty()  ? ""
-                                             : mappedDbs.front().path.string(),
-                .kinds = optionalCSV("kinds")                                  //
-                         | collect([](auto &spec) -> std::optional<TaskDesc> { //
-                             auto parts = spec ^ split("+");
-                             if (parts.size() == 1) {
-                               if (auto k = delta::parseKind(parts[0]); k)
-                                 return TaskDesc{*k, delta::Modifier::Raw};
+      option("--threads", "-j")                                                             //
+              % "Number of parallel jobs in parallel, defaults to total number of threads." //
+          & value("threads", opts.maxThreads),
 
-                             } else if (parts.size() == 2) {
-                               auto k = delta::parseKind(parts[0]);
-                               auto m = delta::parseModifier(parts[1]);
-                               if (k && m) return TaskDesc{*k, *m};
-                             }
+      repeatable(                                  //
+          option("--excludes")                     //
+              % "Exclude TUs that match the glob." //
+          & value("glob",
+                  [&](const std::string &s) {
+                    opts.excludes.emplace_back(ExcludeFilter{.glob = s}); //
+                  })),
 
-                             SV_WARNF("Ignoring malformed kind: {} (parsed as [{}])", spec,
-                                      parts ^ mk_string(","));
-                             return std::nullopt;
-                           })                                                                 //
-                         | to_vector(),                                                       //
-                .excludes = optionalCSV("excludes")                                           //
-                            | map([](auto &s) { return ExcludeFilter{s}; })                   //
-                            | to_vector(),                                                    //
-                .merges = optionalCSV("merges")                                               //
-                          | collect([&](auto &s) {                                            //
-                              return pairPattern(s, ':')                                      //
-                                     ^ map([&](auto &glob, auto &name) {                      //
-                                         return EntryMerge{.glob = glob, .name = name};       //
-                                       });                                                    //
-                            })                                                                //
-                          | to_vector(),                                                      //
-                .matches = optionalCSV("matches")                                             //
-                           | collect([&](auto &p) { return pairPattern(p, ':'); })            //
-                           | map([](auto &source, auto &target) {                             //
-                               return EntryMatch{.sourceGlob = source, .targetGlob = target}; //
-                             })                                                               //
-                           | to_vector(),
-                .outputPrefix = result.count("output") ? result["output"].as<std::string>() : "",
-                .maxThreads = result["threads"].as<int>()});
+      repeatable(                                                                              //
+          option("--merges")                                                                   //
+              % "Combine multiple TUs matching the glob into a single TU with the given name." //
+          & value("glob:name",
+                  [&](const std::string &s) {
+                    pairPattern(s, ':') ^ for_each([&](auto &glob, auto &name) {
+                      opts.merges.emplace_back(EntryMerge{.glob = glob, .name = name}); //
+                    });
+                  })),
+
+      repeatable(             //
+          option("--matches") //
+              % "Glob pairs for matching TUs against the base TUs: diff will run on the first "
+                "matching pattern pair. This overrides the default behaviour where TUs are matched "
+                "by identical filenames." //
+          & value("base glob:model glob",
+                  [&](const std::string &s) {
+                    pairPattern(s, ':') ^ for_each([&](auto &source, auto &target) {
+                      opts.matches.emplace_back(
+                          EntryMatch{.sourceGlob = source, .targetGlob = target}); //
+                    });
+                  })),
+
+      values("[:]database",
+             [&](const std::string &s) {
+               auto base = s ^ starts_with(":");
+               opts.databases.emplace_back(
+                   DatabaseSpec{.base = base, .path = base ? s.substr(0, 1) : s});
+             }) //
+          % "List of database paths to participate in the diff. Prepend the `:` character to "
+            "denote a base to compare against. The first positional database will be selected as "
+            "base if no paths are annotated as base.");
+
+  auto r = parse(argc, argv, cli);
+  if (!r.missing().empty()) {
+    SV_ERRF("Missing the following arguments: {}",
+            r.missing() ^ mk_string(", ", [](auto e) { return e.param()->label(); }));
   }
+  if (!r || help) {
+    std::cerr << make_man_page(cli, argv[0]) << std::endl;
+    return EXIT_FAILURE;
+  }
+
+  return run(opts);
 }
 
 int delta::run(const delta::Options &options) {
+
+  SV_COUT //
+      << "Build:\n"
+      << " - Databases:        \n";
+  for (auto &spec : options.databases)
+    SV_COUT << "   - " << spec.path << (spec.base ? " (base)" : "") << "\n";
+  SV_COUT //
+      << " - Kinds:  "
+      << (options.kinds ^ //
+          mk_string(
+              ",",
+              [](auto x) { return fmt::format("{}+{}", to_string(x.kind), to_string(x.mod)); }))
+      << "\n"
+      << " - Excludes:  "
+      << (options.excludes ^ //
+          mk_string(",", [](auto x) { return x.glob; }))
+      << "\n"
+      << " - Merges:  "
+      << (options.merges ^ //
+          mk_string(",", [](auto x) { return x.glob + "->" + x.name; }))
+      << "\n"
+      << " - Matches:  "
+      << (options.matches ^ //
+          mk_string(",", [](auto x) { return x.sourceGlob + ":" + x.targetGlob; }))
+      << "\n"
+      << " - Max threads:  " << options.maxThreads << "\n";
 
   par_setup(options.maxThreads);
 
