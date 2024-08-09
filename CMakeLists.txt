@@ -286,9 +286,9 @@ function(setup_fixture name cc cxx fc suffix)
     )
 endfunction()
 
-add_library(processor_fixture OBJECT test/fixture/processor.cpp)
-target_compile_options(processor_fixture PRIVATE -E)
-set(FIXTURE_PROCESSOR_FILE "$<TARGET_OBJECTS:processor_fixture>")
+add_library(processor-fixture OBJECT test/fixture/processor.cpp)
+target_compile_options(processor-fixture PRIVATE -E)
+set(FIXTURE_PROCESSOR_FILE "$<TARGET_OBJECTS:processor-fixture>")
 
 set(GCC_COVERAGE_FLAGS "-fprofile-arcs;-ftest-coverage;-g") # -g helps retain `return` in coverage (!?)
 set(CLANG_COVERAGE_FLAGS "-fprofile-instr-generate;-fcoverage-mapping")
@@ -337,9 +337,11 @@ file(GENERATE # expand generator expressions too
         INPUT "${CMAKE_CURRENT_BINARY_DIR}/fixture.h")
 
 
-add_subdirectory(uproot_gcc)
-add_subdirectory(uproot_clang)
-add_dependencies(tests uproot_gcc uproot_clang processor_fixture)
-add_dependencies(driver uproot_gcc uproot_clang)
+add_subdirectory(uproot-gcc)
+add_subdirectory(uproot-clang)
+add_dependencies(tests uproot-gcc uproot-clang processor-fixture)
+add_dependencies(driver uproot-gcc uproot-clang)
 
+target_compile_definitions(SilverVale PRIVATE UPROOT_CLANG_SO="$<TARGET_FILE_NAME:uproot-clang>")
+target_compile_definitions(SilverVale PRIVATE UPROOT_GCC_SO="$<TARGET_FILE_NAME:uproot-gcc>")
 

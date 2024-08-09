@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.19 FATAL_ERROR)
-project(uproot_gcc CXX)
+project(uproot-gcc CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-add_library(uproot_gcc SHARED main.cpp tree_gimple.cpp)
+add_library(uproot-gcc SHARED main.cpp tree_gimple.cpp)
 
 execute_process(
         COMMAND gcc -print-file-name=plugin
@@ -50,12 +50,12 @@ list(APPEND UPROOT_GCC_LINK_FLAGS
 set(UPROOT_ASAN_FLAGS
         "$<$<AND:$<CXX_COMPILER_ID:Clang>,$<CONFIG:Debug>>:-shared-libasan>"
 )
-target_include_directories(uproot_gcc PUBLIC ${GCC_PLUGIN_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/include)
-target_compile_options(uproot_gcc PRIVATE ${UPROOT_GCC_COMPILE_FLAGS} -fno-rtti "${UPROOT_ASAN_FLAGS}")
-target_link_options(uproot_gcc PRIVATE ${UPROOT_GCC_LINK_FLAGS} "${UPROOT_ASAN_FLAGS}")
-target_link_libraries(uproot_gcc PRIVATE Aspartame::Aspartame fmt::fmt spdlog::spdlog nlohmann_json::nlohmann_json)
+target_include_directories(uproot-gcc PUBLIC . ${GCC_PLUGIN_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/include)
+target_compile_options(uproot-gcc PRIVATE ${UPROOT_GCC_COMPILE_FLAGS} -fno-rtti "${UPROOT_ASAN_FLAGS}")
+target_link_options(uproot-gcc PRIVATE ${UPROOT_GCC_LINK_FLAGS} "${UPROOT_ASAN_FLAGS}")
+target_link_libraries(uproot-gcc PRIVATE Aspartame::Aspartame fmt::fmt spdlog::spdlog nlohmann_json::nlohmann_json)
 
-set_target_properties(uproot_gcc PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+set_target_properties(uproot-gcc PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
 
 

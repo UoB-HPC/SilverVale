@@ -261,3 +261,5 @@ venv
 
 .gdb_history
 *.ast
+
+headers-*/

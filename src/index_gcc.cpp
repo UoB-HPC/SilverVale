@@ -56,7 +56,7 @@ bool sv::detectGccAndIndex(bool verbose,
   const auto execParent = std::filesystem::canonical("/proc/self/exe").parent_path();
   const auto treeArgs = //
       std::vector<std::string>{program,
-                               fmt::format("-fplugin={}", execParent / "libuproot_gcc.so")} |
+                               fmt::format("-fplugin={}", execParent / UPROOT_GCC_SO)} |
       concat(cmd.command | drop(1)) | to_vector();
   const auto iiArgs = //
       std::vector<std::string>{program, "-E", "-o" + iiName, "-MD"} |

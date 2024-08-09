@@ -99,7 +99,6 @@ static std::vector<LLVMBitcode> collectBitcodeFiles(bool verbose, const std::str
                                                     const std::filesystem::path &wd,
                                                     const std::filesystem::path &dest) {
   std::vector<LLVMBitcode> codes;
-  return codes;
   auto saveBC = [&, pattern = std::regex("^" + name + "-([a-zA-Z]+)-([a-zA-Z0-9-_]+)\\.bc$")](
                     const std::filesystem::path &src, const std::filesystem::path &dest) {
     auto e = std::error_code{};
@@ -119,7 +118,7 @@ static std::vector<LLVMBitcode> collectBitcodeFiles(bool verbose, const std::str
       }
 
       SmallVector<object::OffloadFile> binaries;
-      if (auto _ = object::extractOffloadBinaries(bufferRef, binaries)) {
+        if (auto _ = object::extractOffloadBinaries(bufferRef, binaries)) {
         SV_WARNF("error reading embedded offload binaries for {}", src);
       }
       binaries | filter([](auto &f) {
@@ -175,23 +174,29 @@ static std::vector<LLVMBitcode> collectBitcodeFiles(bool verbose, const std::str
     //   clang-offload-bundler --unbundle --type bc --input $FILE --output $OUT --targets $TARGET
     std::vector<std::string> targets;
     auto bundle = ClangOffloadBundle::parse(hostBCFile);
-    if (bundle) {
+     if (bundle) {
       if (auto e = bundle->takeError())
         SV_WARNF("cannot list offload bundles for {}: {}", hostBCFile, toString(std::move(e)));
       else targets = bundle->get().entries ^ map([](auto x) { return x.id; });
     }
     auto extracted = targets ^ collect([&](auto &target) -> std::optional<std::string> {
                        auto targetBCFile = fmt::format("{}.{}-{}.bc", prefix, name, target);
-                       clang::OffloadBundlerConfig config;
-                       config.FilesType = "bc";
-                       config.ObjcopyPath = "";
-                       config.InputFileNames = {hostBCFile};
-                       config.OutputFileNames = {targetBCFile};
-                       config.TargetNames = {target};
-                       if (auto e = clang::OffloadBundler(config).UnbundleFiles()) {
-                         SV_WARNF("cannot extract target {} from {}", target, hostBCFile);
-                         return std::nullopt;
-                       }
+                       auto bundlerExtractLine = fmt::format("clang-offload-bundler --unbundle --type bc --input {} --output {} --targets {}", hostBCFile, targetBCFile, target);
+                       auto code = sv::exec(bundlerExtractLine, std::cout);
+                       if ( code) {
+                         if (*code != 0) SV_WARNF("non-zero return for `{}`", bundlerExtractLine);
+                       } else SV_WARNF("popen failed for `{}`: ", bundlerExtractLine);
+
+//                       clang::OffloadBundlerConfig config;
+//                       config.FilesType = "bc";
+//                       config.ObjcopyPath = "";
+//                       config.InputFileNames = {hostBCFile};
+//                       config.OutputFileNames = {targetBCFile};
+//                       config.TargetNames = {target};
+//                       if (auto e = clang::OffloadBundler(config).UnbundleFiles()) {
+//                         SV_WARNF("cannot extract target {} from {}", target, hostBCFile);
+//                         return std::nullopt;
+//                       }
                        if (verbose)
                          SV_INFOF("extracted {} from offload bundle {}", targetBCFile, hostBCFile);
                        return {targetBCFile};
@@ -261,43 +266,36 @@ auto inflateASTFromFiles(const std::map<std::string, sv::Dependency> &dependenci
   // before we proceed, it's possible the .pch file is actually a clang offload bundle with an ast
   // this was the case with -fsycl for icpx
 
+    auto magic = identify_magic(pchBuffer->getMemBufferRef().getBuffer());
+    switch(magic){
+      case file_magic::clang_ast : // good, kep going
+        break;
+      case file_magic::offload_bundle :
+      {
 
 
-
-  auto magic = identify_magic(pchBuffer->getMemBufferRef().getBuffer());
-  switch(magic){
-    case file_magic::clang_ast : // good, kep going
-      break;
-    case file_magic::offload_bundle :
-    {
-
-
-      auto bundle = ClangOffloadBundle::parse(pchFile);
-      if(bundle){
-        for(auto f : bundle->get().entries){
-            std::cout << "@ " << pchFile << " " << f.id << " = " << f.size <<std::endl;
+        auto bundle = ClangOffloadBundle::parse(pchFile);
+        if(bundle){
+          for(auto f : bundle->get().entries){
+              std::cout << "@ " << pchFile << " " << f.id << " = " << f.size <<std::endl;
+          }
         }
+
+        std::exit(1);
+        break;
       }
 
-      std::exit(1);
-      break;
+      default:
+        SV_WARNF("file {} is not a Clang PCH file or offload bundle (llvm::file_magic index={})",
+        pchFile,
+                 static_cast<std::underlying_type_t<file_magic::Impl>>(magic));
     }
 
-    default:
-      SV_WARNF("file {} is not a Clang PCH file or offload bundle (llvm::file_magic index={})", pchFile,
-               static_cast<std::underlying_type_t<file_magic::Impl>>(magic));
-  }
-
-
-
   vfs->addFile(pchFile.string(), 0, std::move(*mb));
-
-
 
   for (auto &[name, actual] : dependencies) {
     vfs->addFile(name, actual.modified, llvm::MemoryBuffer::getMemBuffer(actual.content));
   }
-
 
   auto ast = clang::ASTUnit::LoadFromASTFile(
       /*Filename*/ pchFile,                               //
@@ -305,17 +303,23 @@ auto inflateASTFromFiles(const std::map<std::string, sv::Dependency> &dependenci
       /*ToLoad*/ clang::ASTUnit::WhatToLoad::LoadASTOnly, //
       /*Diags*/ diagnostics,                              //
       /*FileSystemOpts*/ clang::FileSystemOptions(""),    //
-      /*HSOpts*/ std::make_shared<clang::HeaderSearchOptions>(),
 
-#if LLVM_VERSION_MAJOR < 18
+#if LLVM_VERSION_MAJOR < 17
+      /*UseDebugInfo*/ false,
+      /*OnlyLocalDecls*/ false,
+#elif LLVM_VERSION_MAJOR < 18
+      /*HSOpts*/ std::make_shared<clang::HeaderSearchOptions>(),
       /*UseDebugInfo*/ false,
       /*OnlyLocalDecls*/ false,
 #elif LLVM_VERSION_MAJOR == 18
+      /*HSOpts*/ std::make_shared<clang::HeaderSearchOptions>(),
       /*OnlyLocalDecls*/ false,
 #elif LLVM_VERSION_MAJOR > 18
+      /*HSOpts*/ std::make_shared<clang::HeaderSearchOptions>(),
       /*LangOpts*/ nullptr,
       /*OnlyLocalDecls*/ false,
 #endif
+
       /*CaptureDiagnostics*/ clang::CaptureDiagsKind::None,
       /*AllowASTWithCompilerErrors*/ true, /*UserFilesAreVolatile*/ true, /*VFS*/ vfs);
   return ast;

@@ -1,20 +1,14 @@
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 
 #include "sv/cli.h"
 #include "sv/exec.h"
-#include "sv/glob.h"
 #include "sv/index_llvm.h"
 #include "sv/par.h"
 #include "sv/uproot.h"
 
 #include "fmt/core.h"
 #include "xxh3.h"
-
-// #include "clang/Driver/OffloadBundler.h"
-// #include "llvm/BinaryFormat/Magic.h"
-// #include "llvm/Object/OffloadBinary.h"
 
 #include "aspartame/string.hpp"
 #include "aspartame/vector.hpp"
@@ -90,7 +84,7 @@ bool sv::detectClangAndIndex(bool verbose,
 
   const auto execParent = std::filesystem::canonical("/proc/self/exe").parent_path();
   const auto cc1UprootLine =
-      fmt::format("{} {} -cc1 -load {}/{}", envLine, program, execParent, "libuproot_clang.so");
+      fmt::format("{} {} -cc1 -load {}/{}", envLine, program, execParent, UPROOT_CLANG_SO);
 
   if (verbose) SV_COUT << cc1UprootLine << std::endl;
 

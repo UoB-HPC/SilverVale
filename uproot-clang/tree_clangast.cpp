@@ -94,9 +94,10 @@ bool sv::ClangASTSemanticTreeVisitor::TraverseStmt(clang::Stmt *stmt) { // NOLIN
            auto handleFn = [&](CallExpr *call, FunctionDecl *direct) { // NOLINT(*-no-recursion)
              name += +": " + direct->getDeclName().getAsString();
 
-             bool projectSymbol = option.roots | exists([&](auto &root) {
-                                    return sm.getFilename(direct->getLocation()).starts_with(root);
-                                  });
+             bool projectSymbol =
+                 option.roots | exists([&](auto &root) {
+                   return sm.getFilename(direct->getLocation()).str() ^ starts_with(root);
+                 });
              if (projectSymbol && direct->hasBody()) { // Symbol part of project root, inline
 
                //               node->children.emplace_back("Inline: " +
