@@ -1,6 +1,5 @@
 #include "compress.h"
 
-#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <memory>

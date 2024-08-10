@@ -7,11 +7,16 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 set(SV_CLANG_INCLUDE_PATHS "" CACHE STRING "LLVM+Clang include paths for Clang uproot clang plugin")
 
-set(SV_CLANG_INCLUDE_PATHS "${CMAKE_SOURCE_DIR}/headers-clang/llvm-19/include")
 
 
 option(SV_ENABLE_UPROOT_CLANG_TESTS "Enable tests for the Clang uproot plugin" ON)
-option(SV_USE_LIBCXX "Use libc++ instead of libstdc++" ON)
+option(SV_USE_LIBCXX "Use libc++ instead of libstdc++" OFF)
+
+
+#set(SV_CLANG_INCLUDE_PATHS "${CMAKE_SOURCE_DIR}/headers-clang/llvm-19/include")
+set(SV_CLANG_INCLUDE_PATHS "/home/tom/sycl_workspace/llvm/build/install/include/")
+#set(SV_USE_LIBCXX ON)
+
 
 list(APPEND UPROOT_CLANG_COMPILE_FLAGS
         "$<$<CONFIG:Release>:${SV_COMPILE_RELEASE_FLAGS}>"

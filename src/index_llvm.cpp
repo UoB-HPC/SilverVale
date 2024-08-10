@@ -50,9 +50,15 @@ bool sv::detectClangAndIndex(bool verbose,
 
   const auto bcArgs = std::vector<std::string>{program, "-emit-llvm"} | concat(args) |
                       append("-fno-discard-value-names") | append("-g") | to_vector();    //
+
+  const auto execParent = std::filesystem::canonical("/proc/self/exe").parent_path();
+
   const auto pchArgs =                                                                    //
       std::vector<std::string>{program,                                                   //
-                               "-emit-ast", "-o" + pchName, "--offload-host-only", "-MD"} //
+                               "-emit-ast", "-o" + pchName, "--offload-host-only", "-MD",
+          // intel's clang++ adds -include and -include-footer which won't be in the dependency file, so we try to look for it
+//                               std::string("-fplugin=")+(execParent / +UPROOT_CLANG_SO).string()
+      } //
       | concat(args | filter(noOffloadArch)) | to_vector();                               //
   const auto iiArgs =                                                                     //
       std::vector<std::string>{program,                                                   //
@@ -82,7 +88,6 @@ bool sv::detectClangAndIndex(bool verbose,
 #endif
       });
 
-  const auto execParent = std::filesystem::canonical("/proc/self/exe").parent_path();
   const auto cc1UprootLine =
       fmt::format("{} {} -cc1 -load {}/{}", envLine, program, execParent, UPROOT_CLANG_SO);
 
