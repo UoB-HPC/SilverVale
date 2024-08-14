@@ -22,7 +22,7 @@ using namespace sv;
 std::unique_ptr<ASTUnit> makeASTUnit(const std::string &content) {
 
   std::string error;
-  auto db = FixedCompilationDatabase::loadFromBuffer(".", "-I/usr/lib/clang/17/include", error);
+  auto db = FixedCompilationDatabase::loadFromBuffer(".", "-I/usr/lib/clang/17/include -fopenmp" , error);
   CHECK(error == ""); // NOLINT(*-container-size-empty)
 
   ClangTool Tool(*db, {"file.cpp"});
@@ -44,6 +44,33 @@ std::vector<NTree<SNode>> makeNodes(const sv::ClangASTSemanticTreeVisitor::Optio
            return root;
          });
 }
+
+
+TEST_CASE("paper") {
+
+
+  auto trees =
+      makeNodes(
+          {.inlineCalls = false, .normaliseVarName = false, .normaliseFnName = false, .roots = {""}},
+          R"(
+int foo(){
+  return 1+2;
+}
+
+int bar(){
+  int b = 0;
+  return 3;
+}
+)");
+
+  trees[0].print(std::cout ,  [](auto x){ return x.data;});
+  trees[1].print(std::cout ,  [](auto x){ return x.data;});
+
+//  std::cout << sv::Diff::apted(sv::Tree(trees[0]), sv::Tree(trees[1])) << std::endl;
+
+}
+
+
 TEST_CASE("cpp-inline") {
   auto trees =
       makeNodes(

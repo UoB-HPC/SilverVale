@@ -24,6 +24,12 @@ CPMAddPackage("gh:ThePhD/sol2@3.3.0")
 CPMAddPackage("gh:DatabaseGroup/tree-similarity#0.1.1")
 
 CPMAddPackage(
+        NAME bxzstr
+        GITHUB_REPOSITORY tmaklin/bxzstr
+        VERSION 1.2.2
+        OPTIONS "ZLIB_FOUND OFF" "BZIP2_FOUND OFF" "LIBLZMA_FOUND OFF" "ZSTD_FOUND ON" "CMAKE_BUILD_TESTS OFF"
+)
+CPMAddPackage(
         NAME fmt
         GITHUB_REPOSITORY fmtlib/fmt
         GIT_TAG 11.0.1
@@ -142,6 +148,12 @@ add_tree_sitter_lang(stadelmanma fortran HASH dde9829)
 
 # =====================
 
+add_library(dummy INTERFACE)
+add_library(ZLIB::ZLIB ALIAS zlibstatic)
+add_library(Zstd::Zstd ALIAS libzstd_static)
+add_library(BZip2::BZip2 ALIAS dummy)
+add_library(LibLZMA::LibLZMA ALIAS dummy)
+
 list(APPEND SV_COMPILE_DEBUG_FLAGS -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
 list(APPEND SV_LINK_DEBUG_FLAGS -fsanitize=address -fsanitize=undefined -fno-omit-frame-pointer)
 
@@ -196,10 +208,12 @@ target_link_libraries(SilverVale
         sol2
         lua
         fmt::fmt
+        clipp
         spdlog::spdlog
         xxHash::xxhash
-        zlibstatic
-        clipp
+        zlibstatic # for GCOV
+        libzstd_static
+        bxzstr
 
         PUBLIC
         tree-sitter
@@ -218,8 +232,8 @@ target_link_options(SilverVale PRIVATE ${SV_LINK_FLAGS})
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_precompile_headers(SilverVale PRIVATE
             [["nlohmann/json.hpp"]]
-#            [["fmt/core.h"]]
-#            [["fmt/std.h"]]
+            #            [["fmt/core.h"]]
+            #            [["fmt/std.h"]]
             [["spdlog/spdlog.h"]]
             [["clipp.h"]]
             [["sol/sol.hpp"]]
@@ -258,10 +272,11 @@ add_executable(tests test/tree.cpp test/tstree.cpp test/index_microstream.cpp te
 target_link_libraries(tests PRIVATE Catch2::Catch2WithMain)
 set_target_properties(driver PROPERTIES OUTPUT_NAME "sv")
 foreach (target driver tests)
-    target_link_libraries(${target} PRIVATE SilverVale Aspartame::Aspartame nlohmann_json::nlohmann_json sol2 lua fmt::fmt spdlog::spdlog clipp)
+    target_link_libraries(${target} PRIVATE SilverVale Aspartame::Aspartame nlohmann_json::nlohmann_json sol2 lua fmt::fmt spdlog::spdlog clipp bxzstr)
     target_include_directories(${target} PRIVATE include)
     target_compile_options(${target} PRIVATE ${SV_COMPILE_FLAGS})
     target_link_options(${target} PRIVATE ${SV_LINK_FLAGS})
+    set_property(TARGET ${target} PROPERTY INTERPROCEDURAL_OPTIMIZATION ON)
 endforeach ()
 
 function(setup_fixture name cc cxx fc suffix)
@@ -342,6 +357,6 @@ add_subdirectory(uproot-clang)
 add_dependencies(tests uproot-gcc uproot-clang processor-fixture)
 add_dependencies(driver uproot-gcc uproot-clang)
 
-target_compile_definitions(SilverVale PRIVATE UPROOT_CLANG_SO="$<TARGET_FILE_NAME:uproot-clang>")
+target_compile_definitions(SilverVale PRIVATE UPROOT_CLANG_SO="$<TARGET_FILE_NAME:uproot-clang-system>")
 target_compile_definitions(SilverVale PRIVATE UPROOT_GCC_SO="$<TARGET_FILE_NAME:uproot-gcc>")
 

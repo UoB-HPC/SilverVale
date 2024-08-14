@@ -6,6 +6,7 @@ namespace sv::dump {
 
 struct Options {
   std::filesystem::path dbDir;
+  std::vector<std::string> roots;
 };
 
 constexpr const char *Name = "dump";

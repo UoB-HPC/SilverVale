@@ -1,6 +1,7 @@
 #include "catch2/catch_test_macros.hpp"
 #include <iostream>
 
+#include "sv/diff.h"
 #include "sv/model.h"
 #include "sv/tree.h"
 
@@ -23,6 +24,23 @@ const STree fixture = STree{"foo",
                                                                }},
 
                                                      }}}};
+
+TEST_CASE("diffP") {
+  const STree foo =
+      STree{"Function: foo",
+            {STree{"ReturnStmt",
+                   {STree{"BinaryOperator: +",
+                          {STree{"IntegerLiteral: 1", {}}, STree{"IntegerLiteral: 2", {}}}}}}}};
+
+  // Define the bar structure
+  const STree bar = STree{"Function: bar",
+                          {STree{"Var: b", {STree{"IntegerLiteral: 0", {}}}},
+                           STree{"ReturnStmt", {STree{"IntegerLiteral: 2", {}}}}}};
+
+  std::cout << sv::Diff::apted(sv::Tree(foo.map<SNode>([](auto x) { return SNode{x, {}}; })),
+                               sv::Tree(bar.map<SNode>([](auto x) { return SNode{x, {}}; })))
+            << std::endl;
+}
 
 TEST_CASE("tree") {
   const Tree t(fixture.map<SNode>([](auto x) { return SNode{x, {}}; }));

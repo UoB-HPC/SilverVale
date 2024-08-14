@@ -5,7 +5,7 @@
 namespace sv {
 
 namespace {
-static BS::thread_pool pool;
+ BS::thread_pool pool;
 }
 inline void par_setup(size_t n) { pool.reset(n); }
 
@@ -19,6 +19,11 @@ template <typename C, typename F> static void par_for(C &&xs, F f) {
 
 template <typename C, typename F> static auto par_map(C &&xs, F f) {
   return pool.template submit_sequence (size_t{}, xs.size(), [&](size_t idx) { return f(xs[idx]); }).get();
+}
+
+template <typename C, typename F> static auto par_map(size_t N, C &&xs, F f) {
+  BS::thread_pool localPool(N);
+  return localPool.template submit_sequence (size_t{}, xs.size(), [&](size_t idx) { return f(xs[idx]); }).get();
 }
 
 } // namespace sv

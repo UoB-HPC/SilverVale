@@ -14,13 +14,13 @@ std::pair<std::vector<std::string>, std::unordered_map<std::string, std::string>
 parseCPPLineMarkers(const std::string &iiLines);
 
 struct TsTree {
-  std::string name;
+  std::filesystem::path name;
   std::string source;
   std::shared_ptr<TSParser> parser;
   std::shared_ptr<TSTree> tree;
 
   TsTree();
-  TsTree(const std::string &name, const std::string &source, const TSLanguage *lang);
+  TsTree(std::filesystem::path name, const std::string &source, const TSLanguage *lang);
   [[nodiscard]] TSNode root() const;
   [[nodiscard]] TsTree without(const std::string &type,
                                const std::optional<TSNode> &node = {}) const;

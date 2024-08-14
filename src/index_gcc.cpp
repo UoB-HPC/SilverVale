@@ -55,8 +55,7 @@ bool sv::detectGccAndIndex(bool verbose,
 
   const auto execParent = std::filesystem::canonical("/proc/self/exe").parent_path();
   const auto treeArgs = //
-      std::vector<std::string>{program,
-                               fmt::format("-fplugin={}", execParent / UPROOT_GCC_SO)} |
+      std::vector<std::string>{program, fmt::format("-fplugin={}", execParent / UPROOT_GCC_SO)} |
       concat(cmd.command | drop(1)) | to_vector();
   const auto iiArgs = //
       std::vector<std::string>{program, "-E", "-o" + iiName, "-MD"} |
@@ -82,14 +81,14 @@ bool sv::detectGccAndIndex(bool verbose,
   }
 
   auto dependencyFile = dest / fmt::format("{}.{}.{}", prefix, name, EntryDepSuffix);
-  writeJSON(dependencyFile, uproot::readDepFile(wd / dFile, cmd.file));
+  writePacked(dependencyFile, uproot::readDepFile(wd / dFile, cmd.file));
 
   auto preprocessedFile = dest / fmt::format("{}.{}.ii", prefix, name);
-  std::filesystem::copy(wd / iiName, preprocessedFile);
+  sv::writePacked(preprocessedFile, sv::readFile(wd / iiName));
 
   sv::Database::Entry //
       entry{.language = language,
-            .file = std::filesystem::path(cmd.file).filename(),
+            .path = std::filesystem::path(cmd.file),
             .command = cmd.command ^ mk_string(" "),
             .preprocessedFile = preprocessedFile,
             .dependencyFile = dependencyFile,
@@ -102,6 +101,6 @@ bool sv::detectGccAndIndex(bool verbose,
                 },
             .attributes = {{"version", version}}};
 
-  writeJSON(dest / fmt::format("{}.{}.{}", prefix, name, EntrySuffix), entry);
+  writePacked(dest / fmt::format("{}.{}.{}", prefix, name, EntrySuffix), entry);
   return true;
 }

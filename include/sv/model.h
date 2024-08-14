@@ -99,11 +99,13 @@ public:
   [[nodiscard]] size_t maxWidth() const;
   [[nodiscard]] std::string prettyPrint() const;
 
-  [[nodiscard]] static Tree combine(const std::string &rootName, const std::vector<Tree> &trees);
+  [[nodiscard]] static Tree combine(const std::string &rootName, const std::vector<Tree> &trees,
+                                    bool dropRoot = false);
   [[nodiscard]] static Tree leaf(const std::string &rootName);
   [[nodiscard]] static Tree combine(const std::string &rootName,
-                                    const sol::nested<std::vector<Tree>> &trees) {
-    return Tree::combine(rootName, trees.value());
+                                    const sol::nested<std::vector<Tree>> &trees,
+                                    bool dropRoot = false) {
+    return Tree::combine(rootName, trees.value(), dropRoot);
   }
   DEF_TEAL_SOL_UT(Tree,                         //
                   SOL_UT_FN(Tree, nodes),       //
@@ -112,8 +114,8 @@ public:
                   SOL_UT_FN(Tree, prettyPrint), //
                   SOL_UT_FN(Tree, leaf),        //
                   SOL_UT_FN0(Tree, combine,
-                             Tree (*)(const std::string &,
-                                      const sol::nested<std::vector<Tree>> &)));
+                             Tree (*)(const std::string &, const sol::nested<std::vector<Tree>> &,
+                                      bool)));
 };
 
 struct Range {
@@ -171,6 +173,26 @@ public:
                   SOL_UT_FN(Source, tsTree));
 };
 
+class AggregateSource {
+  std::vector<Source> sources;
+
+  Memoized<Tree> lazyTsTree;
+
+public:
+  explicit AggregateSource(const std::vector<Source> &sources);
+  [[nodiscard]] std::vector<std::string> content() const;
+  [[nodiscard]] std::vector<std::string> contentWhitespaceNormalised() const;
+  [[nodiscard]] size_t sloc() const;
+  [[nodiscard]] size_t lloc() const;
+  [[nodiscard]] const Tree &tsTree() const;
+  DEF_TEAL_SOL_UT(Source,                                         //
+                  SOL_UT_FN(Source, content),                     //
+                  SOL_UT_FN(Source, contentWhitespaceNormalised), //
+                  SOL_UT_FN(Source, sloc),                        //
+                  SOL_UT_FN(Source, lloc),                        //
+                  SOL_UT_FN(Source, tsTree));
+};
+
 struct FlatCoverage {
 
   struct EntryHash {
@@ -195,36 +217,49 @@ public:
 class Unit {
 
 public:
-  enum class View : uint8_t { AsIs, WithCoverage };
+  enum class View : uint8_t { AsIs, Self, WithCov };
+
+  static constexpr std::string_view to_string(const View &view) {
+    switch (view) {
+      case View::AsIs: return "AsIs";
+      case View::Self: return "Self";
+      case View::WithCov: return "WithCov";
+    }
+    return "(unknown modifier)";
+  }
 
 private:
-  std::string path_, name_;
-  Memoized<Source> lazySourceAsWritten{}, lazySourcePreprocessed{}, lazySourceWithCoverage{};
+  std::filesystem::path path_;
+  std::vector<std::regex> rootGlobs_;
+  Memoized<AggregateSource> lazySourceAsWritten{}, lazySourcePreprocessed{},
+      lazySourceWithCoverage{};
   Memoized<Tree>::Parametric<View> lazySTree{}, lazySTreeInlined{}, lazyIrTree{};
   Tree sTreeRoot, sTreeInlinedRoot, irTreeRoot;
-  TsTree sourceRoot, preprocessedRoot;
+  std::vector<TsTree> sourceRoots, preprocessedRoots;
   std::shared_ptr<FlatCoverage> coverage;
 
-  [[nodiscard]] NTree<SNode> pruneTree(const NTree<SNode> &tree) const;
-  [[nodiscard]] static TsTree normaliseTsTree(const TsTree &tree);
+  [[nodiscard]] bool matchesRoots(const std::string &name) const;
+  [[nodiscard]] NTree<SNode> pruneTreeWithCoverage(const NTree<SNode> &tree) const;
+  [[nodiscard]] NTree<SNode> pruneTreeSelf(const NTree<SNode> &tree) const;
 
 public:
-  Unit(std::string path,                              //
+  Unit(std::filesystem::path path, //
+       const std::vector<std::regex> &rootGlobs_,
        const std::shared_ptr<FlatCoverage> &coverage, //
        NTree<SNode> sTree,                            //
        NTree<SNode> sTreeInlined,                     //
        NTree<SNode> irTree,                           //
-       TsTree source,                                 //
-       TsTree preprocessedSource);
-  [[nodiscard]] const std::string &path() const;
-  [[nodiscard]] const std::string &name() const;
+       std::vector<TsTree> sources,                   //
+       std::vector<TsTree> preprocessedSources);
+  [[nodiscard]] std::string path() const;
+  [[nodiscard]] std::string name() const;
 
   [[nodiscard]] const Tree &sTree(View view) const;
   [[nodiscard]] const Tree &sTreeInlined(View view) const;
   [[nodiscard]] const Tree &irTree(View view) const;
-  [[nodiscard]] const Source &sourceAsWritten() const;
-  [[nodiscard]] const Source &sourcePreprocessed() const;
-  [[nodiscard]] const Source &sourceWithCoverage() const;
+  [[nodiscard]] const AggregateSource &sourceAsWritten() const;
+  [[nodiscard]] const AggregateSource &sourcePreprocessed() const;
+  [[nodiscard]] const AggregateSource &sourceWithCoverage() const;
   DEF_TEAL_SOL_UT(Unit,                                //
                   SOL_UT_FN(Unit, path),               //
                   SOL_UT_FN(Unit, name),               //
@@ -250,31 +285,25 @@ private:
 public:
   [[nodiscard]] static Database loadDB(const std::string &dir);
 
-  [[nodiscard]] static Codebase load(const Database &x,                     //
-                                     std::ostream &out,                     //
-                                     bool normalise,                        //
-                                     const std::vector<std::string> &roots, //
+  [[nodiscard]] static Codebase load(const Database &x,                         //
+                                     bool normalise,                            //
+                                     const std::vector<std::string> &rootGlobs, //
                                      const std::function<bool(const std::string &)> &predicate);
 
-  [[nodiscard]] static Codebase load(const Database &db,                                 //
-                                     bool normalise,                                     //
-                                     const sol::nested<std::vector<std::string>> &roots, //
-                                     const std::function<bool(const std::string &)> &predicate) {
-    return load(db, std::cout, normalise, roots.value(), predicate);
+  [[nodiscard]] static Codebase load_(const Database &db,                                     //
+                                      bool normalise,                                         //
+                                      const sol::nested<std::vector<std::string>> &rootGlobs, //
+                                      const std::function<bool(const std::string &)> &predicate) {
+    return load(db, normalise, rootGlobs.value(), predicate);
   }
 
   friend std::ostream &operator<<(std::ostream &os, const Codebase &codebase);
 
-  DEF_TEAL_SOL_UT(Codebase,                          //
-                  SOL_UT_FN_ACC(Codebase, root),     //
-                  SOL_UT_FN_ACC(Codebase, units),    //
-                  SOL_UT_FN_ACC(Codebase, coverage), //
-                  SOL_UT_FN(Codebase, loadDB),
-                  SOL_UT_FN0(Codebase, load,                                                   //
-                             Codebase (*)(const Database &,                                    //
-                                          bool,                                                //
-                                          const sol::nested<std::vector<std::string>> &,       //
-                                          const std::function<bool(const std::string &)> &))); //
+  DEF_TEAL_SOL_UT(Codebase,                                                 //
+                  SOL_UT_FN_ACC(Codebase, root),                            //
+                  SOL_UT_FN_ACC(Codebase, units),                           //
+                  SOL_UT_FN_ACC(Codebase, coverage),                        //
+                  SOL_UT_FN(Codebase, loadDB), SOL_UT_FN(Codebase, load_)); //
 };
 
 class Glob {

@@ -22,7 +22,7 @@ static std::string print(llvm::Type *t) {
 
 [[nodiscard]] static sv::Location resolveFnLocation(const llvm::Function &fn) {
   if (auto prog = fn.getSubprogram()) {
-    return sv::Location{.filename = std::filesystem::path(prog->getFilename().str()).filename(),
+    return sv::Location{.path = std::filesystem::path(prog->getFilename().str()),
                         .line = prog->getLine(),
                         .col = 0};
   }
@@ -39,7 +39,7 @@ sv::LLVMIRTreeVisitor::LLVMIRTreeVisitor(NTree<SNode> *root, const llvm::Module 
     if (auto md = var.getMetadata(llvm::LLVMContext::MD_dbg)) {
       if (auto expr = llvm::dyn_cast<llvm::DIGlobalVariableExpression>(md)) {
         if (auto diVar = expr->getVariable()) {
-          loc.filename = std::filesystem::path(diVar->getFilename().str()).filename();
+          loc.path = std::filesystem::path(diVar->getFilename().str());
           loc.line = diVar->getLine();
         }
       }
@@ -115,7 +115,7 @@ void sv::LLVMIRTreeVisitor::walk(const llvm::Value *value) {
                            | take_while([](auto l) { return l != nullptr; })             //
                            | last_maybe()) ^
                           get_or_else(dloc.get());
-          loc.filename = std::filesystem::path(actualDI->getFilename().str()).filename();
+          loc.path = std::filesystem::path(actualDI->getFilename().str());
           loc.line = actualDI->getLine();
           loc.col = actualDI->getColumn();
         }
@@ -148,6 +148,5 @@ void sv::LLVMIRTreeVisitor::walk(const llvm::Value *value) {
       [&](const llvm::Value *c) {
         single(SNode{named("Val", fmt::format("{}: {}", c->getName().str(), print(c->getType()))),
                      Location{}});
-      }
-  );
+      });
 }

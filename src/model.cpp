@@ -17,10 +17,8 @@
 #include "tree_sitter_rust/api.h"
 
 #include "aspartame/map.hpp"
-#include "aspartame/optional.hpp"
 #include "aspartame/set.hpp"
 #include "aspartame/string.hpp"
-#include "aspartame/unordered_map.hpp"
 #include "aspartame/variant.hpp"
 #include "aspartame/vector.hpp"
 #include "aspartame/view.hpp"
@@ -54,9 +52,10 @@ size_t Tree::maxWidth() const {
     return levelSize.empty() ? 0 : *std::max_element(levelSize.begin(), levelSize.end());
   });
 }
-Tree Tree::combine(const std::string &rootName, const std::vector<Tree> &trees) {
-  return Tree{
-      NTree<SNode>(SNode{rootName, Location{}}, trees ^ map([](auto &t) { return t.root; }))};
+Tree Tree::combine(const std::string &rootName, const std::vector<Tree> &trees, bool dropRoot) {
+  return Tree{NTree<SNode>(SNode{rootName, Location{}},
+                           dropRoot ? trees ^ bind([](auto &t) { return t.root.children; })
+                                    : trees ^ map([](auto &t) { return t.root; }))};
 }
 std::string Tree::prettyPrint() const {
   std::stringstream stream;
@@ -126,17 +125,38 @@ const Tree &Source::tsTree() const {
     root.pruneInplace([&](const TSNode &n) { return mask(rowRange(n)); });
     return Tree(root.map<SNode>([&](const TSNode &n) {
       return SNode{std::string(ts_node_type(n)),
-                   Location{.filename = root_.name,
+                   Location{.path = root_.name,
                             .line = ts_node_start_point(n).row + 1, // tree sitter row is 0-based
                             .col = ts_node_start_point(n).column}};
     }));
   });
 }
 
+// === AggregateSource
+
+AggregateSource::AggregateSource(const std::vector<Source> &sources) : sources(sources) {}
+std::vector<std::string> AggregateSource::content() const {
+  return sources ^ map([](auto &s) { return s.content(); });
+}
+std::vector<std::string> AggregateSource::contentWhitespaceNormalised() const {
+  return sources ^ map([](auto &s) { return s.contentWhitespaceNormalised(); });
+}
+size_t AggregateSource::sloc() const {
+  return sources | fold_left(size_t{}, [](auto acc, auto &s) { return acc + s.sloc(); });
+}
+size_t AggregateSource::lloc() const {
+  return sources | fold_left(size_t{}, [](auto acc, auto &s) { return acc + s.lloc(); });
+}
+const Tree &AggregateSource::tsTree() const {
+  return lazyTsTree([&]() {
+    return Tree::combine("root", sources ^ map([](auto &s) { return s.tsTree(); }), true);
+  });
+}
+
 // === FlatCoverage ===
 
 FlatCoverage::FlatCoverage(const PerFileCoverage &coverage) {
-  for (auto &[file, instances] : coverage.filenames) {
+  for (auto &[file, instances] : coverage.instances) {
     for (auto &instance : instances) {
       if (instance.count != 0) {
         for (size_t line = instance.lineStart; line <= instance.lineEnd; ++line) {
@@ -149,78 +169,126 @@ FlatCoverage::FlatCoverage(const PerFileCoverage &coverage) {
 
 // === Unit ===
 
-Unit::Unit(std::string path, const std::shared_ptr<FlatCoverage> &coverage,    //
-           NTree<SNode> sTree, NTree<SNode> sTreeInlined, NTree<SNode> irTree, //
-           TsTree source, TsTree preprocessedSource)
-    : path_(std::move(path)), name_(std::filesystem::path(path_).filename()),
-      //      coverage(std::move(coverage)), //
-      sTreeRoot(std::move(sTree)), sTreeInlinedRoot(std::move(sTreeInlined)),
-      irTreeRoot(std::move(irTree)), sourceRoot(std::move(source)), //
-      preprocessedRoot(std::move(preprocessedSource)), coverage(coverage) {}
+Unit::Unit(std::filesystem::path path,                    //
+           const std::vector<std::regex> &rootGlobs,      //
+           const std::shared_ptr<FlatCoverage> &coverage, //
+           NTree<SNode> sTree,                            //
+           NTree<SNode> sTreeInlined,                     //
+           NTree<SNode> irTree,                           //
+           std::vector<TsTree> sources,                   //
+           std::vector<TsTree> preprocessedSources)
+    : path_(std::move(path)), rootGlobs_(rootGlobs), sTreeRoot(std::move(sTree)),
+      sTreeInlinedRoot(std::move(sTreeInlined)), irTreeRoot(std::move(irTree)),
+      sourceRoots(std::move(sources)), //
+      preprocessedRoots(std::move(preprocessedSources)), coverage(coverage) {}
 
-const std::string &Unit::path() const { return path_; }
-const std::string &Unit::name() const { return name_; }
+std::string Unit::path() const { return path_; }
+std::string Unit::name() const { return path_.filename(); }
 
-NTree<SNode> Unit::pruneTree(const NTree<SNode> &tree) const {
+static bool tailMatchNonEmpty(const std::string &l, const std::string &r) {
+  if (l.empty() || r.empty()) return false;
+  if (l.size() < r.size()) return r ^ ends_with(l);
+  else return l ^ ends_with(r);
+}
+
+bool Unit::matchesRoots(const std::string &name) const {
+  if (name.empty()) return false;
+  auto self = path_.string();
+  return tailMatchNonEmpty(self, name) ||
+         rootGlobs_ ^ exists([&](const auto &r) { return std::regex_match(name, r); });
+}
+
+NTree<SNode> Unit::pruneTreeWithCoverage(const NTree<SNode> &tree) const {
   auto pruned = tree;
   pruned.pruneInplace([&](auto &s) {
-    return coverage->entries.contains(std::pair{s.location.filename, s.location.line});
+    if (!matchesRoots(s.location.path)) return false;
+    auto direct = coverage->entries.contains(std::pair{s.location.path, s.location.line});
+    if (!direct) {
+      return coverage->entries | exists([&](auto &covLoc, auto) {
+               return s.location.line == covLoc.second &&
+                      tailMatchNonEmpty(s.location.path, covLoc.first);
+             });
+    } else return direct;
   });
+  return pruned;
+}
+
+NTree<SNode> Unit::pruneTreeSelf(const NTree<SNode> &tree) const {
+  auto pruned = tree;
+  pruned.pruneInplace([&](auto &s) { return matchesRoots(s.location.path); });
   return pruned;
 }
 
 const Tree &Unit::sTree(View view) const {
   return lazySTree(view, [view, this]() {
-    return view == View::WithCoverage //
-               ? Tree(pruneTree(sTreeRoot.root))
-               : sTreeRoot;
+    switch (view) {
+      case View::AsIs: return sTreeRoot;
+      case View::Self: return Tree(pruneTreeSelf(sTreeRoot.root));
+      case View::WithCov: return Tree(pruneTreeWithCoverage(sTreeRoot.root));
+    }
   });
 }
 const Tree &Unit::sTreeInlined(View view) const {
   return lazySTreeInlined(view, [view, this]() {
-    return view == View::WithCoverage //
-               ? Tree(pruneTree(sTreeInlinedRoot.root))
-               : sTreeInlinedRoot;
+    switch (view) {
+      case View::AsIs: return sTreeInlinedRoot;
+      case View::Self: return Tree(pruneTreeSelf(sTreeInlinedRoot.root));
+      case View::WithCov: return Tree(pruneTreeWithCoverage(sTreeInlinedRoot.root));
+    }
   });
 }
 const Tree &Unit::irTree(View view) const {
   return lazyIrTree(view, [view, this]() {
-    return view == View::WithCoverage ? Tree(pruneTree(irTreeRoot.root)) : irTreeRoot;
+    switch (view) {
+      case View::AsIs: return irTreeRoot;
+      case View::Self: return Tree(pruneTreeSelf(irTreeRoot.root));
+      case View::WithCov: return Tree(pruneTreeWithCoverage(irTreeRoot.root));
+    }
   });
 }
 
-TsTree Unit::normaliseTsTree(const TsTree &tree) {
+static TsTree normaliseTsTree(const TsTree &tree) {
   return tree.without("comment"); // // .normaliseWhitespaces();
 }
 
-const Source &Unit::sourceAsWritten() const {
+const AggregateSource &Unit::sourceAsWritten() const {
   return lazySourceAsWritten([&]() {
-    auto normalised = normaliseTsTree(sourceRoot);
-    return Source(normalised, normalised.source, [](auto) { return true; });
+    return AggregateSource( //
+        sourceRoots ^ map([](auto &src) {
+          auto normalised = normaliseTsTree(src);
+          return Source(normalised, normalised.source, [](auto) { return true; });
+        }));
   });
 }
-const Source &Unit::sourcePreprocessed() const {
+const AggregateSource &Unit::sourcePreprocessed() const {
   return lazySourcePreprocessed([&]() {
-    auto normalised = normaliseTsTree(preprocessedRoot);
-    return Source(normalised, normalised.source, [&](auto) { return true; });
+    return AggregateSource( //
+        preprocessedRoots ^ map([](auto &src) {
+          auto normalised = normaliseTsTree(src);
+          return Source(normalised, normalised.source, [&](auto) { return true; });
+        }));
   });
 }
-const Source &Unit::sourceWithCoverage() const {
-  return lazySourceWithCoverage([&]() {
+const AggregateSource &Unit::sourceWithCoverage() const {
+  return lazySourceWithCoverage([&]() -> AggregateSource {
     // XXX use the original source but without comments to match up the lines
-    auto normalised = normaliseTsTree(sourceRoot);
-    auto coveragePrunedSource =
-        (normalised.source ^ lines()) | zip_with_index(size_t{1})               //
-        | filter([&](auto s, auto idx) {                                        //
-            return coverage->entries.contains(std::pair{sourceRoot.name, idx}); //
-          })                                                                    //
-        | keys()                                                                //
-        | filter([](auto x) { return !(x ^ is_blank()); })                      //
-        | mk_string("\n");
-    return Source(normalised, coveragePrunedSource, [&](auto range) {
-      return inclusive(range.first, range.second) |
-             exists([&](auto line) { return coverage->entries.contains(std::pair{name_, line}); });
-    });
+    return AggregateSource( //
+        sourceRoots ^ map([&](auto &src) -> Source {
+          auto normalised = normaliseTsTree(src);
+          auto coveragePrunedSource =
+              (normalised.source ^ lines()) | zip_with_index(size_t{1})        //
+              | filter([&](auto, auto idx) {                                   //
+                  return coverage->entries.contains(std::pair{src.name, idx}); //
+                })                                                             //
+              | keys()                                                         //
+              | filter([](auto x) { return !(x ^ is_blank()); })               //
+              | mk_string("\n");
+          return Source(normalised, coveragePrunedSource, [&](auto &range) {
+            return inclusive(range.first, range.second) | exists([&](auto line) {
+                     return coverage->entries.contains(std::pair{path_, line});
+                   });
+          });
+        }));
   });
 }
 
@@ -243,7 +311,7 @@ Database Codebase::loadDB(const std::string &root) {
           for (auto &e : p.data) {
             for (auto &f : e.functions) {
               for (auto &filename : f.filenames ^ distinct()) {
-                auto name = std::filesystem::path(filename).filename();
+                auto name = std::filesystem::path(filename);
                 // XXX the first region encloses the entire function with a count of 1 iff it spans
                 // more than one line
                 if (f.regions.size() > 1 && f.regions[0].ExecutionCount == 1) {
@@ -261,7 +329,7 @@ Database Codebase::loadDB(const std::string &root) {
                       counts[l] += delta;
                   }
                   for (auto &[line, count] : counts) {
-                    coverage->filenames[name].emplace_back(PerFileCoverage::Instance{
+                    coverage->instances[name].emplace_back(PerFileCoverage::Instance{
                         .function = f.name,
                         .lineStart = line,
                         .lineEnd = line,
@@ -271,7 +339,7 @@ Database Codebase::loadDB(const std::string &root) {
                   }
                 } else {
                   for (auto &r : f.regions) {
-                    coverage->filenames[name].emplace_back(
+                    coverage->instances[name].emplace_back(
                         PerFileCoverage::Instance{.function = f.name,
                                                   .lineStart = r.LineStart,
                                                   .lineEnd = r.LineEnd,
@@ -289,7 +357,7 @@ Database Codebase::loadDB(const std::string &root) {
           nlohmann::from_json(parseJSON(path), p);
           for (auto &f : p.files) {
             for (auto &l : f.lines) {
-              coverage->filenames[std::filesystem::path(f.file).filename()].emplace_back(
+              coverage->instances[std::filesystem::path(f.file)].emplace_back(
                   PerFileCoverage::Instance{.function = {},
                                             .lineStart = l.line_number,
                                             .lineEnd = l.line_number,
@@ -300,7 +368,7 @@ Database Codebase::loadDB(const std::string &root) {
           }
         } else try {
             auto p = std::make_shared<Database::Entry>();
-            parseJSON(path).get_to(*p);
+            sv::readPacked<Database::Entry>(path, *p);
             entries.emplace_back(p);
           } catch (const std::exception &e) { SV_WARNF("Cannot load entry {}: {}", path, e); }
       }
@@ -308,16 +376,17 @@ Database Codebase::loadDB(const std::string &root) {
   } catch (const std::exception &e) { SV_WARNF("Cannot list directory {}: {}", root, e); }
 
   SV_INFOF("Loaded DB {} with {} entries and {} coverage entries", root, entries.size(),
-           coverage->filenames.size());
+           coverage->instances.size());
 
   return {root, entries, coverage};
 }
 
-Codebase Codebase::load(const Database &db,                    //
-                        std::ostream &out,                     //
-                        bool normalise,                        //
-                        const std::vector<std::string> &roots, //
+Codebase Codebase::load(const Database &db,                        //
+                        bool normalise,                            //
+                        const std::vector<std::string> &rootGlobs, //
                         const std::function<bool(const std::string &)> &predicate) {
+
+  auto rootGlobsRegexes = rootGlobs ^ map([](auto &r) { return globToRegex(r); });
 
   const auto createTsParser = [](const std::string &language) -> TSLanguage * {
     if (language == "c") return tree_sitter_c();
@@ -332,83 +401,89 @@ Codebase Codebase::load(const Database &db,                    //
     }
   };
 
-  const auto extractPreprocessedTsRoot = [&](const std::string &name, const std::string &iiLines,
-                                             const std::string &language) {
+  const auto resolvePreprocessedSources = [&](const std::string &name, const std::string &iiLines,
+                                              const std::string &language) -> std::vector<TsTree> {
     const auto [witnessed, contents] = parseCPPLineMarkers(iiLines);
-    TsTree tree{};
-    if (!witnessed.empty()) {
-      contents ^ get(witnessed.front()) ^
-          for_each([&](auto &s) { tree = TsTree(name, s, createTsParser(language)); });
+    if (witnessed.empty()) {
+      SV_WARNF("Nothing was witnessed while walking CPP markers in {}, tree will be empty", name);
+      return {};
     }
-    return tree;
+    auto combined =
+        (contents | collect([&](auto &name, auto &content) -> std::optional<TsTree> {
+           if ((name == witnessed.front()) ||
+               (rootGlobsRegexes ^ exists([&](auto &r) { return std::regex_match(name, r); }))) {
+             return TsTree(name, content, createTsParser(language));
+           }
+           return std::nullopt;
+         })               //
+         | to_vector()) ^ // make sure the source is the last included and the order is stable
+        sort_by([&](auto &t) { return std::pair{t.name == witnessed.front() ? 1 : 0, t.name}; });
+    ;
+    if (combined.empty()) { SV_WARNF("Empty preprocessed source for {}", name); }
+    return combined;
   };
 
-  auto findSourceInDeps = [](auto deps, auto file) {
-    return deps                                                                 //
-           | collect([&](auto &path, auto &dep) -> std::optional<std::string> { //
-               if (std::filesystem::path(path).filename() == file) return dep.content;
-               return std::nullopt;
-             }) //
-           | head_maybe();
+  auto resolveSources = [&](auto &deps, const std::string &needlePath,
+                            const std::string &language) -> std::vector<TsTree> {
+    auto combined =
+        (deps | collect([&](auto &depPath, auto &dep) -> std::optional<TsTree> {
+           if (depPath == needlePath ||
+               (rootGlobsRegexes ^ exists([&](auto &r) { return std::regex_match(depPath, r); }))) {
+             return TsTree(depPath, dep.content, createTsParser(language));
+           }
+           return std::nullopt;
+         }) |
+         to_vector()) ^ // make sure the source is the last included and the order is stable
+        sort_by([&](auto &t) { return std::pair{t.name == needlePath ? 1 : 0, t.name}; });
+    if (combined.empty()) { SV_WARNF("Empty source for {}", needlePath); }
+    return combined;
   };
 
   auto flatCoverage =
       db.coverage ? std::make_shared<FlatCoverage>(*db.coverage) : std::make_shared<FlatCoverage>();
 
   const auto selected = db.entries                                            //
-                        | filter([&](auto &x) { return predicate(x->file); }) //
+                        | filter([&](auto &x) { return predicate(x->path); }) //
                         | to_vector();                                        //
-  const auto maxFileLen =                                                     //
-      selected                                                                //
-      | map([&](auto &x) {                                                    //
-          return static_cast<int>(x->file.size());                            //
-        })                                                                    //
-      | fold_left(int{}, [](auto l, auto r) { return std::max(l, r); });      //
+  auto units =
+      par_map(selected, [&](const std::shared_ptr<Database::Entry> &x) -> std::shared_ptr<Unit> {
+        try {
+          auto loadTree = [&](std::string_view suffix) -> NTree<SNode> {
+            auto file = x->treeFiles ^ filter([&](auto &f) { return f ^ ends_with(suffix); }) ^
+                        head_maybe();
+            if (!file) {
+              SV_INFOF("Entry {} does not contain a {} suffixed tree file , ignoring...", x->path,
+                       suffix);
+              return {};
+            }
 
-  auto units = par_map(selected, [&](const auto &x) -> std::shared_ptr<Unit> {
-    try {
-      auto loadTree = [&](std::string_view suffix) -> NTree<SNode> {
-        auto file = x->treeFiles ^
-                    filter([](auto &f) { return f ^ ends_with(EntryNamedSTreeSuffix); }) ^
-                    head_maybe();
-        if (!file) {
-          SV_INFOF("Entry {} does not contain a {} suffixed tree file , ignoring...", x->file,
-                   suffix);
+            auto path = std::filesystem::path(db.root) / *file;
+            if (!std::filesystem::exists(path)) {
+              SV_WARNF("Entry recorded the tree file {} but it does not exists, using empty tree "
+                       "instead",
+                       path);
+              return {};
+            }
+            return sv::readPacked<NTree<SNode>>(path);
+          };
+          auto dependencies = sv::readPacked<std::map<std::string, Dependency>>(x->dependencyFile);
+          auto preprocessed = sv::readPacked<std::string>(x->preprocessedFile);
+          auto unit = std::make_unique<Unit>(
+              x->path, rootGlobsRegexes, flatCoverage,
+              !normalise ? loadTree(EntryNamedSTreeSuffix) //
+                         : loadTree(EntryUnnamedSTreeSuffix),
+              !normalise ? loadTree(EntryNamedSTreeInlinedSuffix) //
+                         : loadTree(EntryUnnamedSTreeInlinedSuffix),
+              !normalise ? loadTree(EntryNamedIrTreeSuffix) //
+                         : loadTree(EntryUnnamedIrTreeSuffix),
+              resolveSources(dependencies, x->path, x->language),
+              resolvePreprocessedSources(x->path, preprocessed, x->language));
+          return unit;
+        } catch (const std::exception &e) {
+          SV_WARNF("Failed to load entry {}: {}", x->path, e);
           return {};
         }
-
-        auto path = std::filesystem::path(db.root) / *file;
-        if (!std::filesystem::exists(path)) {
-          SV_WARNF(
-              "Entry recorded the tree file {} but it does not exists, using empty tree instead",
-              path);
-          return {};
-        }
-        return readJSON<NTree<SNode>>(path);
-      };
-
-      auto dependencies = readJSON<std::map<std::string, Dependency>>(x->dependencyFile);
-
-      auto preprocessed = sv::readFile(x->preprocessedFile);
-      auto source = findSourceInDeps(dependencies, x->file);
-      auto unit =
-          std::make_unique<Unit>(x->file, flatCoverage,
-                                 !normalise ? loadTree(EntryNamedSTreeSuffix) //
-                                            : loadTree(EntryUnnamedSTreeSuffix),
-                                 !normalise ? loadTree(EntryNamedSTreeInlinedSuffix) //
-                                            : loadTree(EntryUnnamedSTreeInlinedSuffix),
-                                 !normalise ? loadTree(EntryNamedIrTreeSuffix) //
-                                            : loadTree(EntryUnnamedIrTreeSuffix),
-                                 TsTree(x->file, source.value_or(""), createTsParser(x->language)),
-                                 extractPreprocessedTsRoot(x->file, preprocessed, x->language));
-      out << "# Loaded " << std::left << std::setw(maxFileLen) << x->file << "\r";
-      return unit;
-    } catch (const std::exception &e) {
-      SV_WARNF("Failed to load entry {}: {}", x->file, e);
-      return {};
-    }
-  });
-  out << std::endl;
+      });
   return Codebase(db.root, units, flatCoverage);
 }
 
@@ -427,13 +502,15 @@ std::ostream &operator<<(std::ostream &os, const Codebase &codebase) {
             << "}";
 }
 std::ostream &operator<<(std::ostream &os, const Unit &unit) {
-  return os << "sv::Unit{"                                                     //
-            << ".path=" << unit.path_ << ", "                                  //
-            << ".name=" << unit.name_ << ", "                                  //
-            << ".sTreeRoot=(" << unit.sTreeRoot.nodes() << "), "               //
-            << ".sTreeInlinedRoot=(" << unit.sTreeInlinedRoot.nodes() << "), " //
-            << ".irTreeRoot=(" << unit.irTreeRoot.nodes() << "), "
-            << ".sourceRoot=" << unit.sourceRoot.root().tree //
+  return os << "sv::Unit{"                                                                //
+            << ".path=" << unit.path_ << ", "                                             //
+            << ".sTreeRoot=(" << unit.sTreeRoot.nodes() << "), "                          //
+            << ".sTreeInlinedRoot=(" << unit.sTreeInlinedRoot.nodes() << "), "            //
+            << ".irTreeRoot=(" << unit.irTreeRoot.nodes() << "), "                        //
+            << ".sourceRoots="                                                            //
+            << (unit.sourceRoots ^ mk_string(", ", [](auto &t) { return t.name; }))       //
+            << ".preprocessedRoots="                                                      //
+            << (unit.preprocessedRoots ^ mk_string(", ", [](auto &t) { return t.name; })) //
             << "}";
 }
 

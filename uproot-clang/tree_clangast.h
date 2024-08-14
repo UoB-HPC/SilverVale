@@ -9,7 +9,7 @@ namespace sv {
 
 std::vector<clang::Decl *> topLevelDeclsInMainFile(clang::ASTUnit &unit);
 
-class ClangASTSemanticTreeVisitor : private NTreeVisitor<SNode, bool>,
+class ClangASTSemanticTreeVisitor : private NTreeVisitor<SNode, void>,
                                     public clang::RecursiveASTVisitor<ClangASTSemanticTreeVisitor> {
 
 public:

@@ -20,7 +20,8 @@ static std::optional<CoverageKind> parseCoverageKind(const std::string_view &kin
 
 struct Options {
   std::filesystem::path buildDir;
-  std::vector<std::string> sourceGlobs;
+  std::vector<std::string> includeGlobs;
+  std::vector<std::string> excludeGlobs;
   std::filesystem::path outDir;
   std::filesystem::path coverageBin;
   std::filesystem::path coverageRawDir;

@@ -49,23 +49,16 @@ bool sv::detectClangAndIndex(bool verbose,
                     filter([&](auto &x) { return !coverageFlags.contains(x); });
 
   const auto bcArgs = std::vector<std::string>{program, "-emit-llvm"} | concat(args) |
-                      append("-fno-discard-value-names") | append("-g") | to_vector();    //
+                      append("-fno-discard-value-names") | append("-g") | append("-MD") |
+                      to_vector(); //
 
   const auto execParent = std::filesystem::canonical("/proc/self/exe").parent_path();
-
-  const auto pchArgs =                                                                    //
-      std::vector<std::string>{program,                                                   //
-                               "-emit-ast", "-o" + pchName, "--offload-host-only", "-MD",
-          // intel's clang++ adds -include and -include-footer which won't be in the dependency file, so we try to look for it
-//                               std::string("-fplugin=")+(execParent / +UPROOT_CLANG_SO).string()
-      } //
-      | concat(args | filter(noOffloadArch)) | to_vector();                               //
-  const auto iiArgs =                                                                     //
-      std::vector<std::string>{program,                                                   //
-                               "-E", "-o" + iiName, "--offload-host-only"}                //
+  const auto iiArgs =                                                      //
+      std::vector<std::string>{program,                                    //
+                               "-E", "-o" + iiName, "--offload-host-only"} //
       | concat(args) | to_vector();
 
-  sv::par_for(std::vector{bcArgs, pchArgs, iiArgs}, [&](auto args, auto) {
+  sv::par_for(std::vector{bcArgs, iiArgs}, [&](auto args, auto) {
     auto line = args ^ mk_string(" ");
     if (verbose) SV_COUT << line << std::endl;
     if (auto code = sv::exec(line, std::cout); code) {
@@ -88,22 +81,27 @@ bool sv::detectClangAndIndex(bool verbose,
 #endif
       });
 
-  const auto cc1UprootLine =
-      fmt::format("{} {} -cc1 -load {}/{}", envLine, program, execParent, UPROOT_CLANG_SO);
+  std::string uprootSO = execParent / UPROOT_CLANG_SO;
+  if (auto uprootSOEnv = std::getenv("UPROOT_SO"); uprootSOEnv) {
+    uprootSO = execParent / std::string(uprootSOEnv);
+  }
 
-  if (verbose) SV_COUT << cc1UprootLine << std::endl;
+  const auto uprootArgs = //
+      fmt::format("{} {} -fsyntax-only --offload-host-only -Xclang -load -Xclang {} -Xclang "
+                  "-plugin -Xclang uproot {}",
+                  envLine, program, uprootSO, args | filter(noOffloadArch) | mk_string(" "));
 
-  if (auto code = sv::exec(cc1UprootLine, std::cout); code) {
-    if (*code != 0) SV_WARNF("non-zero return for `{}`", cc1UprootLine);
-  } else SV_WARNF("popen failed for `{}`: ", cc1UprootLine);
+  if (verbose) SV_COUT << uprootArgs << std::endl;
+  if (auto code = sv::exec(uprootArgs, std::cout); code) {
+    if (*code != 0) SV_WARNF("non-zero return for `{}`", uprootArgs);
+  } else SV_WARNF("popen failed for `{}`: ", uprootArgs);
 
   // cc1 plugin generates an entry at the expected location with:
   //  - language, if detected
-  //  - dependencyFile
   //  - treeFiles
   //  - attributes
   auto entryFile = dest / fmt::format("{}.{}.{}", prefix, stem, sv::EntrySuffix);
-  auto entry = readJSON<sv::Database::Entry>(entryFile);
+  auto entry = sv::readPacked<sv::Database::Entry>(entryFile);
 
   std::string language = entry.language;
   if (language.empty()) { // Fallback to driver detection
@@ -117,14 +115,19 @@ bool sv::detectClangAndIndex(bool verbose,
   }
 
   auto preprocessedFile = dest / fmt::format("{}.{}.ii", prefix, stem);
-  std::filesystem::copy(wd / iiName, preprocessedFile);
+  sv::writePacked(preprocessedFile, sv::readFile(wd / iiName));
+
+  auto dependencies = sv::uproot::readDepFile(dFile, cmd.file);
+  auto dependencyFile = dest / fmt::format("{}.{}.{}", prefix, stem, sv::EntryDepSuffix);
+  sv::writePacked(dependencyFile, dependencies);
 
   entry.language = language;
-  entry.file = std::filesystem::path(cmd.file).filename();
+  entry.path = std::filesystem::path(cmd.file);
   entry.command = cmd.command ^ mk_string(" ");
   entry.preprocessedFile = preprocessedFile;
+  entry.dependencyFile = dependencyFile;
   entry.attributes.emplace("version", version);
 
-  sv::writeJSON(entryFile, entry);
+  sv::writePacked(entryFile, entry);
   return true;
 }

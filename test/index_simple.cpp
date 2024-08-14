@@ -13,9 +13,9 @@
 #include "sv/tool_dump.h"
 #include "sv/tool_index.h"
 
+#include "aspartame/set.hpp"
 #include "aspartame/string.hpp"
 #include "aspartame/vector.hpp"
-#include "aspartame/set.hpp"
 #include "aspartame/view.hpp"
 
 using namespace aspartame;
@@ -23,12 +23,12 @@ using namespace sv;
 
 TEST_CASE("simple") {
 
-  auto [name, compiler, variant, dir] =  //
-      GENERATE_REF(                      //
+  auto [name, compiler, variant, dir] = //
+      GENERATE_REF(                     //
           FIXTURE_SIMPLE_CLANG_CXX_EXPR //
-//          FIXTURE_SIMPLE_GCC_CXX_EXPR,   //
-//          FIXTURE_SIMPLE_GCC_F90_EXPR
-                    );   //
+                                        //          FIXTURE_SIMPLE_GCC_CXX_EXPR,   //
+                                        //          FIXTURE_SIMPLE_GCC_F90_EXPR
+      );                                //
 
   auto outDir = fmt::format("{}/{}_{}_db", FIXTURE_TMP_DIR, name, compiler);
   INFO(outDir);
@@ -62,7 +62,8 @@ TEST_CASE("simple") {
 
     int code = index::run(index::Options{
         .buildDir = dir,
-        .sourceGlobs = {"*"},
+        .includeGlobs = {"*"},
+        .excludeGlobs = {},
         .outDir = outDir,
         .coverageBin = exe,
         .coverageRawDir = "",
@@ -73,54 +74,55 @@ TEST_CASE("simple") {
     });
     REQUIRE(code == 0);
     auto db = Codebase::loadDB(outDir);
-    auto cb = Codebase::load(db, std::cout, true, {}, [](auto &) { return true; });
+    auto cb = Codebase::load(db, true, {}, //
+                             [](auto &) { return true; });
     REQUIRE(cb.units.size() == 2);
 
     for (auto unit : cb.units) {
       // TODO implement assertions
 
-      if(unit->name() ^ starts_with( "main")){
+      if (unit->name() ^ starts_with("main")) {
 
-      std::cout << "# " << unit->name() << "\n";
+        std::cout << "# " << unit->name() << "\n";
 
+        std::cout << (unit->sourceAsWritten().contentWhitespaceNormalised() ^ mk_string("\n")) << std::endl;
 
-      std::cout << (unit->sourceAsWritten().contentWhitespaceNormalised()) << std::endl;
+        std::cout << "STree" << std::endl;
+        std::cout << unit->sTree(Unit::View::AsIs).prettyPrint() << std::endl;
+        std::cout << unit->sTree(Unit::View::WithCov).prettyPrint() << std::endl;
 
-      std::cout << "STree" << std::endl;
-      std::cout << unit->sTree(Unit::View::AsIs).prettyPrint() << std::endl;
-      std::cout << unit->sTree(Unit::View::WithCoverage).prettyPrint() << std::endl;
+        std::cout << "IRTREE" << std::endl;
+        std::cout << unit->irTree(Unit::View::AsIs).prettyPrint() << std::endl;
+        std::cout << unit->irTree(Unit::View::WithCov).prettyPrint() << std::endl;
 
-      std::cout << "IRTREE" << std::endl;
-      std::cout << unit->irTree(Unit::View::AsIs).prettyPrint() << std::endl;
-      std::cout << unit->irTree(Unit::View::WithCoverage).prettyPrint() << std::endl;
-
-      std::cout << "SRC" << std::endl;
-      std::cout << unit->sourceAsWritten().tsTree().prettyPrint() << std::endl;
-      std::cout << unit->sourcePreprocessed().tsTree().prettyPrint() << std::endl;
-      std::cout << unit->sourceWithCoverage().tsTree().prettyPrint() << std::endl;
-      std::cout << unit->sourceWithCoverage().content() << std::endl;
-
+        std::cout << "SRC" << std::endl;
+        std::cout << unit->sourceAsWritten().tsTree().prettyPrint() << std::endl;
+        std::cout << unit->sourcePreprocessed().tsTree().prettyPrint() << std::endl;
+        std::cout << unit->sourceWithCoverage().tsTree().prettyPrint() << std::endl;
+        std::cout << (unit->sourceWithCoverage().content() ^ mk_string("\n"))<< std::endl;
       }
 
-
-//      std::cout << "sourceAsWritten  \n";
-//      std::cout << (unit->sourceAsWritten().content() //
-//                    ^ lines()                         //
-//                    ^ zip_with_index(1)               //
-//                    ^ mk_string("\n", [](auto l, auto i) { return fmt::format("{:2}│{}", i, l); }))
-//                << std::endl;
-//      std::cout << "sourcePreprocessed  \n";
-//      std::cout << (unit->sourcePreprocessed().content() //
-//                    ^ lines()                            //
-//                    ^ zip_with_index(1)                  //
-//                    ^ mk_string("\n", [](auto l, auto i) { return fmt::format("{:2}│{}", i, l); }))
-//                << std::endl;
-//      std::cout << "sourceWithCoverage  \n";
-//      std::cout << (unit->sourceWithCoverage().content() //
-//                    ^ lines()                            //
-//                    ^ zip_with_index(1)                  //
-//                    ^ mk_string("\n", [](auto l, auto i) { return fmt::format("{:2}│{}", i, l); }))
-//                << std::endl;
+      //      std::cout << "sourceAsWritten  \n";
+      //      std::cout << (unit->sourceAsWritten().content() //
+      //                    ^ lines()                         //
+      //                    ^ zip_with_index(1)               //
+      //                    ^ mk_string("\n", [](auto l, auto i) { return fmt::format("{:2}│{}", i,
+      //                    l); }))
+      //                << std::endl;
+      //      std::cout << "sourcePreprocessed  \n";
+      //      std::cout << (unit->sourcePreprocessed().content() //
+      //                    ^ lines()                            //
+      //                    ^ zip_with_index(1)                  //
+      //                    ^ mk_string("\n", [](auto l, auto i) { return fmt::format("{:2}│{}", i,
+      //                    l); }))
+      //                << std::endl;
+      //      std::cout << "sourceWithCoverage  \n";
+      //      std::cout << (unit->sourceWithCoverage().content() //
+      //                    ^ lines()                            //
+      //                    ^ zip_with_index(1)                  //
+      //                    ^ mk_string("\n", [](auto l, auto i) { return fmt::format("{:2}│{}", i,
+      //                    l); }))
+      //                << std::endl;
 
       //            std::cout << "asis\n";
       //            std::cout << unit->sourcePreprocessed(Unit::View::AsIs).tsTree().prettyPrint()

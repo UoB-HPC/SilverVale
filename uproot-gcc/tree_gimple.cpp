@@ -18,6 +18,7 @@
 #include "aspartame/view.hpp"
 //
 #include "sv/cli.h"
+#include "sv/database.h"
 
 using namespace aspartame;
 using namespace std::string_literals;
@@ -92,7 +93,7 @@ sv::Ref sv::Ref::illegal(const std::string &name) {
 [[nodiscard]] static sv::Location resolveLocation(location_t loc) {
   if (loc == UNKNOWN_LOCATION) return {};
   auto el = expand_location(loc);
-  return {.filename = el.file ? el.file : "",
+  return {.path = el.file ? el.file : "",
           .line = static_cast<size_t>(el.line),
           .col = static_cast<size_t>(el.column)};
 }
@@ -110,7 +111,7 @@ sv::Ref sv::Ref::illegal(const std::string &name) {
 [[nodiscard]] static sv::Location resolveLocation(gimple *gimple) {
   if (auto gloc = gimple_location(gimple); gloc != UNKNOWN_LOCATION) {
     auto el = expand_location(gloc);
-    return {.filename = el.file ? el.file : "",
+    return {.path = el.file ? el.file : "",
             .line = static_cast<size_t>(el.line),
             .col = static_cast<size_t>(el.column)};
   }
@@ -445,12 +446,8 @@ void sv::GimpleUprootPass::flush() {
   root.postOrderWalk([&](auto, auto) { nodes++; });
   auto dump = [&](auto path, auto f) {
     auto tree = root.map<sv::SNode>(f);
-    std::ofstream out(path, std::ios::out);
-    if (!out) SV_WARNF("[uproot] Unable to open {} for writing", path);
-    else {
-      out << nlohmann::json(tree);
-      SV_INFOF("[uproot] Wrote {} nodes to {}", nodes, path);
-    }
+    sv::writePacked(path, tree);
+    SV_INFOF("[uproot] Wrote {} nodes to {}", nodes, path);
   };
 
   dump(unnamedTreePath, [](auto &r) {

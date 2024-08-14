@@ -1,4 +1,5 @@
 #include <iostream>
+#include <utility>
 
 #include "sv/tree_ts.h"
 
@@ -16,7 +17,7 @@ sv::parseCPPLineMarkers(const std::string &iiContent) {
   std::vector<std::string> encountered;
   std::unordered_set<std::string> witnessed;
   std::string currentFile;
-  size_t currentLine;
+  size_t currentLine{};
 
   auto push = [&](auto next) {
     currentFile = next;
@@ -63,8 +64,10 @@ sv::parseCPPLineMarkers(const std::string &iiContent) {
 }
 
 sv::TsTree::TsTree() = default;
-sv::TsTree::TsTree(const std::string &name, const std::string &source, const TSLanguage *lang)
-    : name(std::filesystem::path(name).filename()), source(source),
+sv::TsTree::TsTree(std::filesystem::path name, //
+                   const std::string &source,  //
+                   const TSLanguage *lang)
+    : name(std::move(name)), source(source),
       parser(std::shared_ptr<TSParser>(ts_parser_new(), [](auto x) { ts_parser_delete(x); })) {
   ts_parser_set_language(parser.get(), lang);
   tree = std::shared_ptr<TSTree>(
@@ -98,7 +101,7 @@ sv::TsTree sv::TsTree::without(const std::string &type, const std::optional<TSNo
 sv::TsTree sv::TsTree::normaliseNewLines(const std::optional<TSNode> &node) const {
   auto linesToKeep = slocLines({}, node.value_or(root()));
   auto slocNormalise = (source ^ lines())                                                    //
-                       | zip_with_index<uint32_t>(1)                                          //
+                       | zip_with_index<uint32_t>(1)                                         //
                        | filter([&](auto l, auto idx) { return linesToKeep.contains(idx); }) //
                        | keys()                                                              //
                        | mk_string("\n");                                                    //

@@ -24,55 +24,53 @@ using namespace sv;
 
 TEST_CASE("microstream") {
 
-  auto gccBaseGlobs = std::vector{"*/*main.sv.json"};
-  auto clangBaseGlobs = std::vector{"*/*main.sv.json", "*/*main.pch.zstd"};
+  auto baseGlobs = std::vector{"*/*main.sv.json"};
 
   auto [expr, globs, ext] = GENERATE_REF(
       std::tuple{FIXTURE_MICROSTREAM_GCC_SERIAL_EXPR,
                  std::vector{"*/*.main.named.irtree.json", "*/*.main.unnamed.irtree.json"} ^
-                     concat(gccBaseGlobs),
+                     concat(baseGlobs),
                  ".cpp"},
 
       std::tuple{FIXTURE_MICROSTREAM_GCC_OMP_EXPR,
                  std::vector{"*/*.main.named.irtree.json", "*/*.main.unnamed.irtree.json"} ^
-                     concat(gccBaseGlobs),
+                     concat(baseGlobs),
                  ".cpp"},
 
       std::tuple{FIXTURE_MICROSTREAM_GCC_SERIAL_F90_EXPR,
                  std::vector{"*/*.main.named.irtree.json", "*/*.main.unnamed.irtree.json"} ^
-                     concat(gccBaseGlobs),
+                     concat(baseGlobs),
                  ".F90"},
 
       std::tuple{FIXTURE_MICROSTREAM_GCC_OMP_F90_EXPR,
                  std::vector{"*/*.main.named.irtree.json", "*/*.main.unnamed.irtree.json"} ^
-                     concat(gccBaseGlobs),
+                     concat(baseGlobs),
                  ".F90"},
 
       std::tuple{FIXTURE_MICROSTREAM_CLANG_SERIAL_EXPR,
-                 std::vector{"*/*main.bc"} ^ concat(clangBaseGlobs), ".cpp"} //
+                 std::vector{"*/*main.bc"} ^ concat(baseGlobs), ".cpp"} //
 
 #ifdef FIXTURE_MICROSTREAM_CLANG_OMP_EXPR
       ,
-      std::tuple{FIXTURE_MICROSTREAM_CLANG_OMP_EXPR,
-                 std::vector{"*/*main.bc"} ^ concat(clangBaseGlobs), ".cpp"} //
+      std::tuple{FIXTURE_MICROSTREAM_CLANG_OMP_EXPR, std::vector{"*/*main.bc"} ^ concat(baseGlobs),
+                 ".cpp"} //
 #endif
 #ifdef FIXTURE_MICROSTREAM_CLANG_OMP_TARGET_EXPR
       ,
       std::tuple{FIXTURE_MICROSTREAM_CLANG_OMP_TARGET_EXPR,
-                 std::vector{"*/*main.bc", "*/*main-openmp-*.bc"} ^ concat(clangBaseGlobs), ".cpp"}
+                 std::vector{"*/*main.bc", "*/*main-openmp-*.bc"} ^ concat(baseGlobs), ".cpp"}
   //
 #endif
 #ifdef FIXTURE_MICROSTREAM_CLANG_HIP_EXPR
       ,
-      std::tuple{FIXTURE_MICROSTREAM_CLANG_HIP_EXPR, //
-                 std::vector{"*/*main-host-*.bc", "*/*main-hip-*.bc"} ^ concat(clangBaseGlobs),
-                 ".cpp"} //
+      std::tuple{FIXTURE_MICROSTREAM_CLANG_HIP_EXPR,
+                 std::vector{"*/*main-host-*.bc", "*/*main-hip-*.bc"} ^ concat(baseGlobs), ".cpp"}
+  //
 #endif
 #ifdef FIXTURE_MICROSTREAM_CLANG_CUDA_EXPR
       ,
       std::tuple{FIXTURE_MICROSTREAM_CLANG_CUDA_EXPR,
-                 std::vector{"*/*main.bc", "*/*main-cuda-*-sm_60.bc"} ^ concat(clangBaseGlobs),
-                 ".cpp"}
+                 std::vector{"*/*main.bc", "*/*main-cuda-*-sm_60.bc"} ^ concat(baseGlobs), ".cpp"}
 #endif
   ); //
 
@@ -110,7 +108,8 @@ TEST_CASE("microstream") {
     DYNAMIC_SECTION("index-" << model) {
       int code = index::run(index::Options{
           .buildDir = dir,
-          .sourceGlobs = {"*"},
+          .includeGlobs = {"*"},
+          .excludeGlobs = {},
           .outDir = outDir,
           .coverageBin = fmt::format("{}/{}", dir, name),
           .coverageRawDir = "",
@@ -173,9 +172,15 @@ TEST_CASE("microstream") {
         for (auto &unit : cb.units) {
           // make sure it's not all empty trees with one root
 
-          CHECK(unit->sTree(Unit::View::AsIs).maxWidth() > 1);
-          CHECK(unit->sTreeInlined(Unit::View::AsIs).maxWidth() > 1);
-          CHECK(unit->irTree(Unit::View::AsIs).maxWidth() > 1);
+          for (auto view : {Unit::View::AsIs, Unit::View::Self, Unit::View::WithCov}) {
+            INFO(Unit::to_string(view));
+            CHECK(unit->sTree(view).maxWidth() > 1);
+            CHECK(unit->irTree(view).maxWidth() > 1);
+            if (compiler == std::string("clang")) { // we support inlining for Clang only
+              CHECK(unit->sTreeInlined(view).maxWidth() > 1);
+            }
+          }
+
           CHECK(unit->sourceAsWritten().tsTree().maxWidth() > 1);
           CHECK(unit->sourcePreprocessed().tsTree().maxWidth() > 1);
           CHECK(unit->sourceWithCoverage().tsTree().maxWidth() > 1);
@@ -187,7 +192,9 @@ TEST_CASE("microstream") {
           CHECK(unit->sourceAsWritten().lloc() > 1);
           // smoke test identity distance
 
-          CHECK(Diff::apted(unit->sTree(Unit::View::AsIs), unit->sTree(Unit::View::AsIs)) == 0);
+          CHECK(Diff::apted(unit->sTree(Unit::View::Self), unit->sTree(Unit::View::Self)) == 0);
+          CHECK(Diff::apted(unit->sTree(Unit::View::WithCov), unit->sTree(Unit::View::WithCov)) ==
+                0);
           // TODO parallelise, too slow
           //          CHECK(Diff::apted(unit->sTreeInlined(Unit::View::AsIs),
           //                            unit->sTreeInlined(Unit::View::AsIs)) == 0);
@@ -227,7 +234,7 @@ print(n)
 
 local cb = Codebase.load(db, true, {}, function(s) return true end)
 for _, x in ipairs(cb:units()) do
-  print(Diff.apted(x:sTree(0), x:sTree(0)) .. "," .. x:name())
+  print(Diff.apted(x:sTree(1), x:sTree(1)) .. "," .. x:name())
 end
 
 )";

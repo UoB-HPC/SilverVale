@@ -69,6 +69,7 @@ static std::optional<Modifier> parseModifier(const std::string_view &modifier) {
 struct DatabaseSpec {
   bool base;
   std::filesystem::path path;
+  std::vector<std::string> roots;
 };
 
 struct ExcludeFilter {
@@ -88,6 +89,7 @@ struct EntryMatch {
 struct TaskDesc {
   delta::Kind kind;
   delta::Modifier mod;
+  bool operator==(const TaskDesc &other) const { return kind == other.kind && mod == other.mod; }
 };
 
 struct Options {
@@ -96,11 +98,30 @@ struct Options {
   std::vector<ExcludeFilter> excludes;
   std::vector<EntryMerge> merges;
   std::vector<EntryMatch> matches;
+
   std::string outputPrefix;
   int maxThreads;
+
+
+  double memThrottleRatio;
+  int memRetryIntervalMs;
+  int maxSTreeThreads;
+  size_t maxGroups;
+  size_t maxSTreeTokens;
+
 };
 
 [[nodiscard]] int main(int argc, char **argv);
 [[nodiscard]] int run(const Options &options);
 
 } // namespace sv::delta
+
+namespace std {
+template <> struct hash<sv::delta::TaskDesc> {
+  std::size_t operator()(const sv::delta::TaskDesc &task) const {
+    std::size_t h1 = std::hash<sv::delta::Kind>()(task.kind);
+    std::size_t h2 = std::hash<sv::delta::Modifier>()(task.mod);
+    return h1 ^ (h2 << 1);
+  }
+};
+} // namespace std

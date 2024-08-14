@@ -81,15 +81,15 @@ public:
 };
 
 struct Location {
-  std::string filename;
+  std::string path;
   size_t line, col;
-  NLOHMANN_DEFINE_TYPE_INTRUSIVE(Location, filename, line, col);
+  NLOHMANN_DEFINE_TYPE_INTRUSIVE(Location, path, line, col);
   bool operator==(const Location &rhs) const {
-    return filename == rhs.filename && line == rhs.line && col == rhs.col;
+    return path == rhs.path && line == rhs.line && col == rhs.col;
   }
   bool operator!=(const Location &rhs) const { return !(rhs == *this); }
   friend std::ostream &operator<<(std::ostream &os, const Location &loc) {
-    return os << loc.filename << ":" << loc.line << ":" << loc.col;
+    return os << loc.path << ":" << loc.line << ":" << loc.col;
   }
 };
 

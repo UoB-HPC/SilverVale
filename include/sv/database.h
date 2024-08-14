@@ -1,6 +1,7 @@
 #pragma once
 
-#include <iosfwd>
+#include <exception>
+#include <iostream>
 #include <map>
 #include <optional>
 #include <string>
@@ -9,21 +10,38 @@
 #include "nlohmann/json.hpp"
 #include "sv/lua_shim.h"
 
+#include "bxzstr.hpp"
+
 namespace sv {
 
-template <typename T, typename FS = std::fstream>
-void writeJSON(const std::string &path, const T &t) {
-  FS out(path, std::ios::out);
-  out.exceptions(std::ios::badbit | std::ios::failbit);
-  out << nlohmann::json(t);
+template <typename T> void writePacked(const std::string &path, const T &t) {
+  try {
+    //   std::fstream out(path, std::ios::out | std::ios::binary | std::ios::trunc);
+    //  out << nlohmann::json(t);
+    bxz::ofstream out(path, bxz::zstd, 4);
+    out.exceptions(std::ios::badbit | std::ios::failbit);
+    nlohmann::json::to_msgpack(nlohmann::json(t), out);
+  } catch (const std::exception &e) {
+    throw std::runtime_error("Cannot write file: " + path + ": " + e.what());
+  }
 }
 
-template <typename T, typename FS = std::fstream> T readJSON(const std::string &path) {
-  FS in(path, std::ios::in);
-  in.exceptions(std::ios::badbit | std::ios::failbit);
+template <typename T> T readPacked(const std::string &path, T &t) {
+  try {
+    //  std::fstream in(path, std::ios::in | std::ios::binary);
+    //  nlohmann::from_json(nlohmann::json::parse(in), t);
+    bxz::ifstream in(path);
+    in.exceptions(std::ios::badbit | std::ios::failbit);
+    nlohmann::from_json(nlohmann::json::from_msgpack(in), t);
+    return t;
+  } catch (const std::exception &e) {
+    throw std::runtime_error("Cannot parse file: " + path + ": " + e.what());
+  }
+}
+
+template <typename T> T readPacked(const std::string &path) {
   T t{};
-  nlohmann::from_json(nlohmann::json::parse(in), t);
-  return t;
+  return readPacked<T>(path, t);
 }
 
 constexpr std::string_view EntrySuffix = "sv.json";
@@ -128,6 +146,7 @@ struct ClangSBCCProfile {
     }
   };
 
+  // Field names matches spec: https://gcc.gnu.org/onlinedocs/gcc/Invoking-Gcov.html
   struct Function {
     std::string name{};
     std::vector<std::string> filenames{};
@@ -139,6 +158,7 @@ struct ClangSBCCProfile {
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(Function, name, filenames, regions, branches, count);
   };
 
+  // Field names matches spec: https://gcc.gnu.org/onlinedocs/gcc/Invoking-Gcov.html
   struct Entry {
     // XXX `files` (expansions) not implemented
     std::vector<Function> functions{};
@@ -146,6 +166,7 @@ struct ClangSBCCProfile {
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(Entry, functions, totals);
   };
 
+  // Field names matches spec: https://gcc.gnu.org/onlinedocs/gcc/Invoking-Gcov.html
   std::string type{};
   std::string version{};
   std::vector<Entry> data{};
@@ -178,13 +199,13 @@ struct PerFileCoverage {
                     SOL_UT_FN_ACC(Instance, count));
   };
 
-  std::map<std::string, std::vector<Instance>> filenames{};
+  std::map<std::string, std::vector<Instance>> instances{};
 
 private:
-  DEF_SOL_UT_ACCESSOR(filenames);
+  DEF_SOL_UT_ACCESSOR(instances);
 
 public:
-  DEF_TEAL_SOL_UT(PerFileCoverage, SOL_UT_FN_ACC(PerFileCoverage, filenames));
+  DEF_TEAL_SOL_UT(PerFileCoverage, SOL_UT_FN_ACC(PerFileCoverage, instances));
 };
 
 struct CompilationDatabase {
@@ -256,22 +277,19 @@ struct Database {
   struct Entry {
 
     std::string language;
-    std::string file;
+    std::string path;
     std::string command;
     std::string preprocessedFile{};
     std::string dependencyFile{};
     std::vector<std::string> treeFiles;
-
-    //    std::map<std::string, Dependency> dependencies{};
-
     std::map<std::string, std::string> attributes{};
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Entry, language, file, command, preprocessedFile, //
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Entry, language, path, command, preprocessedFile, //
                                    dependencyFile, treeFiles, attributes);
 
   private:
     DEF_SOL_UT_ACCESSOR(language);
-    DEF_SOL_UT_ACCESSOR(file);
+    DEF_SOL_UT_ACCESSOR(path);
     DEF_SOL_UT_ACCESSOR(command);
     DEF_SOL_UT_ACCESSOR(preprocessedFile);
     DEF_SOL_UT_ACCESSOR(dependencyFile);
@@ -281,7 +299,7 @@ struct Database {
   public:
     DEF_TEAL_SOL_UT(Entry,                                  //
                     SOL_UT_FN_ACC(Entry, language),         //
-                    SOL_UT_FN_ACC(Entry, file),             //
+                    SOL_UT_FN_ACC(Entry, path),             //
                     SOL_UT_FN_ACC(Entry, command),          //
                     SOL_UT_FN_ACC(Entry, preprocessedFile), //
                     SOL_UT_FN_ACC(Entry, dependencyFile),   //
@@ -291,7 +309,7 @@ struct Database {
     friend std::ostream &operator<<(std::ostream &os, const Entry &entry) {
       os << "sv::Database::Entry{"                                 //
          << ".language=" << entry.language << ", "                 //
-         << ".file=" << entry.file << ", "                         //
+         << ".path=" << entry.path << ", "                         //
          << ".command=" << entry.command << ", "                   //
          << ".preprocessedFile=" << entry.preprocessedFile << ", " //
          << ".dependencyFile=" << entry.dependencyFile << ", ";    //
@@ -321,7 +339,7 @@ public:
     os << "sv::Database{"              //
        << ".root=" << db.root << ", "; //
     for (auto &e : db.entries)
-      os << ".entries[" << e->file << "]=" << e << ", ";
+      os << ".entries[" << e->path << "]=" << e << ", ";
     os << "}";
     return os;
   }

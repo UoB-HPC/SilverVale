@@ -268,24 +268,30 @@ int sv::index::main(int argc, char **argv) {
   using namespace clipp;
   bool help{};
   Options opts{};
-  opts.sourceGlobs = {"*"};
+  opts.includeGlobs = {"*"};
   opts.maxThreads = static_cast<int>(std::thread::hardware_concurrency());
 
   auto bind = [](auto &x) { return [&](const char *arg) { x = arg; }; };
   auto cli = ( //
       option("-h", "--help").set(help).doc("Show help"),
 
-      required("--build")                                                //
+      required("--build")                                              //
               % "The build directory containing compile_command.json." //
           & value("buildDir", bind(opts.buildDir)),
 
-      required("--out")                                             //
+      required("--out")                                           //
               % "The output directory for storing database files" //
           & value("outDir", bind(opts.outDir)),
 
-      option("--sourceGlobs")                                                      //
+      repeatable(                                                                  //
+          option("--includes")                                                     //
               % "Glob patterns for file to include in the database, defaults to *" //
-          & values("sourceGlobs", opts.sourceGlobs),
+          & value("glob", [&](const std::string &s) { opts.includeGlobs.emplace_back(s); })),
+
+      repeatable(                                                                           //
+          option("--excludes")                                                              //
+              % "Glob patterns for file to exclude in the database, runs on included files" //
+          & value("glob", [&](const std::string &s) { opts.excludeGlobs.emplace_back(s); })),
 
       option("--cov-bin") //
               % "Path to the binary compiled with coverage enabled. Profile data (*.profraw) files "
@@ -350,12 +356,18 @@ int sv::index::run(const sv::index::Options &options) {
             << std::endl;
     return EXIT_FAILURE;
   }
-  auto regexes = options.sourceGlobs ^ map([](auto &glob) { return globToRegex(glob); });
+  auto includeRegexes = options.includeGlobs ^ map([](auto &glob) { return globToRegex(glob); });
+  auto excludeRegexes = options.excludeGlobs ^ map([](auto &glob) { return globToRegex(glob); });
 
-  auto commands = db->entries ^ filter([&](auto &cmd) {
-                    return regexes ^ exists([&](auto &r) { return std::regex_match(cmd.file, r); });
-                  }) ^
-                  sort_by([](auto &cmd) { return cmd.file; });
+  auto commands =               //
+      db->entries               //
+      ^ filter([&](auto &cmd) { //
+          return includeRegexes ^ exists([&](auto &r) { return std::regex_match(cmd.file, r); });
+        })                      //
+      ^ filter([&](auto &cmd) { //
+          return !(excludeRegexes ^ exists([&](auto &r) { return std::regex_match(cmd.file, r); }));
+        }) //
+      ^ sort_by([](auto &cmd) { return cmd.file; });
 
   SV_COUT << "Sources (" << commands.size() << "/" << db->entries.size() << "):\n";
   for (auto &cmd : commands) {

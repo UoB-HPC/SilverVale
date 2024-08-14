@@ -5,6 +5,7 @@
 #include "sv/tool_dump.h"
 
 #include "aspartame/vector.hpp"
+
 #include "clipp.h"
 
 using namespace aspartame;
@@ -14,12 +15,21 @@ int sv::dump::main(int argc, char **argv) {
   bool help{};
   Options opts{};
   auto bind = [](auto &x) { return [&](const char *arg) { x = arg; }; };
+
   auto cli = ( //
       option("--help", "-h").doc("Show help").set(help),
 
       option("--db")                                                             //
               % "The path to the database, as generated using the index command" //
-          & value("db", bind(opts.dbDir)));
+          & value("db", bind(opts.dbDir)),
+
+      repeatable(               //
+          option("--rootGlobs") //
+              % "Dependencies not matching this pattern will not be analysed. If unspecified, the "
+                "source file itself is included." //
+          & value("path", [&](const std::string &s) { opts.roots.emplace_back(s); }))
+
+  );
 
   if (!parse(argc, argv, cli) || help) {
     std::cerr << make_man_page(cli, argv[0]) << std::endl;
@@ -30,7 +40,7 @@ int sv::dump::main(int argc, char **argv) {
 
 int sv::dump::run(const Options &options) {
   const Database db = Codebase::loadDB(options.dbDir);
-  const Codebase cb = Codebase::load(db, std::cout, true, {}, [&](auto &path) { return true; });
+  const Codebase cb = Codebase::load(db, true, options.roots, [&](auto &path) { return true; });
 
   auto root = std::filesystem::current_path() /
               fmt::format("dump_{}", std::filesystem::path(cb.root).filename());
@@ -63,14 +73,17 @@ int sv::dump::run(const Options &options) {
     auto path = std::filesystem::path(u->name());
     auto stem = path.stem(), ext = path.extension();
 
-    writeAll(root / fmt::format("{}.src.raw{}", stem, ext),
-             [&](auto &os) { os << u->sourceAsWritten().contentWhitespaceNormalised(); });
+    writeAll(root / fmt::format("{}.src.raw{}", stem, ext), [&](auto &os) {
+      os << (u->sourceAsWritten().contentWhitespaceNormalised() ^ mk_string("\n"));
+    });
 
-    writeAll(root / fmt::format("{}.src.cpp{}", stem, ext),
-             [&](auto &os) { os << u->sourcePreprocessed().contentWhitespaceNormalised(); });
+    writeAll(root / fmt::format("{}.src.cpp{}", stem, ext), [&](auto &os) {
+      os << (u->sourcePreprocessed().contentWhitespaceNormalised() ^ mk_string("\n"));
+    });
 
-    writeAll(root / fmt::format("{}.src.cov{}", stem, ext),
-             [&](auto &os) { os << u->sourceWithCoverage().contentWhitespaceNormalised(); });
+    writeAll(root / fmt::format("{}.src.cov{}", stem, ext), [&](auto &os) {
+      os << (u->sourceWithCoverage().contentWhitespaceNormalised() ^ mk_string("\n"));
+    });
 
     writeAll(root / fmt::format("{}.tstree.raw.txt", stem),
              [&](auto &os) { os << u->sourceAsWritten().tsTree().prettyPrint(); });
@@ -83,7 +96,8 @@ int sv::dump::run(const Options &options) {
 
     for (auto [name, view] : {
              std::pair{"raw", Unit::View::AsIs},
-             std::pair{"cov", Unit::View::WithCoverage},
+             std::pair{"self", Unit::View::Self},
+             std::pair{"cov", Unit::View::WithCov},
          }) {
       writeAll(root / fmt::format("{}.stree.{}.txt", stem, name),
                [&](auto &os) { os << u->sTree(view).prettyPrint(); });
@@ -94,6 +108,6 @@ int sv::dump::run(const Options &options) {
     }
   }
 
-  SV_INFOF("Done writing {} files", written);
+  SV_INFOF("Done writing {} file(s)", written);
   return EXIT_SUCCESS;
 }
