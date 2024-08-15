@@ -72,6 +72,10 @@ struct DatabaseSpec {
   std::vector<std::string> roots;
 };
 
+struct IncludeFilter {
+  std::string glob;
+};
+
 struct ExcludeFilter {
   std::string glob;
 };
@@ -95,6 +99,7 @@ struct TaskDesc {
 struct Options {
   std::vector<DatabaseSpec> databases;
   std::vector<TaskDesc> kinds;
+  std::vector<IncludeFilter> includes;
   std::vector<ExcludeFilter> excludes;
   std::vector<EntryMerge> merges;
   std::vector<EntryMatch> matches;

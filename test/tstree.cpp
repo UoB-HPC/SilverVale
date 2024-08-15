@@ -3,6 +3,7 @@
 
 #include "aspartame/optional.hpp"
 #include "aspartame/set.hpp"
+#include "aspartame/string.hpp"
 #include "aspartame/vector.hpp"
 
 #include "sv/tree_ts.h"
@@ -30,7 +31,7 @@ return 0 /**/ + 1;// b
 // a // b
 )";
 
-  const auto &tree = TsTree("", source, tree_sitter_cpp()).without("comment");
+  const auto &tree = TsTree("", source, tree_sitter_cpp(), "cpp").without("comment");
   CHECK(tree.source == R"(
 
 int main(){
@@ -49,6 +50,46 @@ return 0  + 1;
   }
 }
 
+TEST_CASE("fortran-directives") {
+
+  auto source = R"(
+
+!foo
+!foo$omp
+program main
+implicit none
+!$ omp parallel do
+!   $omp parallel do
+! $ omp parallel do
+!$omp parallel do
+!$acc enter data create(A,B,C)
+do i = 1, arrSize
+  b(i) = scalar * c(i)
+end do
+end program main
+
+)";
+
+  const auto &tree = TsTree("", source, tree_sitter_fortran(), "fortran").withoutCommentLanguageSensitive();
+  CHECK(tree.source == R"(
+
+
+
+program main
+implicit none
+!$ omp parallel do
+!   $omp parallel do
+! $ omp parallel do
+!$omp parallel do
+!$acc enter data create(A,B,C)
+do i = 1, arrSize
+  b(i) = scalar * c(i)
+end do
+end program main
+
+)");
+}
+
 TEST_CASE("fortran-source-loc") {
 
   auto source = R"(
@@ -65,7 +106,7 @@ end program main
 
 )";
 
-  const auto &tree = TsTree("", source, tree_sitter_fortran()).without("comment");
+  const auto &tree = TsTree("", source, tree_sitter_fortran(), "fortran").withoutCommentLanguageSensitive( );
   CHECK(tree.source == R"(
 
 program main
@@ -119,7 +160,7 @@ return 42;// w
 
 )";
 
-  CHECK(TsTree("", src, tree_sitter_cpp()).without("comment").source == R"(
+  CHECK(TsTree("", src, tree_sitter_cpp(), "cpp").withoutCommentLanguageSensitive().source == R"(
 
 
 #include <stdio.h>
@@ -162,7 +203,7 @@ auto f  = [   & ]  ( auto   y )  {    return    2    ;   }   ; //
 
   SECTION("ws") {
 
-    CHECK(TsTree("", src, tree_sitter_cpp()).normaliseWhitespaces().source == R"(
+    CHECK(TsTree("", src, tree_sitter_cpp(), "cpp").normaliseWhitespaces().source == R"(
 
 
 #include <stdio.h>
@@ -179,7 +220,7 @@ auto f = [ & ] ( auto y ) { return 2 ; } ; //
   }
 
   SECTION("nl") {
-    CHECK(TsTree("", src, tree_sitter_cpp()).normaliseNewLines().source == R"(#include <stdio.h>
+    CHECK(TsTree("", src, tree_sitter_cpp(), "cpp").normaliseNewLines().source == R"(#include <stdio.h>
 #include <stdlib.h>
 int a  = 3;
 int  a_a   (      )        {     //a
@@ -189,7 +230,7 @@ auto f  = [   & ]  ( auto   y )  {    return    2    ;   }   ; //)");
   }
 
   SECTION("ws+nl") {
-    CHECK(TsTree("", src, tree_sitter_cpp()).normaliseNewLines().normaliseWhitespaces().source ==
+    CHECK(TsTree("", src, tree_sitter_cpp(), "cpp").normaliseNewLines().normaliseWhitespaces().source ==
           R"(#include <stdio.h>
 #include <stdlib.h>
 int a = 3;
@@ -207,7 +248,7 @@ TEST_CASE("cpp-stmt-multiline") {
   1
    ;
 )";
-  CHECK(TsTree("", src, tree_sitter_cpp()).normaliseNewLines().normaliseWhitespaces().source ==
+  CHECK(TsTree("", src, tree_sitter_cpp(), "cpp").normaliseNewLines().normaliseWhitespaces().source ==
         R"(int main() { return a ?
 0
 :

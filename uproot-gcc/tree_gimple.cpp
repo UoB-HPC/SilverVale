@@ -374,9 +374,15 @@ void sv::GimpleUprootPass::repr(gimple *expr, // NOLINT(*-no-recursion)
             repr(gsi_stmt(gsi));
         } else {
           switch (expr->code) {
-              //  case GIMPLE_ERROR_MARK: break;
-              //  case GIMPLE_OMP_SECTIONS_SWITCH:break;
-            case GIMPLE_PREDICT: [[fallthrough]];
+            //  case GIMPLE_ERROR_MARK: break;
+            //  case GIMPLE_OMP_SECTIONS_SWITCH:break;
+          CASE_GIMPLE_OMP: {
+            scoped([&]() { repr(gimple_omp_body(expr)); },
+                   Node{r<Verbatim>(fmt::format("OMP_{}", gimple_code_name[expr->code])), comment,
+                        loc});
+            break;
+          }
+          case GIMPLE_PREDICT: [[fallthrough]];
             case GIMPLE_NOP: // ignore
               break;
             default:

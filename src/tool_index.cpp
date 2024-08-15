@@ -268,7 +268,7 @@ int sv::index::main(int argc, char **argv) {
   using namespace clipp;
   bool help{};
   Options opts{};
-  opts.includeGlobs = {"*"};
+  ;
   opts.maxThreads = static_cast<int>(std::thread::hardware_concurrency());
 
   auto bind = [](auto &x) { return [&](const char *arg) { x = arg; }; };
@@ -356,7 +356,11 @@ int sv::index::run(const sv::index::Options &options) {
             << std::endl;
     return EXIT_FAILURE;
   }
-  auto includeRegexes = options.includeGlobs ^ map([](auto &glob) { return globToRegex(glob); });
+
+  auto includesGlobs =
+      options.includeGlobs.empty() ? std::vector<std::string>{"*"} : options.includeGlobs;
+
+  auto includeRegexes = includesGlobs ^ map([](auto &glob) { return globToRegex(glob); });
   auto excludeRegexes = options.excludeGlobs ^ map([](auto &glob) { return globToRegex(glob); });
 
   auto commands =               //

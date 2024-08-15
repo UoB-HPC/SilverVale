@@ -1,3 +1,4 @@
+#include <functional>
 #include <iostream>
 #include <utility>
 
@@ -66,9 +67,10 @@ sv::parseCPPLineMarkers(const std::string &iiContent) {
 sv::TsTree::TsTree() = default;
 sv::TsTree::TsTree(std::filesystem::path name, //
                    const std::string &source,  //
-                   const TSLanguage *lang)
+                   const TSLanguage *lang, std::string language)
     : name(std::move(name)), source(source),
-      parser(std::shared_ptr<TSParser>(ts_parser_new(), [](auto x) { ts_parser_delete(x); })) {
+      parser(std::shared_ptr<TSParser>(ts_parser_new(), [](auto x) { ts_parser_delete(x); })),
+      language(std::move(language)) {
   ts_parser_set_language(parser.get(), lang);
   tree = std::shared_ptr<TSTree>(
       ts_parser_parse_string(parser.get(), nullptr, source.c_str(), source.size()),
@@ -78,24 +80,48 @@ sv::TsTree::TsTree(std::filesystem::path name, //
 TSNode sv::TsTree::root() const { return ts_tree_root_node(tree.get()); }
 
 static void without( // NOLINT(*-no-recursion)
-    const TSNode &node, const std::string &type, size_t &offset, std::string &out) {
-  if (std::string(ts_node_type(node)) == type) {
+    const TSNode &node, const std::function<bool(const TSNode &)> &predicate, size_t &offset,
+    std::string &out) {
+  if (predicate(node)) {
     auto start = ts_node_start_byte(node);
     auto end = ts_node_end_byte(node);
     out.erase(start - offset, end - start);
     offset += end - start;
   } else {
     for (uint32_t i = 0; i < ts_node_child_count(node); ++i) {
-      without(ts_node_child(node, i), type, offset, out);
+      without(ts_node_child(node, i), predicate, offset, out);
     }
   }
 }
 
-sv::TsTree sv::TsTree::without(const std::string &type, const std::optional<TSNode> &node) const {
+sv::TsTree sv::TsTree::without(const std::function<bool(const TSNode &)> &predicate,
+                               const std::optional<TSNode> &node) const {
   size_t offset = 0;
   std::string out = source;
-  ::without(node.value_or(root()), type, offset, out);
-  return {name, out, ts_parser_language(parser.get())};
+  ::without(node.value_or(root()), predicate, offset, out);
+  return {name, out, ts_parser_language(parser.get()), language};
+}
+
+sv::TsTree sv::TsTree::without(const std::string &type, const std::optional<TSNode> &node) const {
+  return without([&](auto &n) { return type == std::string(ts_node_type(n)); }, node);
+}
+
+sv::TsTree sv::TsTree::withoutCommentLanguageSensitive(const std::optional<TSNode> &node) const {
+
+  if (language == "fortran") {
+    return without(
+        [&](auto &n) {
+          if (std::string(ts_node_type(n)) == "comment") {
+            return !(
+                source.substr(ts_node_start_byte(n), ts_node_end_byte(n) - ts_node_start_byte(n)) ^
+                filter([](auto c) { return c != ' '; }) ^ starts_with("!$"));
+          }
+          return false;
+        },
+        node);
+  } else {
+    return without("comment");
+  }
 }
 
 sv::TsTree sv::TsTree::normaliseNewLines(const std::optional<TSNode> &node) const {
@@ -105,7 +131,7 @@ sv::TsTree sv::TsTree::normaliseNewLines(const std::optional<TSNode> &node) cons
                        | filter([&](auto l, auto idx) { return linesToKeep.contains(idx); }) //
                        | keys()                                                              //
                        | mk_string("\n");                                                    //
-  return {name, slocNormalise ^ trim(), ts_parser_language(parser.get())};
+  return {name, slocNormalise ^ trim(), ts_parser_language(parser.get()), language};
 }
 
 static void markWSRanges( // NOLINT(*-no-recursion)
@@ -229,5 +255,5 @@ sv::TsTree::deleteRanges(const std::vector<std::pair<uint32_t, uint32_t>> &range
   for (auto it = merged.rbegin(); it != merged.rend(); ++it) {
     out.erase(it->first, it->second - it->first);
   }
-  return {name, out, ts_parser_language(parser.get())};
+  return {name, out, ts_parser_language(parser.get()), language};
 }

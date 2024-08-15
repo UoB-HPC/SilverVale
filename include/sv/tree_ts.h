@@ -18,12 +18,21 @@ struct TsTree {
   std::string source;
   std::shared_ptr<TSParser> parser;
   std::shared_ptr<TSTree> tree;
+  std::string language;
 
   TsTree();
-  TsTree(std::filesystem::path name, const std::string &source, const TSLanguage *lang);
+  TsTree(std::filesystem::path name, const std::string &source, const TSLanguage *lang,
+         std::string language);
   [[nodiscard]] TSNode root() const;
+
+  [[nodiscard]] TsTree without(const std::function<bool(const TSNode &)> &predicate,
+                               const std::optional<TSNode> &node = {}) const;
+
   [[nodiscard]] TsTree without(const std::string &type,
                                const std::optional<TSNode> &node = {}) const;
+
+  [[nodiscard]] TsTree
+  withoutCommentLanguageSensitive(const std::optional<TSNode> &node = {}) const;
 
   [[nodiscard]] TsTree normaliseNewLines(const std::optional<TSNode> &node = {}) const;
   [[nodiscard]] TsTree normaliseWhitespaces(uint32_t maxWS = 1,

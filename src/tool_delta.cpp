@@ -123,7 +123,7 @@ template <typename F> std::pair<DiffFn, MaxFn> treeDiff(delta::TaskDesc desc, F 
   return {
       [=](const Units &lhs, const Units &rhs) -> double {
         const Tree lt = Tree::combine("root", lhs ^ map([&](auto &x) { return f(x); }));
-        const Tree rt = Tree::combine("root", lhs ^ map([&](auto &x) { return f(x); }));
+        const Tree rt = Tree::combine("root", rhs ^ map([&](auto &x) { return f(x); }));
         const auto requiredNodes = lt.nodes() * rt.nodes();
         if (streeTokens.raiseAndAcquire(requiredNodes)) {
           SV_WARNF("\nRaising concurrent node limit to {} to avoid deadlock for task {}+{} "
@@ -132,6 +132,12 @@ template <typename F> std::pair<DiffFn, MaxFn> treeDiff(delta::TaskDesc desc, F 
                    lhs ^ mk_string(",", [](auto &x) { return x->name(); }), lt.nodes(),
                    rhs ^ mk_string(",", [](auto &x) { return x->name(); }), rt.nodes());
         }
+
+//        SV_INFOF(" {} => {}+{} "
+//                 "([{}]={} v.s [{}]={})",
+//                 requiredNodes, delta::to_string(desc.kind), delta::to_string(desc.mod),
+//                 lhs ^ mk_string(",", [](auto &x) { return x->name(); }), lt.nodes(),
+//                 rhs ^ mk_string(",", [](auto &x) { return x->name(); }), rt.nodes());
         auto result = Diff::apted(lt, rt);
         streeTokens.release(requiredNodes);
         return result;
@@ -371,6 +377,14 @@ int delta::main(int argc, char **argv) {
           & value("ratio", opts.maxSTreeTokens),
 
       repeatable(                                  //
+          option("--includes")                     //
+              % "include TUs that match the glob." //
+          & value("glob",
+                  [&](const std::string &s) {
+                    opts.includes.emplace_back(IncludeFilter{.glob = s}); //
+                  })),
+
+      repeatable(                                  //
           option("--excludes")                     //
               % "Exclude TUs that match the glob." //
           & value("glob",
@@ -404,7 +418,7 @@ int delta::main(int argc, char **argv) {
       values("[@]database:[glob,...]",
              [&](const std::string &s) {
                auto base = s ^ starts_with("@");
-               auto spec = base ? s.substr(0, 1) : s;
+               auto spec = base ? s.substr(1) : s;
 
                pairPattern(spec, ':') ^ for_each([&](auto &path, auto &roots) {
                  opts.databases.emplace_back(DatabaseSpec{              //
@@ -440,11 +454,15 @@ struct Model {
 
 static Model loadModelFromSpec(const delta::Options &options, const delta::DatabaseSpec &spec) {
   const auto excludes = options.excludes ^ map([](auto &f) { return globToRegex(f.glob); });
+  const auto includes = options.includes ^ map([](auto &f) { return globToRegex(f.glob); });
 
   const Database db = Codebase::loadDB(spec.path);
   const Codebase cb = Codebase::load(
       db, true, spec.roots, //
       [&](auto &path) {
+        if(!includes.empty()){
+          if(!(includes ^ exists([&](auto &r) { return std::regex_match(path, r); }))) return false;
+        }
         return excludes ^ forall([&](auto &r) { return !std::regex_match(path, r); });
       });
 
@@ -584,52 +602,23 @@ static void generateTasks(const delta::Options &options, const Model &base,
   runTasks("other", otherTasks, options.maxThreads);
 }
 
-int delta::run(const delta::Options &options) {
+static void diffBase(const delta::Options &options, size_t baseIdx) {
 
-  SV_COUT //
-      << "Build:\n"
-      << " - Databases:        \n";
-  for (auto &spec : options.databases)
-    SV_COUT << "   - " << spec.path << (spec.base ? " (base)" : "") << "\n";
-  SV_COUT //
-      << " - Kinds:  "
-      << (options.kinds ^ //
-          mk_string(
-              ",",
-              [](auto x) { return fmt::format("{}+{}", to_string(x.kind), to_string(x.mod)); }))
-      << "\n"
-      << " - Excludes:  "
-      << (options.excludes ^ //
-          mk_string(",", [](auto x) { return x.glob; }))
-      << "\n"
-      << " - Merges:  "
-      << (options.merges ^ //
-          mk_string(",", [](auto x) { return x.glob + "->" + x.name; }))
-      << "\n"
-      << " - Matches:  "
-      << (options.matches ^ //
-          mk_string(",", [](auto x) { return x.sourceGlob + ":" + x.targetGlob; }))
-      << "\n"
-      << " - Max threads:  " << options.maxThreads << "\n";
+  const auto modelPaths = options.databases ^ map([](auto s) { return s.path.string(); });
+  const size_t prefixLen = longestCommonPrefixLen(modelPaths);
+  const auto groups = (options.databases | zip_with_index() | to_vector()) ^
+                      grouped(options.maxGroups) ^ zip_with_index();
+  const auto base = loadModelFromSpec(options, options.databases[baseIdx]);
+  const auto baseName = modelPaths[baseIdx].substr(prefixLen);
 
-  par_setup(options.maxThreads);
-
-  streeTokens.reset(options.maxSTreeTokens);
-
-  if (options.databases.empty()) {
-    SV_ERRF("At least 1 database required for comparison");
-    return EXIT_FAILURE;
-  }
-
-  auto base = loadModelFromSpec(options, options.databases[0]);
-  std::vector<Result> allResults;
-  auto groups = (options.databases | zip_with_index() | to_vector()) ^ grouped(options.maxGroups) ^
-                zip_with_index();
-
-  SV_INFOF("Loading {} models together, totaling for {} batches for {} models", options.maxGroups,
+  SV_INFOF("Comparing against base {} ()", modelPaths[baseIdx].substr(prefixLen), base.path);
+  SV_INFOF("Loading {} models together, totaling {} batches for {} models", options.maxGroups,
            groups.size(), options.databases.size());
+
+  std::vector<Result> allResults;
   auto totalStart = std::chrono::high_resolution_clock::now();
   for (auto &[xs, group] : groups) {
+    streeTokens.reset(options.maxSTreeTokens);
     auto start = std::chrono::high_resolution_clock::now();
     SV_INFOF("Submitting group {}: {}", //
              group, xs | mk_string(", ", [](auto &spec, auto idx) {
@@ -640,13 +629,11 @@ int delta::run(const delta::Options &options) {
     SV_INFOF("Group {} completed in {}", //
              group, std::chrono::duration_cast<std::chrono::seconds>(end - start));
   }
-  auto totalEnd = std::chrono::high_resolution_clock::now();
+  const auto totalEnd = std::chrono::high_resolution_clock::now();
   SV_INFOF("All tasks completed in {}",
            std::chrono::duration_cast<std::chrono::seconds>(totalEnd - totalStart));
 
-  auto modelPaths = options.databases ^ map([](auto s) { return s.path.string(); });
-  auto tabulate = [&]<typename T>(const std::vector<std::pair<Key, T>> &xs, auto f) {
-    size_t prefixLen = longestCommonPrefixLen(modelPaths);
+  const auto tabulate = [&]<typename T>(const std::vector<std::pair<Key, T>> &xs, auto f) {
     return (xs ^ group_map([](auto &k, auto) { return k.modelIdx; },                       //
                            [](auto &k, auto v) { return std::tuple{k.desc, k.name, v}; })) //
            ^ to_vector()                                                                   //
@@ -673,16 +660,16 @@ int delta::run(const delta::Options &options) {
            ^ transpose();
   };
 
-  auto maxes = //
+  const auto maxes = //
       allResults ^ collect([](auto &k, auto &v) {
         return v ^ get<std::optional<double>>() ^ map([&](auto v) { return std::pair{k, v}; });
       });
-  auto diffs //
+  const auto diffs //
       = allResults ^ collect([](auto &k, auto &v) {
           return v ^ get<double>() ^ map([&](auto v) { return std::pair{k, v}; });
         });
 
-  auto totals = [](auto diffs, auto f) {
+  const auto totals = [](auto &diffs, auto f) {
     return diffs                                                                                //
            | group_map([](auto &k, auto &v) { return k.modelIdx; },                             //
                        [](auto &k, auto &v) { return std::pair{k.desc, v}; })                   //
@@ -696,54 +683,85 @@ int delta::run(const delta::Options &options) {
            | to_vector();
   };
 
-  {
-    std::ofstream out(fmt::format("{}.model_max.csv", options.outputPrefix));
+  const auto dump = [](const std::string &filename, auto f) {
+    {
+      std::ofstream out(filename);
+      f(out);
+    }
+    SV_INFOF("Wrote {}", filename);
+  };
+
+  dump(fmt::format("{}.{}.model_max.csv", options.outputPrefix, baseName), [&](auto &out) {
     for (auto &row : tabulate(maxes, [](auto v) { return fmt::format("{}", v.value_or(-1)); })) {
       out << (row ^ mk_string(",")) << "\n";
     }
-  }
-
-  {
-    std::ofstream out(fmt::format("{}.model_max.total.csv", options.outputPrefix));
+  });
+  dump(fmt::format("{}.{}.model_max.total.csv", options.outputPrefix, baseName), [&](auto &out) {
     for (auto &row : tabulate(totals(maxes, [](auto m) { return m.value_or(0); }),
                               [](auto v) { return fmt::format("{}", v); })) {
       out << (row ^ mk_string(",")) << "\n";
     }
-  }
-
-  {
-    std::ofstream out(fmt::format("{}.model_diffs.csv", options.outputPrefix));
+  });
+  dump(fmt::format("{}.{}.model_diffs.csv", options.outputPrefix, baseName), [&](auto &out) {
     for (auto &row : tabulate(diffs, [](auto v) { return fmt::format("{}", v); })) {
       out << (row ^ mk_string(",")) << "\n";
     }
-  }
-
-  {
-    std::ofstream out(fmt::format("{}.model_diffs.total.csv", options.outputPrefix));
+  });
+  dump(fmt::format("{}.{}.model_diffs.total.csv", options.outputPrefix, baseName), [&](auto &out) {
     for (auto &row :
          tabulate(totals(diffs, std::identity{}), [](auto v) { return fmt::format("{}", v); })) {
       out << (row ^ mk_string(",")) << "\n";
     }
+  });
+}
+
+int delta::run(const delta::Options &options) {
+
+  SV_COUT //
+      << "Build:\n"
+      << " - Databases:        \n";
+  for (auto &spec : options.databases)
+    SV_COUT << "   - " << spec.path << (spec.base ? " (base)" : "") << "\n";
+  SV_COUT //
+      << " - Kinds:  "
+      << (options.kinds ^ //
+          mk_string(
+              ",",
+              [](auto x) { return fmt::format("{}+{}", to_string(x.kind), to_string(x.mod)); }))
+      << "\n"
+      << " - Includes:  "
+      << (options.includes ^ //
+          mk_string(",", [](auto x) { return x.glob; }))
+      << "\n"
+      << " - Excludes:  "
+      << (options.excludes ^ //
+          mk_string(",", [](auto x) { return x.glob; }))
+      << "\n"
+      << " - Merges:  "
+      << (options.merges ^ //
+          mk_string(",", [](auto x) { return x.glob + "->" + x.name; }))
+      << "\n"
+      << " - Matches:  "
+      << (options.matches ^ //
+          mk_string(",", [](auto x) { return x.sourceGlob + ":" + x.targetGlob; }))
+      << "\n"
+      << " - Max threads:  " << options.maxThreads << "\n";
+
+  par_setup(options.maxThreads);
+
+  if (options.databases.empty()) {
+    SV_INFOF("At least 1 database required for comparison");
+    return EXIT_FAILURE;
   }
 
-  //    std::cout << "\n#max\n";
-  //    auto m = tabulate(maxes, [](auto v) { return fmt::format("{}", v.value_or(-1)); });
-  //    for (auto row : m) {
-  //      SV_COUT << (row ^ mk_string(", ")) << std::endl;
-  //    }
-  //    std::cout << "\n#delta\n";
-  //    auto d = tabulate(diffs, [](auto v) { return fmt::format("{}", v); });
-  //    for (auto row : d) {
-  //      SV_COUT << (row ^ mk_string(", ")) << std::endl;
-  //    }
-
-  // MEMORY
-  // SAVE FORMAT
-
-  //    m.x;
-
-  //              model
-  // kind, entry
-
+  if (options.databases ^ exists([](auto &s) { return s.base; })) {
+    options.databases                                  //
+        | zip_with_index()                             //
+        | filter([](auto &s, auto) { return s.base; }) //
+        | for_each([&](auto &, auto idx) { diffBase(options, idx); });
+  } else {
+    SV_INFOF("No base database specified, using the first entry");
+    diffBase(options, 0);
+  }
   return EXIT_SUCCESS;
 }

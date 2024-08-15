@@ -248,7 +248,7 @@ const Tree &Unit::irTree(View view) const {
 }
 
 static TsTree normaliseTsTree(const TsTree &tree) {
-  return tree.without("comment"); // // .normaliseWhitespaces();
+  return tree.withoutCommentLanguageSensitive(); // // .normaliseWhitespaces();
 }
 
 const AggregateSource &Unit::sourceAsWritten() const {
@@ -412,7 +412,7 @@ Codebase Codebase::load(const Database &db,                        //
         (contents | collect([&](auto &name, auto &content) -> std::optional<TsTree> {
            if ((name == witnessed.front()) ||
                (rootGlobsRegexes ^ exists([&](auto &r) { return std::regex_match(name, r); }))) {
-             return TsTree(name, content, createTsParser(language));
+             return TsTree(name, content, createTsParser(language), language);
            }
            return std::nullopt;
          })               //
@@ -429,7 +429,7 @@ Codebase Codebase::load(const Database &db,                        //
         (deps | collect([&](auto &depPath, auto &dep) -> std::optional<TsTree> {
            if (depPath == needlePath ||
                (rootGlobsRegexes ^ exists([&](auto &r) { return std::regex_match(depPath, r); }))) {
-             return TsTree(depPath, dep.content, createTsParser(language));
+             return TsTree(depPath, dep.content, createTsParser(language), language);
            }
            return std::nullopt;
          }) |

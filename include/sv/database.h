@@ -219,7 +219,8 @@ struct CompilationDatabase {
       // see https://clang.llvm.org/docs/JSONCompilationDatabase.html
       json.at("directory").get_to(entry.directory);
       json.at("file").get_to(entry.file);
-      json.at("output").get_to(entry.output);
+      // output is optional
+      if (json.contains("output")) { json.at("output").get_to(entry.output); }
       // we may see either arguments: string[] or command: string
       if (json.contains("command")) {
         auto cmd = json.at("command").get<std::string>();
