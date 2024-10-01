@@ -225,6 +225,7 @@ const Tree &Unit::sTree(View view) const {
       case View::AsIs: return sTreeRoot;
       case View::Self: return Tree(pruneTreeSelf(sTreeRoot.root));
       case View::WithCov: return Tree(pruneTreeWithCoverage(sTreeRoot.root));
+      default: throw std::logic_error("Unimplemented view type");
     }
   });
 }
@@ -234,6 +235,7 @@ const Tree &Unit::sTreeInlined(View view) const {
       case View::AsIs: return sTreeInlinedRoot;
       case View::Self: return Tree(pruneTreeSelf(sTreeInlinedRoot.root));
       case View::WithCov: return Tree(pruneTreeWithCoverage(sTreeInlinedRoot.root));
+      default: throw std::logic_error("Unimplemented view type");
     }
   });
 }
@@ -243,6 +245,7 @@ const Tree &Unit::irTree(View view) const {
       case View::AsIs: return irTreeRoot;
       case View::Self: return Tree(pruneTreeSelf(irTreeRoot.root));
       case View::WithCov: return Tree(pruneTreeWithCoverage(irTreeRoot.root));
+      default: throw std::logic_error("Unimplemented view type");
     }
   });
 }

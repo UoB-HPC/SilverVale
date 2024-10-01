@@ -14,9 +14,7 @@ else
   git clone https://github.com/intel/llvm -b sycl
 fi
 
-python $DPCPP_HOME/llvm/buildbot/configure.py --llvm-external-projects=compiler-rt
-
-python $DPCPP_HOME/llvm/buildbot/compile.py
-python $DPCPP_HOME/llvm/buildbot/compile.py --build-target install-llvm-cov
-python $DPCPP_HOME/llvm/buildbot/compile.py --build-target install-llvm-profdata
-python $DPCPP_HOME/llvm/buildbot/compile.py --build-target install-compiler-rt
+python $DPCPP_HOME/llvm/buildbot/configure.py --llvm-external-projects=compiler-rt,openmp,lld --host-target="host;NVPTX"
+python $DPCPP_HOME/llvm/buildbot/compile.py --build-target install
+python $DPCPP_HOME/llvm/buildbot/compile.py --build-target install-llvm-headers
+python $DPCPP_HOME/llvm/buildbot/compile.py --build-target install-clang-headers

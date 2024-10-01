@@ -16,7 +16,9 @@
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Object/OffloadBinary.h"
-#include "llvm/Support/Host.h"
+//#include "llvm/Support/Host.h"
+#include "llvm/TargetParser/Host.h"
+
 
 #include "sv/cli.h"
 #include "sv/database.h"

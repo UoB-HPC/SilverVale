@@ -10,17 +10,13 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 option(SV_ENABLE_UPROOT_CLANG_TESTS "Enable tests for the Clang uproot plugin" ON)
 option(SV_USE_LIBCXX "Use libc++ instead of libstdc++" OFF)
+set(CLANG_VARIANTS "system:/usr/include" CACHE STRING "A semicolon separated list of clang variants in the form of name:include_dir")
 
-
-#set(SV_CLANG_INCLUDE_PATHS "${CMAKE_SOURCE_DIR}/headers-clang/llvm-19/include")
-#set(SV_CLANG_INCLUDE_PATHS "/home/tom/sycl_workspace/llvm/build/install/include/")
-#set(SV_USE_LIBCXX ON)
-
-
-set(CLANG_VARIANTS
-        "system:/usr/include"
-        "dpcpp:/home/tom/sycl_workspace/llvm/build/install/include"
-)
+#set(CLANG_VARIANTS
+#        "system:/usr/include"
+#        "dpcpp:/home/tom/sycl_workspace/llvm/build/install/include"
+#        "llvm:/home/tom/llvm_workspace/llvm-project/llvm/build/install/include"
+#)
 
 list(APPEND UPROOT_CLANG_COMPILE_FLAGS
         "$<$<CONFIG:Release>:${SV_COMPILE_RELEASE_FLAGS}>"
@@ -58,6 +54,14 @@ foreach (variant_and_path ${CLANG_VARIANTS})
     list(GET variant_and_path_list 1 include_path)
 
     message(STATUS "Creating target variant: ${variant} with ${include_path}")
+
+    if (NOT IS_DIRECTORY "${include_path}")
+        message(FATAL_ERROR "The LLVM include path is not a valid directory.")
+    elseif (NOT IS_DIRECTORY "${include_path}/clang")
+        message(FATAL_ERROR "The 'clang' directory is missing, is the path a valid LLVM include directory?")
+    elseif (NOT IS_DIRECTORY "${include_path}/llvm")
+        message(FATAL_ERROR "The 'llvm' directory is missing, is the path a valid LLVM include directory?")
+    endif ()
 
 
     add_library(uproot-clang-${variant} SHARED main.cpp compress.cpp tree_clangast.cpp tree_llvmir.cpp)

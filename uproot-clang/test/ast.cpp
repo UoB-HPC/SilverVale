@@ -22,7 +22,8 @@ using namespace sv;
 std::unique_ptr<ASTUnit> makeASTUnit(const std::string &content) {
 
   std::string error;
-  auto db = FixedCompilationDatabase::loadFromBuffer(".", "-I/usr/lib/clang/17/include -fopenmp" , error);
+  // FIXME use CMake detected value
+  auto db = FixedCompilationDatabase::loadFromBuffer(".", "-I/usr/lib/clang/18/include -fopenmp" , error);
   CHECK(error == ""); // NOLINT(*-container-size-empty)
 
   ClangTool Tool(*db, {"file.cpp"});
