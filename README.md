@@ -3,6 +3,14 @@
 A modern and fully integrated codebase analysis tool that covers the entire spectrum: syntax,
 semantics, and low-level IR.
 
+## P3HPC AE/AD
+
+The AE/AD script for generating all the dataset used in the camera-ready submission to P3HPC'24: *A
+Metric for HPC Programming Model Productivity* is named `make_db.sh` at the top level.
+
+The script is self-contained and will download the mini-apps, generate SilverVale DBs, and carry out
+the divergence computation.
+
 ## Supported Compilers Executables
 
 - `clang`/`clang++`
