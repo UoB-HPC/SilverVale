@@ -3,6 +3,10 @@
 A modern and fully integrated codebase analysis tool that covers the entire spectrum: syntax,
 semantics, and low-level IR.
 
+This work has been accepted at P3HPC'24: *A Metric for HPC Programming Model Productivity*.
+The paper is still under embargo,
+a draft copy may be requested at https://research-information.bris.ac.uk/en/publications/a-metric-for-hpc-programming-model-productivity.
+
 ## Supported Compilers Executables
 
 - `clang`/`clang++`
